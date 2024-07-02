@@ -25,6 +25,8 @@
 #include <QRect>
 #include <memory>
 
+Q_MOC_INCLUDE("maininterface/mainctx.hpp")
+
 class CSDButton : public QObject
 {
     Q_OBJECT
@@ -43,7 +45,7 @@ public:
         TypeCount
     };
 
-    Q_ENUM(ButtonType);
+    Q_ENUM(ButtonType)
 
     CSDButton(ButtonType type, QObject *parent);
 
@@ -87,7 +89,7 @@ class SystemMenuButton : public CSDButton
 public:
     SystemMenuButton(QObject *parent = nullptr) : CSDButton {SystemMenuButton::SystemMenu, parent} {}
 
-    virtual void showSystemMenu() = 0;
+    Q_INVOKABLE virtual void showSystemMenu(const QPoint &windowpos) = 0;
 
 signals:
     void systemMenuVisibilityChanged(bool visible);

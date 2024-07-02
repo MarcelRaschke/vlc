@@ -36,6 +36,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_update.h>
 
 #include <assert.h>
@@ -50,6 +51,7 @@
 #include <gcrypt.h>
 #include <vlc_gcrypt.h>
 #ifdef _WIN32
+#include <windows.h>
 #include <shellapi.h>
 #endif
 #include "update.h"
@@ -71,18 +73,10 @@
  * Remaining text is a required description of the update
  */
 
-#if defined( _WIN64 )
-# define UPDATE_OS_SUFFIX "-win-x64"
-#elif defined( _WIN32 )
-# define UPDATE_OS_SUFFIX "-win-x86"
-#else
-# define UPDATE_OS_SUFFIX ""
-#endif
-
 #ifndef NDEBUG
-# define UPDATE_VLC_STATUS_URL "http://update-test.videolan.org/vlc/status-win-x86"
+# define UPDATE_VLC_STATUS_URL "http://update-test.videolan.org/vlc/status"
 #else
-# define UPDATE_VLC_STATUS_URL "http://update.videolan.org/vlc/status" UPDATE_OS_SUFFIX
+# define UPDATE_VLC_STATUS_URL "http://update.videolan.org/vlc/status"
 #endif
 
 #define dialog_FatalWait( p_obj, psz_title, psz_fmt, ... ) \
@@ -128,7 +122,6 @@ update_t *update_New( vlc_object_t *p_this )
  * Delete an update_t struct
  *
  * \param p_update update_t* pointer
- * \return nothing
  */
 void update_Delete( update_t *p_update )
 {
@@ -158,7 +151,6 @@ void update_Delete( update_t *p_update )
  * Empty the release struct
  *
  * \param p_update update_t* pointer
- * \return nothing
  */
 static void EmptyRelease( update_t *p_update )
 {
@@ -179,11 +171,26 @@ static void EmptyRelease( update_t *p_update )
  */
 static bool GetUpdateFile( update_t *p_update )
 {
+#if defined(_WIN64)
+    static const char url[] = UPDATE_VLC_STATUS_URL "-win-x64";
+#elif defined(_WIN32)
+    static const char *urls[] = {
+        UPDATE_VLC_STATUS_URL "-win-x86", UPDATE_VLC_STATUS_URL "-win-x64"
+    };
+    BOOL sixtyfour;
+
+    if (!IsWow64Process(GetCurrentProcess(), &sixtyfour))
+        sixtyfour = FALSE; // not clear how this can fail but MSDN says so
+
+    const char *url = urls[sixtyfour != FALSE];
+#else
+    static const char url[] = UPDATE_VLC_STATUS_URL;
+#endif
     stream_t *p_stream = NULL;
     char *psz_version_line = NULL;
     char *psz_update_data = NULL;
 
-    p_stream = vlc_stream_NewURL( p_update->p_libvlc, UPDATE_VLC_STATUS_URL );
+    p_stream = vlc_stream_NewURL( p_update->p_libvlc, url );
     if( !p_stream )
     {
         msg_Err( p_update->p_libvlc, "Failed to open %s for reading",
@@ -386,7 +393,6 @@ static void* update_CheckReal( void * );
  * \param p_update pointer to update struct
  * \param pf_callback pointer to a function to call when the update_check is finished
  * \param p_data pointer to some data to give to the callback
- * \returns nothing
  */
 void update_Check( update_t *p_update, void (*pf_callback)( void*, bool ), void *p_data )
 {
@@ -495,8 +501,7 @@ static void* update_DownloadReal( void * );
  * Download the file given in the update_t
  *
  * \param p_update structure
- * \param dir to store the download file
- * \return nothing
+ * \param psz_destdir to store the download file
  */
 void update_Download( update_t *p_update, const char *psz_destdir )
 {
@@ -732,13 +737,12 @@ static void* update_DownloadReal( void *obj )
                                            psz_msg );
     if(answer == 1)
     {
-#ifndef VLC_WINSTORE_APP
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
         wchar_t psz_wdestfile[MAX_PATH];
         MultiByteToWideChar( CP_UTF8, 0, psz_destfile, -1, psz_wdestfile, MAX_PATH );
-        answer = (int)ShellExecuteW( NULL, L"open", psz_wdestfile, NULL, NULL, SW_SHOW);
-#endif
-        if(answer > 32)
+        if((intptr_t)(void*)ShellExecuteW( NULL, L"open", psz_wdestfile, NULL, NULL, SW_SHOW) > 32)
             libvlc_Quit(vlc_object_instance(p_udt));
+#endif
     }
 #endif
 end:

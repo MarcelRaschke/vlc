@@ -22,19 +22,12 @@ soxr: soxr-$(SOXR_VERSION)-Source.tar.xz .sum-soxr
 	$(APPLY) $(SRC)/soxr/0004-arm-fix-SIGILL-when-doing-divisions-on-some-old-arch.patch
 	$(APPLY) $(SRC)/soxr/find_ff_pkgconfig.patch
 	$(APPLY) $(SRC)/soxr/soxr-check-function.patch
+	$(APPLY) $(SRC)/soxr/aarch64.patch
+	$(APPLY) $(SRC)/soxr/0001-Allocate-an-extra-real-number.patch
 	$(call pkg_static,"src/soxr.pc.in")
 	$(MOVE)
 
-# CMAKE_SYSTEM_NAME is inferred from the toolchain in Android builds
-ifndef HAVE_ANDROID
-# Force CMAKE_CROSSCOMPILING to True
-ifdef HAVE_CROSS_COMPILE
-SOXR_EXTRA_CONF=-DCMAKE_SYSTEM_NAME=Generic
-endif
-endif
-
 SOXR_CONF := \
-		$(SOXR_EXTRA_CONF) \
 		-DBUILD_TESTS=OFF \
 		-DWITH_LSR_BINDINGS=OFF \
 		-DWITH_OPENMP=OFF \
@@ -42,7 +35,7 @@ SOXR_CONF := \
 
 .soxr: soxr toolchain.cmake
 	$(CMAKECLEAN)
-	$(HOSTVARS) $(CMAKE) $(SOXR_CONF)
+	$(HOSTVARS_CMAKE) $(CMAKE) $(SOXR_CONF)
 	+$(CMAKEBUILD)
 	$(CMAKEINSTALL)
 	touch $@

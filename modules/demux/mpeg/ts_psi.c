@@ -20,6 +20,7 @@
 # include "config.h"
 #endif
 
+#include <stdbit.h>
 #include <vlc_common.h>
 
 #ifndef _DVBPSI_DVBPSI_H_
@@ -30,6 +31,7 @@
 #include <dvbpsi/pat.h>
 #include <dvbpsi/pmt.h>
 #include <dvbpsi/dr.h>
+#include "../../mux/mpeg/dvbpsi_compat.h" /* dvbpsi_messages */
 
 #include <vlc_demux.h>
 #include <vlc_bits.h>
@@ -60,6 +62,13 @@
 #include "ts_streamwrapper.h"
 
 #include <assert.h>
+
+struct ts_psi_context_t
+{
+    dvbpsi_t *p_handle;
+    void (*pf_detach)(dvbpsi_t *);
+    en50221_capmt_info_t *p_capmt;
+};
 
 static void PIDFillFormat( demux_t *, ts_stream_t *p_pes, int i_stream_type, ts_transport_type_t * );
 static void PMTCallBack( void *data, dvbpsi_pmt_t *p_dvbpsipmt );
@@ -177,11 +186,12 @@ static void PATCallBack( void *data, dvbpsi_pat_t *p_dvbpsipat )
         if( !b_existing || pmtpid->u.p_pmt->i_number != p_program->i_number )
         {
             if( b_existing && pmtpid->u.p_pmt->i_number != p_program->i_number )
-                dvbpsi_pmt_detach(pmtpid->u.p_pmt->handle);
+                dvbpsi_pmt_detach(pmtpid->u.p_pmt->p_ctx->p_handle);
 
-            if( !dvbpsi_pmt_attach( pmtpid->u.p_pmt->handle, p_program->i_number, PMTCallBack, p_demux ) )
+            if( !dvbpsi_pmt_attach( pmtpid->u.p_pmt->p_ctx->p_handle, p_program->i_number, PMTCallBack, p_demux ) )
                 msg_Err( p_demux, "PATCallback failed attaching PMTCallback to program %d",
                          p_program->i_number );
+            pmtpid->u.p_pmt->p_ctx->pf_detach = dvbpsi_pmt_detach;
         }
 
         pmtpid->u.p_pmt->i_number = p_program->i_number;
@@ -357,7 +367,7 @@ static void ParsePMTPrivateRegistrations( demux_t *p_demux, const dvbpsi_descrip
 static dvbpsi_descriptor_t *PMTEsFindDescriptor( const dvbpsi_pmt_es_t *p_es,
                                                  int i_tag )
 {
-    dvbpsi_descriptor_t *p_dr = p_es->p_first_descriptor;;
+    dvbpsi_descriptor_t *p_dr = p_es->p_first_descriptor;
     while( p_dr && ( p_dr->i_tag != i_tag ) )
         p_dr = p_dr->p_next;
     return p_dr;
@@ -537,8 +547,7 @@ static void SetupStandardESDescriptors( demux_t *p_demux, ts_es_t *p_es,
         switch( p_dr->i_tag )
         {
             case 0x0a:
-                if( p_es->fmt.i_cat == AUDIO_ES )
-                    SetupISO639Descriptor( p_demux, p_es, p_dr );
+                SetupISO639Descriptor( p_demux, p_es, p_dr );
                 break;
 
             case 0x0E:
@@ -1063,15 +1072,6 @@ static void PMTSetupEsDvbSubtitle( demux_t *p_demux, ts_stream_t *p_pes,
     }
 }
 
-static int vlc_ceil_log2( const unsigned int val )
-{
-    int n = 31 - clz(val);
-    if ((1U << n) != val)
-        n++;
-
-    return n;
-}
-
 static void OpusSetup(demux_t *demux, uint8_t *p, size_t len, es_format_t *p_fmt)
 {
     OpusHeader h;
@@ -1083,8 +1083,8 @@ static void OpusSetup(demux_t *demux, uint8_t *p, size_t len, es_format_t *p_fmt
 
     uint8_t mapping;
     int csc;
-    int channels = 0;
-    int stream_count = 0;
+    unsigned int channels = 0;
+    unsigned int stream_count = 0;
     int ccc = p[1]; // channel_config_code
     if (ccc <= 8) {
         channels = ccc;
@@ -1120,21 +1120,21 @@ static void OpusSetup(demux_t *demux, uint8_t *p, size_t len, es_format_t *p_fmt
             bs_init(&s, &p[4], len - 4);
             stream_count = 1;
             if (channels) {
-                int bits = vlc_ceil_log2(channels);
+                int bits = stdc_bit_width(channels - 1);
                 if (s.i_left < bits)
                     goto explicit_config_too_short;
                 stream_count = bs_read(&s, bits) + 1;
-                bits = vlc_ceil_log2(stream_count + 1);
+                bits = stdc_bit_width(stream_count);
                 if (s.i_left < bits)
                     goto explicit_config_too_short;
                 csc = bs_read(&s, bits);
             }
-            int channel_bits = vlc_ceil_log2(stream_count + csc + 1);
+            int channel_bits = stdc_bit_width(stream_count + csc);
             if (s.i_left < channels * channel_bits)
                 goto explicit_config_too_short;
 
             unsigned char silence = (1U << (stream_count + csc + 1)) - 1;
-            for (int i = 0; i < channels; i++) {
+            for (unsigned int i = 0; i < channels; i++) {
                 unsigned char m = bs_read(&s, channel_bits);
                 if (m == silence)
                     m = 0xff;
@@ -1626,6 +1626,9 @@ static void PIDFillFormat( demux_t *p_demux, ts_stream_t *p_pes,
     //case 0x2E:  /* MPEG-H auxiliary audio */
         es_format_Change( fmt, AUDIO_ES, VLC_CODEC_MPEGH );
         break;
+    case 0x33:  /* VVC */
+        es_format_Change( fmt, VIDEO_ES, VLC_CODEC_VVC );
+        break;
     case 0x42:  /* CAVS (Chinese AVS) */
         es_format_Change( fmt, VIDEO_ES, VLC_CODEC_CAVS );
         break;
@@ -1841,6 +1844,16 @@ static en50221_capmt_info_t * CreateCAPMTInfo( const dvbpsi_pmt_t *p_pmt )
     return p_en;
 }
 
+void SendCAPMTUpdate( demux_t *p_demux, const ts_pmt_t *p_pmt )
+{
+    demux_sys_t  *p_sys = p_demux->p_sys;
+    if( !p_pmt->p_ctx->p_capmt )
+        return;
+    if( vlc_stream_Control( p_sys->stream, STREAM_SET_PRIVATE_ID_CA,
+                            (void *)p_pmt->p_ctx->p_capmt ) != VLC_SUCCESS )
+        msg_Warn( p_demux, "Impos");
+}
+
 static void PMTCallBack( void *data, dvbpsi_pmt_t *p_dvbpsipmt )
 {
     demux_t      *p_demux = data;
@@ -1848,6 +1861,7 @@ static void PMTCallBack( void *data, dvbpsi_pmt_t *p_dvbpsipmt )
 
     ts_pid_t     *pmtpid = NULL;
     ts_pmt_t     *p_pmt = NULL;
+    bool          b_encryption = false;
 
     msg_Dbg( p_demux, "PMTCallBack called for program %d", p_dvbpsipmt->i_program_number );
 
@@ -1974,6 +1988,8 @@ static void PMTCallBack( void *data, dvbpsi_pmt_t *p_dvbpsipmt )
                 msg_Dbg( p_demux, "    - ES descriptor %s 0x%x", psz_desc, p_dr->i_tag );
             else
                 msg_Dbg( p_demux, "    - ES descriptor tag 0x%x", p_dr->i_tag );
+
+            b_encryption |= (p_dr->i_tag == 0x09);
         }
 
         const bool b_pid_inuse = ( pespid->type == TYPE_STREAM );
@@ -2029,6 +2045,7 @@ static void PMTCallBack( void *data, dvbpsi_pmt_t *p_dvbpsipmt )
         {
             msg_Dbg( p_demux, "    - ES descriptor : CA (0x9) SysID 0x%x",
                      (p_dr->p_data[0] << 8) | p_dr->p_data[1] );
+            b_encryption = true;
         }
 
         const bool b_create_es = (p_pes->p_es->fmt.i_cat != UNKNOWN_ES);
@@ -2097,30 +2114,19 @@ static void PMTCallBack( void *data, dvbpsi_pmt_t *p_dvbpsipmt )
             AddAndCreateES( p_demux, pespid, false );
     }
 
-    /* Set CAM descrambling */
-    if( ProgramIsSelected( p_sys, p_pmt->i_number ) )
+
+
+    /* Install CAM descrambling */
+    if ( p_sys->standard == TS_STANDARD_ARIB && p_sys->stream == p_demux->s && b_encryption )
     {
-        en50221_capmt_info_t *p_en = CreateCAPMTInfo( p_dvbpsipmt );
-        if( p_en )
+        stream_t *wrapper = ts_stream_wrapper_New( p_demux->s );
+        if( wrapper )
         {
-            /* DTV/CAM takes ownership of en50221_capmt_info_t on success */
-            if( vlc_stream_Control( p_sys->stream, STREAM_SET_PRIVATE_ID_CA,
-                                    (void *)p_en ) != VLC_SUCCESS )
+            p_sys->stream = vlc_stream_FilterNew( wrapper, "aribcam" );
+            if( !p_sys->stream )
             {
-                en50221_capmt_Delete( p_en );
-                if ( p_sys->standard == TS_STANDARD_ARIB && p_sys->stream == p_demux->s )
-                {
-                    stream_t *wrapper = ts_stream_wrapper_New( p_demux->s );
-                    if( wrapper )
-                    {
-                        p_sys->stream = vlc_stream_FilterNew( wrapper, "aribcam" );
-                        if( !p_sys->stream )
-                        {
-                            vlc_stream_Delete( wrapper );
-                            p_sys->stream = p_demux->s;
-                        }
-                    }
-                }
+                vlc_stream_Delete( wrapper );
+                p_sys->stream = p_demux->s;
             }
         }
     }
@@ -2132,7 +2138,7 @@ static void PMTCallBack( void *data, dvbpsi_pmt_t *p_dvbpsipmt )
         if ( PIDSetup( p_demux, TYPE_PSIP, atsc_base_pid, pmtpid ) )
         {
             ts_psip_t *p_psip = atsc_base_pid->u.p_psip;
-            if( !ATSC_Attach_Dvbpsi_Base_Decoders( p_psip->handle, atsc_base_pid ) )
+            if( !ATSC_Attach_Dvbpsi_Base_Decoders( p_psip->p_ctx, atsc_base_pid ) )
             {
                 msg_Err( p_demux, "dvbpsi_atsc_AttachMGT/STT failed for program %d",
                          p_pmt->i_number );
@@ -2214,6 +2220,11 @@ static void PMTCallBack( void *data, dvbpsi_pmt_t *p_dvbpsipmt )
                   p_pmt->i_number, i_cand );
     }
 
+    /* Create CAPMT for this ES */
+    if( p_pmt->p_ctx->p_capmt )
+        en50221_capmt_Delete( p_pmt->p_ctx->p_capmt );
+    p_pmt->p_ctx->p_capmt = CreateCAPMTInfo( p_dvbpsipmt );
+
     UpdatePESFilters( p_demux, p_sys->seltype == PROGRAM_ALL );
 
     /* Probe Boundaries */
@@ -2257,7 +2268,7 @@ int UserPmt( demux_t *p_demux, const char *psz_fmt )
     /* Dummy PMT */
     ts_pmt_t *p_pmt = pmtpid->u.p_pmt;
     p_pmt->i_number   = i_number != 0 ? i_number : TS_USER_PMT_NUMBER;
-    if( !dvbpsi_pmt_attach( p_pmt->handle,
+    if( !dvbpsi_pmt_attach( p_pmt->p_ctx->p_handle,
                             ((i_number != TS_USER_PMT_NUMBER ? i_number : 1)),
                             PMTCallBack, p_demux ) )
     {
@@ -2358,13 +2369,45 @@ bool ts_psi_PAT_Attach( ts_pid_t *patpid, void *cbdata )
 {
     if( unlikely(patpid->type != TYPE_PAT || patpid->i_pid != TS_PSI_PAT_PID) )
         return false;
-    return dvbpsi_pat_attach( patpid->u.p_pat->handle, PATCallBack, cbdata );
+    patpid->u.p_pat->p_ctx->pf_detach = dvbpsi_pat_detach;
+    return dvbpsi_pat_attach( patpid->u.p_pat->p_ctx->p_handle, PATCallBack, cbdata );
 }
 
 void ts_psi_Packet_Push( ts_pid_t *p_pid, const uint8_t *p_pktbuffer )
 {
     if( p_pid->type == TYPE_PAT )
-        dvbpsi_packet_push( p_pid->u.p_pat->handle, (uint8_t *) p_pktbuffer );
+        dvbpsi_packet_push( p_pid->u.p_pat->p_ctx->p_handle, (uint8_t *) p_pktbuffer );
     else if( p_pid->type == TYPE_PMT )
-        dvbpsi_packet_push( p_pid->u.p_pmt->handle, (uint8_t *) p_pktbuffer );
+        dvbpsi_packet_push( p_pid->u.p_pmt->p_ctx->p_handle, (uint8_t *) p_pktbuffer );
+}
+
+void ts_psi_context_Delete( ts_psi_context_t *p_ctx )
+{
+    if( dvbpsi_decoder_present( p_ctx->p_handle ) )
+    {
+        assert( p_ctx->pf_detach );
+        p_ctx->pf_detach( p_ctx->p_handle );
+    }
+    if( p_ctx->p_capmt )
+        en50221_capmt_Delete( p_ctx->p_capmt );
+    dvbpsi_delete( p_ctx->p_handle );
+    free( p_ctx );
+}
+
+ts_psi_context_t * ts_psi_context_New( demux_t *p_demux )
+{
+    ts_psi_context_t *p_ctx = malloc(sizeof(*p_ctx));
+    if(likely(p_ctx))
+    {
+        p_ctx->p_handle = dvbpsi_new( &dvbpsi_messages, DVBPSI_MSG_DEBUG );
+        if( !p_ctx->p_handle )
+        {
+            free( p_ctx );
+            return NULL;
+        }
+        p_ctx->p_handle->p_sys = (void *) p_demux;
+        p_ctx->pf_detach = NULL;
+        p_ctx->p_capmt = NULL;
+    }
+    return p_ctx;
 }

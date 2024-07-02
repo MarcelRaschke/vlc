@@ -31,13 +31,15 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
+#include <vlc_threads.h>
 #include <vlc_sout.h>
 
 #include <vlc_httpd.h>
 #include <vlc_url.h>
+#include <vlc_network.h>
 #include <vlc_charset.h>
 #include <vlc_fs.h>
-#include <vlc_network.h>
 #include <vlc_rand.h>
 #include <assert.h>
 #include <errno.h>
@@ -945,7 +947,7 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                     bool found = false;
                     for (int i = 0; i < ses->trackc; i++)
                     {
-                        rtsp_strack_t *tr = ses->trackv + i;;
+                        rtsp_strack_t *tr = ses->trackv + i;
                         if (tr->id == id)
                         {
                             if (tr->setup_fd == -1)
@@ -971,7 +973,7 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
 
         case HTTPD_MSG_GETPARAMETER:
         {
-            if( query->i_body > 0 )
+            if( query->i_body != 0 )
             {
                 answer->i_status = 451;
                 break;
@@ -1034,7 +1036,7 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
             httpd_MsgAdd( answer, "Session", "%s", psz_session );
     }
 
-    httpd_MsgAdd( answer, "Content-Length", "%d", answer->i_body );
+    httpd_MsgAdd( answer, "Content-Length", "%zu", answer->i_body );
     httpd_MsgAdd( answer, "Cache-Control", "no-cache" );
 
     psz = httpd_MsgGet( query, "Cseq" );

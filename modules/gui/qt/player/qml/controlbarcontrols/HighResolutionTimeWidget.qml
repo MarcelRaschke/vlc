@@ -16,8 +16,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Controls 2.4
+import QtQuick
+import QtQuick.Controls
 
 import org.videolan.vlc 0.1
 
@@ -34,7 +34,10 @@ Control {
     padding: VLCStyle.focus_border
 
     Keys.priority: Keys.AfterItem
-    Keys.onPressed: Navigation.defaultKeyAction(event)
+    Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
+
+    Accessible.role: Accessible.Indicator
+    Accessible.name:  paintOnly ? "00:00:00:00" : Player.highResolutionTime
 
     function _adjustSMPTETimer(add) {
         if (typeof toolbarEditor !== "undefined") // FIXME: Can't use paintOnly because it is set later
@@ -62,9 +65,8 @@ Control {
     }
 
     background: Widgets.AnimatedBackground {
-        active: visualFocus
-        animate: theme.initialized
-        activeBorderColor: theme.visualFocus
+        enabled: theme.initialized
+        border.color: visualFocus ? theme.visualFocus : "transparent"
     }
 
     contentItem: Item {
@@ -79,6 +81,8 @@ Control {
             color: theme.fg.primary
 
             horizontalAlignment: Text.AlignHCenter
+
+            Accessible.ignored: true
         }
 
         TextMetrics {

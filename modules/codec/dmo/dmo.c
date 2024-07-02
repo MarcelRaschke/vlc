@@ -34,13 +34,13 @@
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_codec.h>
-#include <vlc_codecs.h>
 
 #include <objbase.h>
 #include <strmif.h>
 #include <amvideo.h>
+#include <mmreg.h>
 
-#include <vlc_codecs.h>
+#include <vlc_codecs.h> // fourcc_to_wf_tag
 #include "dmo.h"
 #include "../../video_chroma/copy.h"
 
@@ -57,11 +57,12 @@ static int  DecoderOpen  ( vlc_object_t * );
 static void DecoderClose ( vlc_object_t * );
 static int DecodeBlock ( decoder_t *, block_t * );
 static void *DecoderThread( void * );
-static int  EncoderOpen  ( vlc_object_t * );
+#ifdef ENABLE_SOUT
 static void EncoderClose ( encoder_t * );
 static block_t *EncodeBlock( encoder_t *, void * );
 
 static int  EncOpen  ( vlc_object_t * );
+#endif // !ENABLE_SOUT
 
 static int LoadDMO( vlc_object_t *, HINSTANCE *, IMediaObject **,
                     const es_format_t *, bool );
@@ -303,8 +304,10 @@ static int DecOpen( decoder_t *p_dec )
     VIDEOINFOHEADER *p_vih = NULL;
     WAVEFORMATEX *p_wf = NULL;
 
+    int i_ret = VLC_EGENERIC;
+
     /* Initialize OLE/COM */
-    if( FAILED(CoInitializeEx( NULL, COINIT_MULTITHREADED )) )
+    if( FAILED(CoInitializeEx( NULL, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE )) )
         vlc_assert_unreachable();
 
     if( LoadDMO( VLC_OBJECT(p_dec), &hmsdmo_dll, &p_dmo, p_dec->fmt_in, false )
@@ -324,6 +327,8 @@ static int DecOpen( decoder_t *p_dec )
         uint16_t i_tag;
         int i_size = sizeof(WAVEFORMATEX) + p_dec->fmt_in->i_extra;
         p_wf = malloc( i_size );
+        if (p_wf == NULL)
+            goto allocation_failure;
 
         memset( p_wf, 0, sizeof(WAVEFORMATEX) );
         if( p_dec->fmt_in->i_extra )
@@ -357,17 +362,25 @@ static int DecOpen( decoder_t *p_dec )
 
         int i_size = sizeof(VIDEOINFOHEADER) + p_dec->fmt_in->i_extra;
         p_vih = malloc( i_size );
+        if (p_vih == NULL)
+            goto allocation_failure;
 
         memset( p_vih, 0, sizeof(VIDEOINFOHEADER) );
         if( p_dec->fmt_in->i_extra )
             memcpy( &p_vih[1], p_dec->fmt_in->p_extra, p_dec->fmt_in->i_extra );
 
+        vlc_fourcc_t fcc = p_dec->fmt_in->i_original_fourcc ?
+                           p_dec->fmt_in->i_original_fourcc : p_dec->fmt_in->i_codec;
+
         p_bih = &p_vih->bmiHeader;
-        p_bih->biCompression = p_dec->fmt_in->i_original_fourcc ?
-                            p_dec->fmt_in->i_original_fourcc : p_dec->fmt_in->i_codec;
+        p_bih->biCompression = fcc;
         p_bih->biWidth = p_dec->fmt_in->video.i_width;
         p_bih->biHeight = p_dec->fmt_in->video.i_height;
-        p_bih->biBitCount = p_dec->fmt_in->video.i_bits_per_pixel;
+        p_bih->biBitCount = vlc_fourcc_GetChromaBPP(fcc);
+        if ( p_bih->biBitCount == 0 &&
+             p_dec->fmt_in->i_profile == -1 && p_dec->fmt_in->i_level != -1 )
+            // HACK: the bits per sample was stored in the i_level
+            p_bih->biBitCount = p_dec->fmt_in->i_level;
         p_bih->biPlanes = 1;
         p_bih->biSize = i_size - sizeof(VIDEOINFOHEADER) + sizeof(*p_bih);
 
@@ -378,8 +391,7 @@ static int DecOpen( decoder_t *p_dec )
 
         dmo_input_type.majortype  = MEDIATYPE_Video;
         dmo_input_type.subtype    = dmo_input_type.majortype;
-        dmo_input_type.subtype.Data1 = p_dec->fmt_in->i_original_fourcc ?
-                                p_dec->fmt_in->i_original_fourcc: p_dec->fmt_in->i_codec;
+        dmo_input_type.subtype.Data1 = fcc;
         dmo_input_type.formattype = FORMAT_VideoInfo;
         dmo_input_type.bFixedSizeSamples = 0;
         dmo_input_type.bTemporalCompression = 1;
@@ -434,7 +446,6 @@ static int DecOpen( decoder_t *p_dec )
         BITMAPINFOHEADER *p_bih;
         DMO_MEDIA_TYPE mt;
         unsigned i_chroma = VLC_CODEC_YUYV;
-        int i_bpp = 16;
         int i = 0;
 
         /* Find out which chroma to use */
@@ -443,7 +454,6 @@ static int DecOpen( decoder_t *p_dec )
             if( mt.subtype.Data1 == VLC_CODEC_YV12 )
             {
                 i_chroma = mt.subtype.Data1;
-                i_bpp = 12;
                 DMOFreeMediaType( &mt );
                 break;
             }
@@ -451,8 +461,7 @@ static int DecOpen( decoder_t *p_dec )
                       p_dec->fmt_in->i_codec == VLC_CODEC_MSS2 ) &&
                       IsEqualGUID( &mt.subtype, &MEDIASUBTYPE_RGB24 ) )
             {
-                i_chroma = VLC_CODEC_RGB24;
-                i_bpp = 24;
+                i_chroma = VLC_CODEC_BGR24;
             }
 
             DMOFreeMediaType( &mt );
@@ -461,7 +470,6 @@ static int DecOpen( decoder_t *p_dec )
         p_dec->fmt_out.i_codec = i_chroma == VLC_CODEC_YV12 ? VLC_CODEC_I420 : i_chroma;
         p_dec->fmt_out.video.i_width = p_dec->fmt_in->video.i_width;
         p_dec->fmt_out.video.i_height = p_dec->fmt_in->video.i_height;
-        p_dec->fmt_out.video.i_bits_per_pixel = i_bpp;
 
         /* If an aspect-ratio was specified in the input format then force it */
         if( p_dec->fmt_in->video.i_sar_num > 0 &&
@@ -479,17 +487,17 @@ static int DecOpen( decoder_t *p_dec )
         p_bih = &p_vih->bmiHeader;
         p_bih->biCompression = i_chroma == VLC_CODEC_RGB24 ? BI_RGB : i_chroma;
         p_bih->biHeight *= -1;
-        p_bih->biBitCount = p_dec->fmt_out.video.i_bits_per_pixel;
+        p_bih->biBitCount = vlc_fourcc_GetChromaBPP(i_chroma);
         p_bih->biSizeImage = p_dec->fmt_in->video.i_width *
             p_dec->fmt_in->video.i_height *
-            (p_dec->fmt_in->video.i_bits_per_pixel + 7) / 8;
+            ((p_bih->biBitCount + 7) / 8);
 
         p_bih->biPlanes = 1; /* http://msdn.microsoft.com/en-us/library/dd183376%28v=vs.85%29.aspx */
         p_bih->biSize = sizeof(*p_bih);
 
         dmo_output_type.majortype = MEDIATYPE_Video;
         dmo_output_type.formattype = FORMAT_VideoInfo;
-        if( i_chroma == VLC_CODEC_RGB24 )
+        if( i_chroma == VLC_CODEC_BGR24 )
         {
             dmo_output_type.subtype = MEDIASUBTYPE_RGB24;
         }
@@ -571,8 +579,10 @@ static int DecOpen( decoder_t *p_dec )
 
     return VLC_SUCCESS;
 
- error:
+allocation_failure:
+    i_ret = VLC_ENOMEM;
 
+error:
     if( p_dmo ) IMediaObject_Release( p_dmo );
     if( hmsdmo_dll ) FreeLibrary( hmsdmo_dll );
 
@@ -586,7 +596,7 @@ static int DecOpen( decoder_t *p_dec )
     p_sys->b_ready = true;
     vlc_cond_signal( &p_sys->wait_output );
     vlc_mutex_unlock( &p_sys->lock );
-    return VLC_EGENERIC;
+    return i_ret;
 }
 
 /*****************************************************************************
@@ -992,6 +1002,7 @@ static void *DecoderThread( void *data )
 }
 
 
+#ifdef ENABLE_SOUT
 /****************************************************************************
  * Encoder descriptor declaration
  ****************************************************************************/
@@ -1063,10 +1074,6 @@ static int EncoderSetVideoType( encoder_t *p_enc, IMediaObject *p_dmo )
     VIDEOINFOHEADER vih, *p_vih;
     BITMAPINFOHEADER *p_bih;
 
-    /* FIXME */
-    p_enc->fmt_in.video.i_bits_per_pixel =
-        p_enc->fmt_out.video.i_bits_per_pixel = 12;
-
     /* Enumerate input format (for debug output) */
     i = 0;
     while( !IMediaObject_GetInputType( p_dmo, 0, i++, &dmo_type ) )
@@ -1091,9 +1098,9 @@ static int EncoderSetVideoType( encoder_t *p_enc, IMediaObject *p_dmo )
     p_bih->biCompression = VLC_CODEC_I420;
     p_bih->biWidth = p_enc->fmt_in.video.i_visible_width;
     p_bih->biHeight = p_enc->fmt_in.video.i_visible_height;
-    p_bih->biBitCount = p_enc->fmt_in.video.i_bits_per_pixel;
+    p_bih->biBitCount = vlc_fourcc_GetChromaBPP(VLC_CODEC_I420);
     p_bih->biSizeImage = p_enc->fmt_in.video.i_visible_width *
-        p_enc->fmt_in.video.i_visible_height * p_enc->fmt_in.video.i_bits_per_pixel /8;
+        p_enc->fmt_in.video.i_visible_height * ((p_bih->biBitCount + 7) /8);
     p_bih->biPlanes = 3;
     p_bih->biSize = sizeof(*p_bih);
 
@@ -1183,6 +1190,11 @@ static int EncoderSetVideoType( encoder_t *p_enc, IMediaObject *p_dmo )
         }
 
         p_data = malloc( i_data );
+        if (p_data == NULL)
+        {
+            DMOFreeMediaType( &dmo_type );
+            return VLC_ENOMEM;
+        }
         i_err = p_privdata->vt->GetPrivateData( p_privdata, p_data, &i_data );
 
         /* Update the media type with the private data */
@@ -1202,7 +1214,7 @@ static int EncoderSetVideoType( encoder_t *p_enc, IMediaObject *p_dmo )
 
     i_err = IMediaObject_SetOutputType( p_dmo, 0, &dmo_type, 0 );
 
-    p_enc->fmt_in.i_codec = VLC_CODEC_I420;
+    p_enc->fmt_in.video.i_chroma = p_enc->fmt_in.i_codec = VLC_CODEC_I420;
 
     DMOFreeMediaType( &dmo_type );
     if( i_err )
@@ -1256,7 +1268,7 @@ static int EncoderSetAudioType( encoder_t *p_enc, IMediaObject *p_dmo )
             {
                 i_selected = i - 1;
                 i_last_byterate = p_wf->nAvgBytesPerSec;
-                msg_Dbg( p_enc, "selected entry %i (bitrate: %i)",
+                msg_Dbg( p_enc, "selected entry %i (bitrate: %lu)",
                          i_selected, p_wf->nAvgBytesPerSec * 8 );
             }
         }
@@ -1359,7 +1371,7 @@ static int EncOpen( vlc_object_t *p_this )
     HINSTANCE hmsdmo_dll = NULL;
 
     /* Initialize OLE/COM */
-    if( FAILED(CoInitializeEx( NULL, COINIT_MULTITHREADED )) )
+    if( FAILED(CoInitializeEx( NULL, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE )) )
         vlc_assert_unreachable();
 
     if( LoadDMO( p_this, &hmsdmo_dll, &p_dmo, &p_enc->fmt_out, true )
@@ -1457,31 +1469,32 @@ static block_t *EncodeBlock( encoder_t *p_enc, void *p_data )
     if( p_enc->fmt_out.i_cat == VIDEO_ES )
     {
         /* Get picture data */
-        int i_plane, i_line, i_width, i_src_stride;
         picture_t *p_pic = (picture_t *)p_data;
         uint8_t *p_dst;
 
-        int i_buffer = p_enc->fmt_in.video.i_visible_width *
-            p_enc->fmt_in.video.i_visible_height *
-            p_enc->fmt_in.video.i_bits_per_pixel / 8;
+        const vlc_chroma_description_t *dsc = vlc_fourcc_GetChromaDescription(p_pic->format.i_chroma);
+        assert(dsc != NULL);
+        size_t i_buffer = 0;
+        plane_t dst_planes[PICTURE_PLANE_MAX];
+        for (unsigned plane=0; plane < dsc->plane_count; plane++)
+        {
+            dst_planes[plane].i_pitch = dst_planes[plane].i_visible_pitch =
+                (p_enc->fmt_in.video.i_visible_width * dsc->pixel_size *
+                 dsc->p[plane].w.num * dsc->p[plane].h.num) /
+                (dsc->p[plane].w.den * dsc->p[plane].h.den);
+            dst_planes[plane].i_lines = dst_planes[plane].i_visible_lines = p_enc->fmt_in.video.i_visible_height;
+            i_buffer += dst_planes[plane].i_pitch * dst_planes[plane].i_lines;
+        }
 
         p_block_in = block_Alloc( i_buffer );
 
         /* Copy picture stride by stride */
         p_dst = p_block_in->p_buffer;
-        for( i_plane = 0; i_plane < p_pic->i_planes; i_plane++ )
+        for(int i_plane = 0; i_plane < p_pic->i_planes; i_plane++ )
         {
-            uint8_t *p_src = p_pic->p[i_plane].p_pixels;
-            i_width = p_pic->p[i_plane].i_visible_pitch;
-            i_src_stride = p_pic->p[i_plane].i_pitch;
-
-            for( i_line = 0; i_line < p_pic->p[i_plane].i_visible_lines;
-                 i_line++ )
-            {
-                memcpy( p_dst, p_src, i_width );
-                p_dst += i_width;
-                p_src += i_src_stride;
-            }
+            dst_planes[i_plane].p_pixels = p_dst;
+            plane_CopyPixels(&dst_planes[i_plane], &p_pic->p[i_plane]);
+            p_dst += dst_planes[i_plane].i_pitch * dst_planes[i_plane].i_lines;
         }
 
         i_pts = p_pic->date;
@@ -1613,6 +1626,7 @@ void EncoderClose( encoder_t *p_enc )
 
     free( p_sys );
 }
+#endif // !ENABLE_SOUT
 
 vlc_module_begin ()
     set_description( N_("DirectMedia Object decoder") )
@@ -1626,6 +1640,7 @@ vlc_module_begin ()
     set_capability( "audio decoder", 1 )
     set_callbacks(DecoderOpen, DecoderClose)
 
+#ifdef ENABLE_SOUT
     add_submodule ()
     set_description( N_("DirectMedia Object encoder") )
     add_shortcut( "dmo" )
@@ -1637,4 +1652,5 @@ vlc_module_begin ()
     add_shortcut( "dmo" )
     set_capability( "audio encoder", 10 )
     set_callback( EncoderOpenAudio )
+#endif
 vlc_module_end ()

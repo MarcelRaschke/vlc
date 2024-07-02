@@ -28,9 +28,11 @@
 #include <assert.h>
 #include <limits.h>
 #include <stdatomic.h>
+#include <stdbit.h>
 #include <stdlib.h>
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_picture_pool.h>
 #include <vlc_atomic.h>
 #include "picture.h"
@@ -152,34 +154,6 @@ error:
     return NULL;
 }
 
-picture_pool_t *picture_pool_Reserve(picture_pool_t *master, unsigned count)
-{
-    if (count == 0)
-        vlc_assert_unreachable();
-    if (unlikely(count > POOL_MAX))
-        return NULL;
-
-    picture_t *picture[POOL_MAX];
-    unsigned i;
-
-    for (i = 0; i < count; i++) {
-        picture[i] = picture_pool_Get(master);
-        if (picture[i] == NULL)
-            goto error;
-    }
-
-    picture_pool_t *pool = picture_pool_New(count, picture);
-    if (!pool)
-        goto error;
-
-    return pool;
-
-error:
-    while (i > 0)
-        picture_Release(picture[--i]);
-    return NULL;
-}
-
 picture_t *picture_pool_Get(picture_pool_t *pool)
 {
 
@@ -192,7 +166,7 @@ picture_t *picture_pool_Get(picture_pool_t *pool)
         return NULL;
     }
 
-    int i = ctz(pool->available);
+    int i = stdc_trailing_zeros(pool->available);
     pool->available &= ~(1ULL << i);
     vlc_mutex_unlock(&pool->lock);
 
@@ -207,14 +181,9 @@ picture_t *picture_pool_Wait(picture_pool_t *pool)
     while (pool->available == 0)
         vlc_cond_wait(&pool->wait, &pool->lock);
 
-    int i = ctz(pool->available);
+    int i = stdc_trailing_zeros(pool->available);
     pool->available &= ~(1ULL << i);
     vlc_mutex_unlock(&pool->lock);
 
     return picture_pool_ClonePicture(pool, i);
-}
-
-unsigned picture_pool_GetSize(const picture_pool_t *pool)
-{
-    return pool->picture_count;
 }

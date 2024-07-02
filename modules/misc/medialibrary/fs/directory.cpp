@@ -35,7 +35,7 @@
 #include <vlc_cxx_helpers.hpp>
 
 #include <algorithm>
-#include <assert.h>
+#include <cassert>
 #include <medialibrary/filesystem/Errors.h>
 #include <sys/stat.h>
 #include <system_error>
@@ -167,6 +167,7 @@ static bool request_metadata_sync( libvlc_int_t *libvlc, input_item_t *media,
     static const input_item_parser_cbs_t cbs = {
         onParserEnded,
         onParserSubtreeAdded,
+        nullptr,
     };
 
     auto inputParser = vlc::wrap_cptr( input_item_Parse( media, VLC_OBJECT( libvlc ), &cbs, &req ),
@@ -237,7 +238,7 @@ void
 SDDirectory::addFile(std::string mrl, IFile::LinkedFileType fType, std::string linkedFile) const
 {
     time_t lastModificationDate = 0;
-    int64_t fileSize = 0;
+    uint64_t fileSize = 0;
 
     if ( m_fs.isNetworkFileSystem() == false )
     {

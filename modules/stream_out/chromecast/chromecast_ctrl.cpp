@@ -39,6 +39,7 @@
 
 #include <vlc_stream.h>
 #include <vlc_rand.h>
+#include <vlc_threads.h>
 
 #include "../../misc/webservices/json.h"
 
@@ -47,7 +48,7 @@
 #define PING_WAIT_RETRIES 1
 
 static int httpd_file_fill_cb( httpd_file_sys_t *data, httpd_file_t *http_file,
-                          uint8_t *psz_request, uint8_t **pp_data, int *pi_data );
+                          uint8_t *psz_request, uint8_t **pp_data, size_t *pi_data );
 
 static const char* StateToStr( States s )
 {
@@ -233,10 +234,8 @@ void intf_sys_t::reinit()
     }
 }
 
-int intf_sys_t::httpd_file_fill( uint8_t *psz_request, uint8_t **pp_data, int *pi_data )
+int intf_sys_t::httpd_file_fill( uint8_t *, uint8_t **pp_data, size_t *pi_data )
 {
-    (void) psz_request;
-
     char *psz_art;
     {
         vlc::threads::mutex_locker lock( m_lock );
@@ -282,10 +281,9 @@ int intf_sys_t::httpd_file_fill( uint8_t *psz_request, uint8_t **pp_data, int *p
     return VLC_SUCCESS;
 }
 
-static int httpd_file_fill_cb( httpd_file_sys_t *data, httpd_file_t *http_file,
-                          uint8_t *psz_request, uint8_t **pp_data, int *pi_data )
+static int httpd_file_fill_cb( httpd_file_sys_t *data, httpd_file_t *,
+                          uint8_t *psz_request, uint8_t **pp_data, size_t *pi_data )
 {
-    (void) http_file;
     intf_sys_t *p_sys = static_cast<intf_sys_t*>((void *)data);
     return p_sys->httpd_file_fill( psz_request, pp_data, pi_data );
 }
@@ -453,12 +451,10 @@ bool intf_sys_t::isStateReady() const
 
 void intf_sys_t::setPacing(bool do_pace)
 {
-    {
-        vlc::threads::mutex_locker locker( m_lock );
-        if( m_pace == do_pace )
-            return;
-        m_pace = do_pace;
-    }
+    vlc::threads::mutex_locker locker( m_lock );
+    if( m_pace == do_pace )
+        return;
+    m_pace = do_pace;
     m_pace_cond.signal();
 }
 

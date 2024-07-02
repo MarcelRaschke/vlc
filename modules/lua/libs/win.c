@@ -27,13 +27,14 @@
 # include "config.h"
 #endif
 
+#include <stdbit.h>
 #include <vlc_common.h>
 #include <vlc_charset.h>
 
 #include "../vlc.h"
 #include "../libs.h"
 
-#ifndef VLC_WINSTORE_APP
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
 
 /* Based on modules/control/rc.c and include/vlc_interface.h */
 static HANDLE GetConsole( lua_State *L )
@@ -93,7 +94,7 @@ static bool ReadWin32( HANDLE *hConsoleIn, unsigned char *p_buffer, int *pi_size
                     (*pi_size)--;
                     nbBytes++;
                 }
-                assert( clz( (unsigned char)~(p_buffer[*pi_size]) ) == nbBytes + 1 );
+                assert( stdc_leading_ones( p_buffer[*pi_size] ) == nbBytes + 1 );
                 // The first utf8 byte will be overridden by a \0
             }
             else
@@ -183,4 +184,4 @@ void luaopen_win( lua_State *L )
     lua_setfield( L, -2, "win" );
 }
 
-#endif /* !VLC_WINSTORE_APP */
+#endif // WINAPI_PARTITION_DESKTOP

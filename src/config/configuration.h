@@ -21,6 +21,8 @@
 #ifndef LIBVLC_CONFIGURATION_H
 # define LIBVLC_CONFIGURATION_H 1
 
+#include <vlc_configuration.h>
+
 /* Internal configuration prototypes and structures */
 
 struct vlc_plugin_t;
@@ -79,5 +81,7 @@ char *config_GetLibDir(void) VLC_USED VLC_MALLOC;
 
 /* The configuration file */
 #define CONFIG_FILE                     "vlcrc"
+
+char *platform_GetUserDir( vlc_userdir_t ) VLC_USED VLC_MALLOC;
 
 #endif

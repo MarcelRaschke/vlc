@@ -38,7 +38,7 @@ NSString *VLCPlaybackOrderChanged = @"VLCPlaybackOrderChanged";
 NSString *VLCPlaybackRepeatChanged = @"VLCPlaybackRepeatChanged";
 NSString *VLCPlaybackHasPreviousChanged = @"VLCPlaybackHasPreviousChanged";
 NSString *VLCPlaybackHasNextChanged = @"VLCPlaybackHasNextChanged";
-NSString *VLCPlaylistCurrentItemChanged = @"VLCPlaylistCurrentItemChanged";
+NSString *VLCPlaylistCurrentItemIndexChanged = @"VLCPlaylistCurrentItemIndexChanged";
 NSString *VLCPlaylistItemsAdded = @"VLCPlaylistItemsAdded";
 NSString *VLCPlaylistItemsRemoved = @"VLCPlaylistItemsRemoved";
 
@@ -57,9 +57,10 @@ NSString *VLCPlaylistItemsRemoved = @"VLCPlaylistItemsRemoved";
 - (void)playlistUpdatedForIndex:(size_t)firstUpdatedIndex items:(vlc_playlist_item_t *const *)items count:(size_t)numberOfItems;
 - (void)playlistPlaybackRepeatUpdated:(enum vlc_playlist_playback_repeat)currentRepeatMode;
 - (void)playlistPlaybackOrderUpdated:(enum vlc_playlist_playback_order)currentOrder;
-- (void)currentPlaylistItemChanged:(size_t)index;
+- (void)currentPlaylistItemIndexChanged:(size_t)index;
 - (void)playlistHasPreviousItem:(BOOL)hasPrevious;
 - (void)playlistHasNextItem:(BOOL)hasNext;
+- (void)stopActionChanged:(enum vlc_playlist_media_stopped_action)stoppedAction;
 
 @end
 
@@ -162,13 +163,13 @@ cb_playlist_playback_order_changed(vlc_playlist_t *playlist,
 }
 
 static void
-cb_playlist_current_item_changed(vlc_playlist_t *playlist,
+cb_playlist_current_item_index_changed(vlc_playlist_t *playlist,
                                  ssize_t index,
                                  void *p_data)
 {
     dispatch_async(dispatch_get_main_queue(), ^{
-        VLCPlaylistController *playlistController = (__bridge VLCPlaylistController *)p_data;
-        [playlistController currentPlaylistItemChanged:index];
+        VLCPlaylistController * const playlistController = (__bridge VLCPlaylistController *)p_data;
+        [playlistController currentPlaylistItemIndexChanged:index];
     });
 }
 
@@ -194,6 +195,18 @@ cb_playlist_has_next_changed(vlc_playlist_t *playlist,
     });
 }
 
+static void
+cb_playlist_media_stopped_action_changed(vlc_playlist_t *p_playlist,
+                                         enum vlc_playlist_media_stopped_action newAction,
+                                         void *p_data)
+{
+    VLC_UNUSED(p_playlist);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        VLCPlaylistController *playlistController = (__bridge VLCPlaylistController *)p_data;
+        [playlistController stopActionChanged:newAction];
+    });
+}
+
 static const struct vlc_playlist_callbacks playlist_callbacks = {
     cb_playlist_items_reset,
     cb_playlist_items_added,
@@ -202,9 +215,10 @@ static const struct vlc_playlist_callbacks playlist_callbacks = {
     cb_playlist_items_updated,
     cb_playlist_playback_repeat_changed,
     cb_playlist_playback_order_changed,
-    cb_playlist_current_item_changed,
+    cb_playlist_current_item_index_changed,
     cb_playlist_has_prev_changed,
     cb_playlist_has_next_changed,
+    cb_playlist_media_stopped_action_changed,
 };
 
 #pragma mark -
@@ -216,7 +230,7 @@ static const struct vlc_playlist_callbacks playlist_callbacks = {
 {
     self = [super init];
     if (self) {
-        _defaultNotificationCenter = [NSNotificationCenter defaultCenter];
+        _defaultNotificationCenter = NSNotificationCenter.defaultCenter;
         [_defaultNotificationCenter addObserver:self
                                        selector:@selector(applicationWillTerminate:)
                                            name:NSApplicationWillTerminateNotification
@@ -230,6 +244,7 @@ static const struct vlc_playlist_callbacks playlist_callbacks = {
         /* set initial values, further updates through callbacks */
         vlc_playlist_Lock(_p_playlist);
         _unsorted = YES;
+        _libraryPlaylistMode = YES;
         _playbackOrder = vlc_playlist_GetPlaybackOrder(_p_playlist);
         _playbackRepeat = vlc_playlist_GetPlaybackRepeat(_p_playlist);
         _playlistListenerID = vlc_playlist_AddListener(_p_playlist,
@@ -247,7 +262,7 @@ static const struct vlc_playlist_callbacks playlist_callbacks = {
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification
 {
     /* Handle sleep notification */
-    [[[NSWorkspace sharedWorkspace] notificationCenter] addObserver:self
+    [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self
                                                            selector:@selector(computerWillSleep:)
                                                                name:NSWorkspaceWillSleepNotification
                                                              object:nil];
@@ -278,7 +293,7 @@ static const struct vlc_playlist_callbacks playlist_callbacks = {
 
 - (void)dealloc
 {
-    [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self];
+    [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:self];
     [_defaultNotificationCenter removeObserver:self];
 }
 
@@ -338,11 +353,11 @@ static const struct vlc_playlist_callbacks playlist_callbacks = {
     [_defaultNotificationCenter postNotificationName:VLCPlaybackOrderChanged object:self];
 }
 
-- (void)currentPlaylistItemChanged:(size_t)index
+- (void)currentPlaylistItemIndexChanged:(size_t)index
 {
     _currentPlaylistIndex = index;
     [_playlistDataSource scrollToCurrentPlaylistItem];
-    [_defaultNotificationCenter postNotificationName:VLCPlaylistCurrentItemChanged object:self];
+    [_defaultNotificationCenter postNotificationName:VLCPlaylistCurrentItemIndexChanged object:self];
 }
 
 - (void)playlistHasPreviousItem:(BOOL)hasPrevious
@@ -607,7 +622,7 @@ static const struct vlc_playlist_callbacks playlist_callbacks = {
 
     if ([[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&b_dir]
         && b_dir &&
-        [[NSWorkspace sharedWorkspace] getFileSystemInfoForPath:path
+        [NSWorkspace.sharedWorkspace getFileSystemInfoForPath:path
                                                     isRemovable:&b_rem
                                                      isWritable:&b_writable
                                                   isUnmountable:NULL
@@ -687,6 +702,18 @@ static const struct vlc_playlist_callbacks playlist_callbacks = {
                                   exportModule.moduleName.UTF8String);
     vlc_playlist_Unlock(_p_playlist);
     return ret;
+}
+
+- (void)stopActionChanged:(enum vlc_playlist_media_stopped_action)stoppedAction
+{
+    _actionAfterStop = stoppedAction;
+}
+
+- (void)setActionAfterStop:(enum vlc_playlist_media_stopped_action)actionAfterStop
+{
+    vlc_playlist_Lock(_p_playlist);
+    vlc_playlist_SetMediaStoppedAction(_p_playlist, actionAfterStop);
+    vlc_playlist_Unlock(_p_playlist);
 }
 
 @end

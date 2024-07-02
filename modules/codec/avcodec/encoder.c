@@ -34,6 +34,7 @@
 #include <math.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_aout.h>
 #include <vlc_sout.h>
 #include <vlc_codec.h>
@@ -46,6 +47,8 @@
 
 #include "avcodec.h"
 #include "avcommon.h"
+
+#define API_CHANNEL_LAYOUT_STRUCT (LIBAVCODEC_VERSION_CHECK(59, 24, 100)) // AVCodecContext.ch_layout
 
 #define HURRY_UP_GUARD1 VLC_TICK_FROM_MS(450)
 #define HURRY_UP_GUARD2 VLC_TICK_FROM_MS(300)
@@ -171,6 +174,7 @@ static const uint64_t pi_channels_map[][2] =
     { AV_CH_STEREO_RIGHT,      0 },
 };
 
+#if !API_CHANNEL_LAYOUT_STRUCT
 static const uint32_t channel_mask[][2] = {
     {0,0},
     {AOUT_CHAN_CENTER, AV_CH_LAYOUT_MONO},
@@ -183,6 +187,7 @@ static const uint32_t channel_mask[][2] = {
     {AOUT_CHANS_7_1, AV_CH_LAYOUT_7POINT1},
     {AOUT_CHANS_8_1, AV_CH_LAYOUT_OCTAGONAL},
 };
+#endif
 
 static const char *const ppsz_enc_options[] = {
     "keyint", "bframes", "vt", "qmin", "qmax", "codec", "hq",
@@ -333,10 +338,10 @@ int InitVideoEnc( vlc_object_t *p_this )
                 psz_namecodec = "MPEG-1 video";
                 break;
             }
-            if( GetFfmpegCodec( VIDEO_ES, p_enc->fmt_out.i_codec, &i_codec_id,
-                                &psz_namecodec ) )
+            if( GetFfmpegCodec( &p_enc->fmt_out, &i_codec_id, &psz_namecodec ) )
                 break;
-            if( FindFfmpegChroma( p_enc->fmt_out.i_codec ) != AV_PIX_FMT_NONE )
+            bool uv_flipped;
+            if( FindFfmpegChroma( p_enc->fmt_out.i_codec, &uv_flipped ) != AV_PIX_FMT_NONE )
             {
                 i_codec_id = AV_CODEC_ID_RAWVIDEO;
                 psz_namecodec = "Raw video";
@@ -346,8 +351,7 @@ int InitVideoEnc( vlc_object_t *p_this )
 
         case AUDIO_ES:
             encoder_ops = &audio_ops;
-            if( GetFfmpegCodec( AUDIO_ES, p_enc->fmt_out.i_codec, &i_codec_id,
-                                &psz_namecodec ) )
+            if( GetFfmpegCodec( &p_enc->fmt_out, &i_codec_id, &psz_namecodec ) )
                 break;
             /* fall through */
         default:
@@ -556,14 +560,19 @@ int InitVideoEnc( vlc_object_t *p_this )
                    p_enc->fmt_in.video.i_sar_den, 1 << 30 );
 
 
-        p_enc->fmt_in.i_codec = VLC_CODEC_I420;
+        p_enc->fmt_in.i_codec =
+        p_enc->fmt_in.video.i_chroma = VLC_CODEC_I420;
 
         /* Very few application support YUV in TIFF, not even VLC */
         if( p_enc->fmt_out.i_codec == VLC_CODEC_TIFF )
-            p_enc->fmt_in.i_codec = VLC_CODEC_RGB24;
+        {
+            p_enc->fmt_in.i_codec =
+            p_enc->fmt_in.video.i_chroma = VLC_CODEC_RGB24;
+        }
 
-        p_enc->fmt_in.video.i_chroma = p_enc->fmt_in.i_codec;
-        GetFfmpegChroma( &p_context->pix_fmt, &p_enc->fmt_in.video );
+        bool uv_flipped;
+        p_context->pix_fmt = FindFfmpegChroma( p_enc->fmt_in.video.i_chroma, &uv_flipped );
+        assert(!uv_flipped); // I420/RGB24 should not be flipped
 
         if( p_codec->pix_fmts )
         {
@@ -756,51 +765,39 @@ int InitVideoEnc( vlc_object_t *p_this )
         date_Init( &p_sys->buffer_date, p_enc->fmt_out.audio.i_rate, 1 );
         p_context->time_base.num = 1;
         p_context->time_base.den = p_context->sample_rate;
-        p_context->channels      = p_enc->fmt_out.audio.i_channels;
-        p_context->channel_layout = channel_mask[p_context->channels][1];
 
-        /* Setup Channel ordering for multichannel audio
+        /* Setup Channel ordering for audio
          * as VLC channel order isn't same as libavcodec expects
          */
 
         p_sys->i_channels_to_reorder = 0;
 
-        /* Specified order
+        /* Create channel layout for avcodec
          * Copied from audio.c
          */
-        const unsigned i_order_max = 8 * sizeof(p_context->channel_layout);
         uint32_t pi_order_dst[AOUT_CHAN_MAX] = { 0 };
         uint32_t order_mask = 0;
         int i_channels_src = 0;
 
-        if( p_context->channel_layout )
+        msg_Dbg( p_enc, "Creating channel order for reordering");
+#if API_CHANNEL_LAYOUT_STRUCT && LIBAVUTIL_VERSION_CHECK(57, 24, 100)
+        av_channel_layout_default( &p_context->ch_layout, p_enc->fmt_out.audio.i_channels );
+        uint64_t channel_mask = p_context->ch_layout.u.mask;
+#else
+        p_context->channels = p_enc->fmt_out.audio.i_channels;
+        p_context->channel_layout = channel_mask[p_context->channels][1];
+        uint64_t channel_mask = p_context->channel_layout;
+#endif
+        for( unsigned i = 0; i < sizeof(pi_channels_map)/sizeof(*pi_channels_map); i++ )
         {
-            msg_Dbg( p_enc, "Creating channel order for reordering");
-            for( unsigned i = 0; i < sizeof(pi_channels_map)/sizeof(*pi_channels_map); i++ )
+            if( channel_mask & pi_channels_map[i][0] )
             {
-                if( p_context->channel_layout & pi_channels_map[i][0] )
-                {
-                    msg_Dbg( p_enc, "%d %"PRIx64" mapped to %"PRIx64"", i_channels_src, pi_channels_map[i][0], pi_channels_map[i][1]);
-                    pi_order_dst[i_channels_src++] = pi_channels_map[i][1];
-                    order_mask |= pi_channels_map[i][1];
-                }
+                msg_Dbg( p_enc, "%d %"PRIx64" mapped to %"PRIx64"", i_channels_src, pi_channels_map[i][0], pi_channels_map[i][1]);
+                pi_order_dst[i_channels_src++] = pi_channels_map[i][1];
+                order_mask |= pi_channels_map[i][1];
             }
         }
-        else
-        {
-            msg_Dbg( p_enc, "Creating default channel order for reordering");
-            /* Create default order  */
-            for( unsigned int i = 0; i < __MIN( i_order_max, (unsigned)p_sys->p_context->channels ); i++ )
-            {
-                if( i < sizeof(pi_channels_map)/sizeof(*pi_channels_map) )
-                {
-                    msg_Dbg( p_enc, "%d channel is %"PRIx64"", i_channels_src, pi_channels_map[i][1]);
-                    pi_order_dst[i_channels_src++] = pi_channels_map[i][1];
-                    order_mask |= pi_channels_map[i][1];
-                }
-            }
-        }
-        if( i_channels_src != p_context->channels )
+        if( i_channels_src != p_enc->fmt_out.audio.i_channels )
             msg_Err( p_enc, "Channel layout not understood" );
 
         p_sys->i_channels_to_reorder =
@@ -874,7 +871,12 @@ int InitVideoEnc( vlc_object_t *p_this )
     {
         /* XXX: hack: Force same codec (will be handled by transcode) */
         p_enc->fmt_in.video.i_chroma = p_enc->fmt_in.i_codec = p_enc->fmt_out.i_codec;
-        GetFfmpegChroma( &p_context->pix_fmt, &p_enc->fmt_in.video );
+
+        bool uv_flipped;
+        p_context->pix_fmt = FindFfmpegChroma( p_enc->fmt_in.video.i_chroma, &uv_flipped );
+        if (unlikely(uv_flipped))
+            msg_Warn(p_enc, "VLC chroma needs UV planes swapping %4.4s",
+                     (char*)&p_enc->fmt_in.video.i_chroma);
     }
 
     /* Make sure we get extradata filled by the encoder */
@@ -906,7 +908,7 @@ int InitVideoEnc( vlc_object_t *p_this )
     if( ret )
     {
         if( p_enc->fmt_in.i_cat != AUDIO_ES ||
-                (p_context->channels <= 2 && i_codec_id != AV_CODEC_ID_MP2
+                (p_enc->fmt_out.audio.i_channels <= 2 && i_codec_id != AV_CODEC_ID_MP2
                  && i_codec_id != AV_CODEC_ID_MP3) )
 errmsg:
         {
@@ -931,10 +933,14 @@ errmsg:
             goto error;
         }
 
-        if( p_context->channels > 2 )
+        if( p_enc->fmt_out.audio.i_channels > 2 )
         {
+#if API_CHANNEL_LAYOUT_STRUCT && LIBAVUTIL_VERSION_CHECK(57, 24, 100)
+            av_channel_layout_default( &p_context->ch_layout, 2 );
+#else
             p_context->channels = 2;
             p_context->channel_layout = channel_mask[p_context->channels][1];
+#endif
 
             /* Change fmt_in in order to ask for a channels conversion */
             p_enc->fmt_in.audio.i_channels =
@@ -1037,7 +1043,7 @@ errmsg:
                                     p_context->frame_size :
                                     AV_INPUT_BUFFER_MIN_SIZE;
         p_sys->i_buffer_out = av_samples_get_buffer_size(NULL,
-                p_sys->p_context->channels, p_sys->i_frame_size,
+                p_enc->fmt_out.audio.i_channels, p_sys->i_frame_size,
                 p_sys->p_context->sample_fmt, DEFAULT_ALIGN);
         p_sys->p_buffer = av_malloc( p_sys->i_buffer_out );
         if ( unlikely( p_sys->p_buffer == NULL ) )
@@ -1289,13 +1295,17 @@ static block_t *handle_delay_buffer( encoder_t *p_enc, encoder_sys_t *p_sys, uns
 {
     block_t *p_block = NULL;
     //How much we need to copy from new packet
-    const size_t leftover = leftover_samples * p_sys->p_context->channels * p_sys->i_sample_bytes;
+    const size_t leftover = leftover_samples * p_enc->fmt_out.audio.i_channels * p_sys->i_sample_bytes;
 
     av_frame_unref( p_sys->frame );
     p_sys->frame->format     = p_sys->p_context->sample_fmt;
     p_sys->frame->nb_samples = leftover_samples + p_sys->i_samples_delay;
+#if API_CHANNEL_LAYOUT_STRUCT && LIBAVUTIL_VERSION_CHECK(57, 24, 100)
+    av_channel_layout_copy(&p_sys->frame->ch_layout, &p_sys->p_context->ch_layout);
+#else
     p_sys->frame->channel_layout = p_sys->p_context->channel_layout;
     p_sys->frame->channels = p_sys->p_context->channels;
+#endif
 
     if( likely( date_Get( &p_sys->buffer_date ) != VLC_TICK_INVALID) )
     {
@@ -1315,7 +1325,7 @@ static block_t *handle_delay_buffer( encoder_t *p_enc, encoder_sys_t *p_sys, uns
         // We need to deinterleave from p_aout_buf to p_buffer the leftover bytes
         if( p_sys->b_planar )
             aout_Deinterleave( p_sys->p_interleave_buf, p_sys->p_buffer,
-                p_sys->i_frame_size, p_sys->p_context->channels, p_enc->fmt_in.i_codec );
+                p_sys->i_frame_size, p_enc->fmt_out.audio.i_channels, p_enc->fmt_in.i_codec );
         else
             memcpy( p_sys->p_buffer + buffer_delay, p_aout_buf->p_buffer, leftover);
 
@@ -1332,7 +1342,7 @@ static block_t *handle_delay_buffer( encoder_t *p_enc, encoder_sys_t *p_sys, uns
         memset( p_sys->p_buffer + (leftover+buffer_delay), 0, padding_size );
         buffer_delay += padding_size;
     }
-    if( avcodec_fill_audio_frame( p_sys->frame, p_sys->p_context->channels,
+    if( avcodec_fill_audio_frame( p_sys->frame, p_enc->fmt_out.audio.i_channels,
             p_sys->p_context->sample_fmt, p_sys->b_planar ? p_sys->p_interleave_buf : p_sys->p_buffer,
             p_sys->i_buffer_out,
             DEFAULT_ALIGN) < 0 )
@@ -1362,7 +1372,7 @@ static block_t *EncodeAudio( encoder_t *p_enc, block_t *p_aout_buf )
 
     //i_bytes_left is amount of bytes we get
     i_samples_left = p_aout_buf ? p_aout_buf->i_nb_samples : 0;
-    buffer_delay = p_sys->i_samples_delay * p_sys->i_sample_bytes * p_sys->p_context->channels;
+    buffer_delay = p_sys->i_samples_delay * p_sys->i_sample_bytes * p_enc->fmt_out.audio.i_channels;
 
     //p_sys->i_buffer_out = p_sys->i_frame_size * chan * p_sys->i_sample_bytes
     //Calculate how many bytes we would need from current buffer to fill frame
@@ -1424,8 +1434,12 @@ static block_t *EncodeAudio( encoder_t *p_enc, block_t *p_aout_buf )
         else
             p_sys->frame->nb_samples = p_sys->i_frame_size;
         p_sys->frame->format = p_sys->p_context->sample_fmt;
+#if API_CHANNEL_LAYOUT_STRUCT && LIBAVUTIL_VERSION_CHECK(57, 24, 100)
+        av_channel_layout_copy(&p_sys->frame->ch_layout, &p_sys->p_context->ch_layout);
+#else
         p_sys->frame->channel_layout = p_sys->p_context->channel_layout;
         p_sys->frame->channels = p_sys->p_context->channels;
+#endif
 
         if( likely(date_Get( &p_sys->buffer_date ) != VLC_TICK_INVALID) )
         {
@@ -1436,12 +1450,12 @@ static block_t *EncodeAudio( encoder_t *p_enc, block_t *p_aout_buf )
         else p_sys->frame->pts = AV_NOPTS_VALUE;
 
         const int in_bytes = p_sys->frame->nb_samples *
-            p_sys->p_context->channels * p_sys->i_sample_bytes;
+            p_enc->fmt_out.audio.i_channels* p_sys->i_sample_bytes;
 
         if( p_sys->b_planar )
         {
             aout_Deinterleave( p_sys->p_buffer, p_aout_buf->p_buffer,
-                               p_sys->frame->nb_samples, p_sys->p_context->channels, p_enc->fmt_in.i_codec );
+                               p_sys->frame->nb_samples, p_enc->fmt_out.audio.i_channels, p_enc->fmt_in.i_codec );
 
         }
         else
@@ -1449,7 +1463,7 @@ static block_t *EncodeAudio( encoder_t *p_enc, block_t *p_aout_buf )
             memcpy(p_sys->p_buffer, p_aout_buf->p_buffer, in_bytes);
         }
 
-        if( avcodec_fill_audio_frame( p_sys->frame, p_sys->p_context->channels,
+        if( avcodec_fill_audio_frame( p_sys->frame, p_enc->fmt_out.audio.i_channels,
                                     p_sys->p_context->sample_fmt,
                                     p_sys->p_buffer,
                                     p_sys->i_buffer_out,
@@ -1475,7 +1489,7 @@ static block_t *EncodeAudio( encoder_t *p_enc, block_t *p_aout_buf )
     if( p_aout_buf->i_nb_samples > 0 )
     {
        memcpy( p_sys->p_buffer + buffer_delay, p_aout_buf->p_buffer,
-               p_aout_buf->i_nb_samples * p_sys->i_sample_bytes * p_sys->p_context->channels);
+               p_aout_buf->i_nb_samples * p_sys->i_sample_bytes * p_enc->fmt_out.audio.i_channels);
        p_sys->i_samples_delay += p_aout_buf->i_nb_samples;
     }
 

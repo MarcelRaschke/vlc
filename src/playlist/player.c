@@ -22,6 +22,9 @@
 # include "config.h"
 #endif
 
+#include <vlc_common.h>
+#include <vlc_interface.h>
+
 #include "player.h"
 
 #include "../player/player.h"
@@ -45,8 +48,10 @@ player_on_current_media_changed(vlc_player_t *player, input_item_t *new_media,
                         ? playlist->items.data[playlist->current]->media
                         : NULL;
     if (new_media == media)
-        /* nothing to do */
+    {
+        vlc_playlist_UpdateNextMedia(playlist);
         return;
+    }
 
     ssize_t index;
     if (new_media)
@@ -70,6 +75,19 @@ player_on_current_media_changed(vlc_player_t *player, input_item_t *new_media,
     playlist->has_next = vlc_playlist_ComputeHasNext(playlist);
 
     vlc_playlist_state_NotifyChanges(playlist, &state);
+
+    vlc_playlist_UpdateNextMedia(playlist);
+}
+
+static void
+on_player_state_changed(vlc_player_t *player,
+                        enum vlc_player_state new_state, void *userdata)
+{
+    vlc_playlist_t *playlist = userdata;
+
+    if (new_state == VLC_PLAYER_STATE_STOPPED
+     && playlist->stopped_action == VLC_PLAYLIST_MEDIA_STOPPED_EXIT)
+        libvlc_Quit(vlc_object_instance(player));
 }
 
 static void
@@ -112,20 +130,9 @@ on_player_media_subitems_changed(vlc_player_t *player, input_item_t *media,
     vlc_playlist_ExpandItemFromNode(playlist, subitems);
 }
 
-static input_item_t *
-player_get_next_media(vlc_player_t *player, void *userdata)
-{
-    VLC_UNUSED(player);
-    vlc_playlist_t *playlist = userdata;
-    return vlc_playlist_GetNextMedia(playlist);
-}
-
-static const struct vlc_player_media_provider player_media_provider = {
-    .get_next = player_get_next_media,
-};
-
 static const struct vlc_player_cbs player_callbacks = {
     .on_current_media_changed = player_on_current_media_changed,
+    .on_state_changed = on_player_state_changed,
     .on_media_meta_changed = on_player_media_meta_changed,
     .on_length_changed = on_player_media_length_changed,
     .on_media_subitems_changed = on_player_media_subitems_changed,
@@ -134,8 +141,7 @@ static const struct vlc_player_cbs player_callbacks = {
 bool
 vlc_playlist_PlayerInit(vlc_playlist_t *playlist, vlc_object_t *parent)
 {
-    playlist->player = vlc_player_New(parent, VLC_PLAYER_LOCK_NORMAL,
-                                      &player_media_provider, playlist);
+    playlist->player = vlc_player_New(parent, VLC_PLAYER_LOCK_NORMAL);
     if (unlikely(!playlist->player))
         return false;
 
@@ -192,4 +198,16 @@ void
 vlc_playlist_Resume(vlc_playlist_t *playlist)
 {
     vlc_player_Resume(playlist->player);
+}
+
+void
+vlc_playlist_SetMediaStoppedAction(vlc_playlist_t *playlist,
+                                   enum vlc_playlist_media_stopped_action action)
+{
+    vlc_playlist_AssertLocked(playlist);
+    playlist->stopped_action = action;
+    var_SetBool(playlist->player, "play-and-pause",
+                action == VLC_PLAYLIST_MEDIA_STOPPED_PAUSE);
+    vlc_playlist_UpdateNextMedia(playlist);
+    vlc_playlist_Notify(playlist, on_media_stopped_action_changed, action);
 }

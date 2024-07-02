@@ -126,7 +126,7 @@ static void DXA9_YV12(filter_t *p_filter, picture_t *src, picture_t *dst)
                               __MIN(desc.Height, src->format.i_y_offset + src->format.i_visible_height),
                               6, p_copy_cache);
 
-        if (dst->format.i_chroma != VLC_CODEC_I420 && dst->format.i_chroma != VLC_CODEC_I420_10L)
+        if (dst->format.i_chroma == VLC_CODEC_YV12)
             picture_SwapUV(dst);
     } else {
         msg_Err(p_filter, "Unsupported DXA9 conversion from 0x%08X to YV12", desc.Format);
@@ -241,6 +241,10 @@ static void YV12_D3D9(filter_t *p_filter, picture_t *src, picture_t *dst)
 
         picture_UpdatePlanes(dst, d3drect.pBits, d3drect.Pitch);
 
+        /* The dx/d3d buffer is always allocated as YV12 */
+        if (dst->format.i_chroma == VLC_CODEC_I420)
+            picture_SwapUV( dst );
+
         picture_CopyPixels(dst, src);
 
         dst->context = dst_pic_ctx;
@@ -257,6 +261,11 @@ static void YV12_D3D9(filter_t *p_filter, picture_t *src, picture_t *dst)
             return;
 
         picture_UpdatePlanes(sys->staging, d3drect.pBits, d3drect.Pitch);
+
+        /* The dx/d3d buffer is always allocated as YV12 */
+        if (sys->staging->format.i_chroma == VLC_CODEC_I420)
+            picture_SwapUV( sys->staging );
+
         picture_context_t *staging_pic_ctx = sys->staging->context;
         sys->staging->context = NULL; // some CPU filters won't like the mix of CPU/GPU
 
@@ -446,7 +455,8 @@ int D3D9OpenConverter( filter_t *p_filter )
 static void D3D9CloseCPUConverter( filter_t *p_filter )
 {
     filter_sys_t *p_sys = p_filter->p_sys;
-    DeleteFilter(p_sys->filter);
+    if (p_sys->filter != NULL)
+        DeleteFilter(p_sys->filter);
     if (p_sys->staging)
         picture_Release(p_sys->staging);
     vlc_video_context_Release(p_filter->vctx_out);
@@ -519,7 +529,7 @@ int D3D9OpenCPUConverter( filter_t *p_filter )
     d3d9_video_context_t *vctx_sys = GetD3D9ContextPrivate( p_filter->vctx_out );
     vctx_sys->format = p_dst->format.i_chroma;
 
-    if ( p_filter->fmt_in.video.i_chroma != p_dst->format.i_chroma )
+    if ( !video_format_IsSameChroma( &p_filter->fmt_in.video, &p_dst->format ) )
     {
         p_sys->filter = CreateFilter(p_filter, &p_filter->fmt_in, p_dst->format.i_chroma);
         if (!p_sys->filter)

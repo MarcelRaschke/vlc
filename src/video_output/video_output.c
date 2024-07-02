@@ -34,6 +34,8 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
+#include <vlc_configuration.h>
 
 #include <math.h>
 #include <stdlib.h>                                                /* free() */
@@ -58,6 +60,7 @@
 #include "snapshot.h"
 #include "video_window.h"
 #include "../misc/variables.h"
+#include "../misc/threads.h"
 #include "../clock/clock.h"
 #include "statistic.h"
 #include "chrono.h"
@@ -67,7 +70,7 @@ typedef struct vout_thread_sys_t
 {
     struct vout_thread_t obj;
 
-    vout_thread_private_t private;
+    vout_interlacing_state_t interlacing;
 
     bool dummy;
 
@@ -81,6 +84,7 @@ typedef struct vout_thread_sys_t
     bool wait_interrupted;
 
     vlc_clock_t     *clock;
+    vlc_clock_listener_id *clock_listener_id;
     float           rate;
     vlc_tick_t      delay;
 
@@ -100,7 +104,6 @@ typedef struct vout_thread_sys_t
 
     /* Subpicture unit */
     spu_t           *spu;
-    vlc_fourcc_t    spu_blend_chroma;
     vlc_blender_t   *spu_blend;
 
     /* Thread & synchronization */
@@ -168,11 +171,16 @@ typedef struct vout_thread_sys_t
 
     vlc_atomic_rc_t rc;
 
+    picture_pool_t  *private_pool; // interactive + static filters & blending
 } vout_thread_sys_t;
 
 #define VOUT_THREAD_TO_SYS(vout) \
     container_of(vout, vout_thread_sys_t, obj.obj)
 
+
+/* Amount of pictures in the private pool:
+ * 3 for interactive+static filters, 1 for SPU blending, 1 for currently displayed */
+#define FILTER_POOL_SIZE  (3+1+1)
 
 /* Maximum delay between 2 displayed pictures.
  * XXX it is needed for now but should be removed in the long term.
@@ -218,7 +226,6 @@ static void VoutFixFormat(video_format_t *dst, const video_format_t *src)
     video_format_Copy(dst, src);
     dst->i_chroma = vlc_fourcc_GetCodec(VIDEO_ES, src->i_chroma);
     VoutFixFormatAR( dst );
-    video_format_FixRgb(dst);
     vlc_viewpoint_clip( &dst->pose );
 }
 
@@ -675,6 +682,7 @@ static void VoutGetDisplayCfg(vout_thread_sys_t *p_vout, const video_format_t *f
     const int display_height = var_GetInteger(vout, "height");
     cfg->display.width   = display_width > 0  ? display_width  : 0;
     cfg->display.height  = display_height > 0 ? display_height : 0;
+    cfg->display.full_fill = var_GetBool(vout, "spu-fill");
     cfg->display.fitting = var_GetBool(vout, "autoscale")
         ? var_InheritFit(VLC_OBJECT(vout)) : VLC_VIDEO_FIT_NONE;
     unsigned msar_num, msar_den;
@@ -716,7 +724,7 @@ static int FilterRestartCallback(vlc_object_t *p_this, char const *psz_var,
 static int DelFilterCallbacks(filter_t *filter, void *opaque)
 {
     vout_thread_sys_t *sys = opaque;
-    filter_DelProxyCallbacks(VLC_OBJECT(sys), filter,
+    filter_DelProxyCallbacks(VLC_OBJECT(&sys->obj), filter,
                              FilterRestartCallback);
     return VLC_SUCCESS;
 }
@@ -733,7 +741,7 @@ static picture_t *VoutVideoFilterInteractiveNewPicture(filter_t *filter)
 {
     vout_thread_sys_t *sys = filter->owner.sys;
 
-    picture_t *picture = picture_pool_Get(sys->private.private_pool);
+    picture_t *picture = picture_pool_Get(sys->private_pool);
     if (picture) {
         picture_Reset(picture);
         video_format_CopyCropAr(&picture->format, &filter->fmt_out.video);
@@ -788,7 +796,7 @@ static void ChangeFilters(vout_thread_sys_t *vout)
     vlc_array_init(&array_static);
     vlc_array_init(&array_interactive);
 
-    if (sys->private.interlacing.has_deint)
+    if (sys->interlacing.has_deint)
     {
         vout_filter_t *e = malloc(sizeof(*e));
 
@@ -869,6 +877,9 @@ static void ChangeFilters(vout_thread_sys_t *vout)
     }
 
     if (!es_format_IsSimilar(p_fmt_current, &fmt_target)) {
+        es_format_LogDifferences(vlc_object_logger(&vout->obj),
+                "current", p_fmt_current, "new", &fmt_target);
+
         /* Shallow local copy */
         es_format_t tmp = *p_fmt_current;
         /* Assign the same chroma to compare everything except the chroma */
@@ -880,21 +891,37 @@ static void ChangeFilters(vout_thread_sys_t *vout)
         bool only_chroma_changed = es_format_IsSimilar(&tmp, &fmt_target);
         if (only_chroma_changed)
         {
-            msg_Dbg(&vout->obj, "Changing vout format to %4.4s",
-                                (const char *) &p_fmt_current->video.i_chroma);
-            /* Only the chroma changed, request the vout to update the format */
-            ret = vout_SetDisplayFormat(sys->display, &p_fmt_current->video,
-                                        vctx_current);
-            if (ret != VLC_SUCCESS)
-                msg_Dbg(&vout->obj, "Changing vout format to %4.4s failed",
-                        (const char *) &p_fmt_current->video.i_chroma);
+            picture_pool_t *new_private_pool =
+                    picture_pool_NewFromFormat(&p_fmt_current->video,
+                                               FILTER_POOL_SIZE);
+            if (new_private_pool != NULL)
+            {
+                msg_Dbg(&vout->obj, "Changing vout format to %4.4s",
+                                    (const char *) &p_fmt_current->video.i_chroma);
+                /* Only the chroma changed, request the vout to update the format */
+                ret = vout_SetDisplayFormat(sys->display, &p_fmt_current->video,
+                                            vctx_current);
+                if (ret != VLC_SUCCESS)
+                {
+                    picture_pool_Release(new_private_pool);
+                    msg_Dbg(&vout->obj, "Changing vout format to %4.4s failed",
+                            (const char *) &p_fmt_current->video.i_chroma);
+                }
+                else
+                {
+                    // update the pool
+                    picture_pool_Release(sys->private_pool);
+                    sys->private_pool = new_private_pool;
+                }
+            }
         }
 
         if (ret != VLC_SUCCESS)
         {
-            msg_Dbg(&vout->obj, "Adding a filter to compensate for format changes");
+            msg_Dbg(&vout->obj, "Adding a filter to compensate for format changes in interactive chain (%p)",
+                    (void*)sys->filter.chain_interactive);
             if (filter_chain_AppendConverter(sys->filter.chain_interactive,
-                                             &fmt_target) != 0) {
+                                             &fmt_target) != VLC_SUCCESS) {
                 msg_Err(&vout->obj, "Failed to compensate for the format changes, removing all filters");
                 DelAllFilterCallbacks(vout);
                 filter_chain_Reset(sys->filter.chain_static,      &fmt_target, vctx_target, &fmt_target);
@@ -958,12 +985,13 @@ static picture_t *PreparePicture(vout_thread_sys_t *vout, bool reuse_decoded,
                 if (is_late_dropped && !decoded->b_force)
                 {
                     const vlc_tick_t system_now = vlc_tick_now();
+                    vlc_clock_Lock(sys->clock);
                     const vlc_tick_t system_pts =
                         vlc_clock_ConvertToSystem(sys->clock, system_now,
                                                   decoded->date, sys->rate);
+                    vlc_clock_Unlock(sys->clock);
 
-                    if (system_pts != VLC_TICK_MAX &&
-                        IsPictureLate(vout, decoded, system_now, system_pts))
+                    if (IsPictureLate(vout, decoded, system_now, system_pts))
                     {
                         picture_Release(decoded);
                         vout_statistic_AddLost(&sys->statistic, 1);
@@ -1023,11 +1051,11 @@ static const struct filter_video_callbacks vout_video_cbs = {
     NULL, VoutHoldDecoderDevice,
 };
 
-static picture_t *ConvertRGB32AndBlend(vout_thread_sys_t *vout, picture_t *pic,
-                                     subpicture_t *subpic)
+static picture_t *ConvertRGBAAndBlend(vout_thread_sys_t *vout, picture_t *pic,
+                                      vlc_render_subpicture *subpic)
 {
     vout_thread_sys_t *sys = vout;
-    /* This function will convert the pic to RGB32 and blend the subpic to it.
+    /* This function will convert the pic to RGBA and blend the subpic to it.
      * The returned pic can't be used to display since the chroma will be
      * different than the "vout display" one, but it can be used for snapshots.
      * */
@@ -1044,14 +1072,13 @@ static picture_t *ConvertRGB32AndBlend(vout_thread_sys_t *vout, picture_t *pic,
 
     es_format_t src = sys->spu_blend->fmt_out;
     es_format_t dst = src;
-    dst.video.i_chroma = VLC_CODEC_RGB32;
-    video_format_FixRgb(&dst.video);
+    dst.video.i_chroma = VLC_CODEC_RGBA;
 
     filter_chain_Reset(filterc, &src,
                        NULL /* TODO output video context of blender */,
                        &dst);
 
-    if (filter_chain_AppendConverter(filterc, &dst) != 0)
+    if (filter_chain_AppendConverter(filterc, &dst) != VLC_SUCCESS)
     {
         filter_chain_Delete(filterc);
         return NULL;
@@ -1091,9 +1118,25 @@ static picture_t *FilterPictureInteractive(vout_thread_sys_t *sys)
     return filtered;
 }
 
+static vlc_render_subpicture *RenderSPUs(vout_thread_sys_t *sys,
+                                const vlc_fourcc_t *subpicture_chromas,
+                                const video_format_t *spu_frame,
+                                vlc_tick_t system_now, vlc_tick_t render_subtitle_date,
+                                bool ignore_osd, bool spu_in_full_window,
+                                const vout_display_place_t *video_position)
+{
+    if (unlikely(sys->spu == NULL))
+        return NULL;
+    return spu_Render(sys->spu,
+                      subpicture_chromas, spu_frame,
+                      sys->display->source, spu_in_full_window, video_position,
+                      system_now, render_subtitle_date,
+                      ignore_osd);
+}
+
 static int PrerenderPicture(vout_thread_sys_t *sys, picture_t *filtered,
-                            bool *render_now, picture_t **out_pic,
-                            subpicture_t **out_subpic)
+                            picture_t **out_pic,
+                            vlc_render_subpicture **out_subpic)
 {
     vout_display_t *vd = sys->display;
 
@@ -1106,73 +1149,66 @@ static int PrerenderPicture(vout_thread_sys_t *sys, picture_t *filtered,
         render_subtitle_date = sys->pause.date;
     else
     {
+        vlc_clock_Lock(sys->clock);
         render_subtitle_date = filtered->date <= VLC_TICK_0 ? system_now :
             vlc_clock_ConvertToSystem(sys->clock, system_now, filtered->date,
                                       sys->rate);
-
-        /* The clock is paused, it's too late to fallback to the previous
-         * picture, display the current picture anyway and force the rendering
-         * to now. */
-        if (unlikely(render_subtitle_date == VLC_TICK_MAX))
-        {
-            render_subtitle_date = system_now;
-            *render_now = true;
-        }
+        vlc_clock_Unlock(sys->clock);
     }
 
     /*
      * Check whether we let the display draw the subpicture itself (when
-     * do_dr_spu=true), and if we can fallback to blending the subpicture
-     * ourselves (do_early_spu=true).
+     * vd_does_blending=true), and if we can fallback to blending the subpicture
+     * ourselves (blending_before_converter=true).
      */
     const bool do_snapshot = vout_snapshot_IsRequested(sys->snapshot);
-    const bool do_dr_spu = !do_snapshot &&
-                           vd->info.subpicture_chromas &&
-                           *vd->info.subpicture_chromas != 0;
+    const bool vd_does_blending = !do_snapshot &&
+                                   vd->info.subpicture_chromas &&
+                                   *vd->info.subpicture_chromas != 0;
+    const bool spu_in_full_window = vd->cfg->display.full_fill &&
+                                    vd_does_blending;
 
-    //FIXME: Denying do_early_spu if vd->source->orientation != ORIENT_NORMAL
+    //FIXME: Denying blending_before_converter if vd->source->orientation != ORIENT_NORMAL
     //will have the effect that snapshots miss the subpictures. We do this
     //because there is currently no way to transform subpictures to match
     //the source format.
-    const bool do_early_spu = !do_dr_spu &&
-                               vd->source->orientation == ORIENT_NORMAL;
+    // In early SPU blending the blending is done into the source chroma,
+    // otherwise it's done in the display chroma
+    const bool blending_before_converter = vd->source->orientation == ORIENT_NORMAL;
 
-    const vlc_fourcc_t *subpicture_chromas;
+    vout_display_place_t place;
+    const vout_display_place_t *video_place = NULL; // default to fit the video
     video_format_t fmt_spu;
-    if (do_dr_spu) {
-        vout_display_place_t place;
+    if (vd_does_blending) {
+        video_place = &place;
         vout_display_PlacePicture(&place, vd->source, &vd->cfg->display);
 
         fmt_spu = *vd->source;
-        if (fmt_spu.i_width * fmt_spu.i_height < place.width * place.height) {
-            fmt_spu.i_sar_num = vd->cfg->display.sar.num;
-            fmt_spu.i_sar_den = vd->cfg->display.sar.den;
-            fmt_spu.i_width          =
-            fmt_spu.i_visible_width  = place.width;
-            fmt_spu.i_height         =
-            fmt_spu.i_visible_height = place.height;
-        }
-        subpicture_chromas = vd->info.subpicture_chromas;
+        fmt_spu.i_sar_num = vd->cfg->display.sar.num;
+        fmt_spu.i_sar_den = vd->cfg->display.sar.den;
+        fmt_spu.i_x_offset       = 0;
+        fmt_spu.i_y_offset       = 0;
+        fmt_spu.i_width          =
+        fmt_spu.i_visible_width  = vd->cfg->display.width;
+        fmt_spu.i_height         =
+        fmt_spu.i_visible_height = vd->cfg->display.height;
     } else {
-        if (do_early_spu) {
+        if (blending_before_converter) {
             fmt_spu = *vd->source;
         } else {
             fmt_spu = *vd->fmt;
             fmt_spu.i_sar_num = vd->cfg->display.sar.num;
             fmt_spu.i_sar_den = vd->cfg->display.sar.den;
         }
-        subpicture_chromas = NULL;
 
         if (sys->spu_blend &&
-            sys->spu_blend->fmt_out.video.i_chroma != fmt_spu.i_chroma) {
+            !video_format_IsSameChroma(&sys->spu_blend->fmt_out.video, &fmt_spu)) {
             filter_DeleteBlend(sys->spu_blend);
             sys->spu_blend = NULL;
-            sys->spu_blend_chroma = 0;
         }
-        if (!sys->spu_blend && sys->spu_blend_chroma != fmt_spu.i_chroma) {
-            sys->spu_blend_chroma = fmt_spu.i_chroma;
+        if (!sys->spu_blend) {
             sys->spu_blend = filter_NewBlend(VLC_OBJECT(&sys->obj), &fmt_spu);
-            if (!sys->spu_blend)
+            if (unlikely(sys->spu_blend == NULL))
                 msg_Err(&sys->obj, "Failed to create blending filter, OSD/Subtitles will not work");
         }
     }
@@ -1180,12 +1216,6 @@ static int PrerenderPicture(vout_thread_sys_t *sys, picture_t *filtered,
     /* Get the subpicture to be displayed. */
     video_format_t fmt_spu_rot;
     video_format_ApplyRotation(&fmt_spu_rot, &fmt_spu);
-    subpicture_t *subpic = !sys->spu ? NULL :
-                           spu_Render(sys->spu,
-                                      subpicture_chromas, &fmt_spu_rot,
-                                      vd->source, system_now,
-                                      render_subtitle_date,
-                                      do_snapshot, vd->info.can_scale_spu);
     /*
      * Perform rendering
      *
@@ -1195,9 +1225,12 @@ static int PrerenderPicture(vout_thread_sys_t *sys, picture_t *filtered,
      */
     picture_t *todisplay = filtered;
     picture_t *snap_pic = todisplay;
-    if (do_early_spu && subpic) {
-        if (sys->spu_blend) {
-            picture_t *blent = picture_pool_Get(sys->private.private_pool);
+    if (!vd_does_blending && blending_before_converter && sys->spu_blend) {
+        vlc_render_subpicture *subpic = RenderSPUs(sys, NULL, &fmt_spu_rot,
+                                          system_now, render_subtitle_date,
+                                          do_snapshot, spu_in_full_window, video_place);
+        if (subpic) {
+            picture_t *blent = picture_pool_Get(sys->private_pool);
             if (blent) {
                 video_format_CopyCropAr(&blent->format, &filtered->format);
                 picture_Copy(blent, filtered);
@@ -1208,19 +1241,18 @@ static int PrerenderPicture(vout_thread_sys_t *sys, picture_t *filtered,
                 {
                     /* Blending failed, likely because the picture is opaque or
                      * read-only. Try to convert the opaque picture to a
-                     * software RGB32 one before blending it. */
+                     * software RGB32 to generate a snapshot. */
                     if (do_snapshot)
                     {
-                        picture_t *copy = ConvertRGB32AndBlend(sys, blent, subpic);
+                        picture_t *copy = ConvertRGBAAndBlend(sys, blent, subpic);
                         if (copy)
                             snap_pic = copy;
                     }
                     picture_Release(blent);
                 }
             }
+            vlc_render_subpicture_Delete(subpic);
         }
-        subpicture_Delete(subpic);
-        subpic = NULL;
     }
 
     /*
@@ -1239,23 +1271,29 @@ static int PrerenderPicture(vout_thread_sys_t *sys, picture_t *filtered,
 
     todisplay = vout_ConvertForDisplay(vd, todisplay);
     if (todisplay == NULL) {
-        if (subpic != NULL)
-            subpicture_Delete(subpic);
         return VLC_EGENERIC;
     }
 
-    if (!do_dr_spu && subpic)
+    if (!vd_does_blending && !blending_before_converter && sys->spu_blend)
     {
-        if (sys->spu_blend)
+        vlc_render_subpicture *subpic = RenderSPUs(sys, NULL, &fmt_spu_rot,
+                                          system_now, render_subtitle_date,
+                                          do_snapshot, spu_in_full_window, video_place);
+        if (subpic)
+        {
             picture_BlendSubpicture(todisplay, sys->spu_blend, subpic);
-
-        /* The subpic will not be used anymore */
-        subpicture_Delete(subpic);
-        subpic = NULL;
+            vlc_render_subpicture_Delete(subpic);
+        }
     }
 
     *out_pic = todisplay;
-    *out_subpic = subpic;
+    if (vd_does_blending)
+        *out_subpic = RenderSPUs(sys, vd->info.subpicture_chromas, &fmt_spu_rot,
+                                 system_now, render_subtitle_date,
+                                 false, spu_in_full_window, video_place);
+    else
+        *out_subpic = NULL;
+
     return VLC_SUCCESS;
 }
 
@@ -1275,8 +1313,8 @@ static int RenderPicture(vout_thread_sys_t *sys, bool render_now)
     vlc_queuedmutex_lock(&sys->display_lock);
 
     picture_t *todisplay;
-    subpicture_t *subpic;
-    int ret = PrerenderPicture(sys, filtered, &render_now, &todisplay, &subpic);
+    vlc_render_subpicture *subpic;
+    int ret = PrerenderPicture(sys, filtered, &todisplay, &subpic);
     if (ret != VLC_SUCCESS)
     {
         vlc_queuedmutex_unlock(&sys->display_lock);
@@ -1285,16 +1323,10 @@ static int RenderPicture(vout_thread_sys_t *sys, bool render_now)
 
     vlc_tick_t system_now = vlc_tick_now();
     const vlc_tick_t pts = todisplay->date;
+    vlc_clock_Lock(sys->clock);
     vlc_tick_t system_pts = render_now ? system_now :
         vlc_clock_ConvertToSystem(sys->clock, system_now, pts, sys->rate);
-    if (unlikely(system_pts == VLC_TICK_MAX))
-    {
-        /* The clock is paused, it's too late to fallback to the previous
-         * picture, display the current picture anyway and force the rendering
-         * to now. */
-        system_pts = system_now;
-        render_now = true;
-    }
+    vlc_clock_Unlock(sys->clock);
 
     const unsigned frame_rate = todisplay->format.i_frame_rate;
     const unsigned frame_rate_base = todisplay->format.i_frame_rate_base;
@@ -1337,8 +1369,9 @@ static int RenderPicture(vout_thread_sys_t *sys, bool render_now)
                     deadline = max_deadline;
                 else
                 {
-                    deadline = vlc_clock_ConvertToSystemLocked(sys->clock,
-                                                vlc_tick_now(), pts, sys->rate);
+                    deadline = vlc_clock_ConvertToSystem(sys->clock,
+                                                         vlc_tick_now(), pts,
+                                                         sys->rate);
                     if (deadline > max_deadline)
                         deadline = max_deadline;
                 }
@@ -1361,27 +1394,32 @@ static int RenderPicture(vout_thread_sys_t *sys, bool render_now)
     else
     {
         sys->displayed.date = system_now;
-        /* Tell the clock that the pts was forced */
-        system_pts = VLC_TICK_MAX;
     }
-    vlc_tick_t drift = vlc_clock_UpdateVideo(sys->clock, system_pts, pts, sys->rate,
-                                             frame_rate, frame_rate_base);
 
     /* Display the direct buffer returned by vout_RenderPicture */
     vout_display_Display(vd, todisplay);
+    vlc_clock_Lock(sys->clock);
+    vlc_tick_t drift = vlc_clock_UpdateVideo(sys->clock,
+                                             vlc_tick_now(),
+                                             pts, sys->rate,
+                                             frame_rate, frame_rate_base);
+    vlc_clock_Unlock(sys->clock);
+
     vlc_queuedmutex_unlock(&sys->display_lock);
 
     picture_Release(todisplay);
 
     if (subpic)
-        subpicture_Delete(subpic);
+        vlc_render_subpicture_Delete(subpic);
 
     vout_statistic_AddDisplayed(&sys->statistic, 1);
 
     if (tracer != NULL && system_pts != VLC_TICK_MAX)
-        vlc_tracer_TraceWithTs(tracer, system_pts, VLC_TRACE("type", "RENDER"),
+        vlc_tracer_TraceWithTs(tracer, system_pts,
+                               VLC_TRACE("type", "RENDER"),
                                VLC_TRACE("id", sys->str_id),
-                               VLC_TRACE("drift", drift), VLC_TRACE_END);
+                               VLC_TRACE_TICK_NS("drift", drift),
+                               VLC_TRACE_END);
 
     return VLC_SUCCESS;
 }
@@ -1390,9 +1428,9 @@ static void UpdateDeinterlaceFilter(vout_thread_sys_t *sys)
 {
     vlc_mutex_lock(&sys->filter.lock);
     if (sys->filter.changed ||
-        sys->private.interlacing.has_deint != sys->filter.new_interlaced)
+        sys->interlacing.has_deint != sys->filter.new_interlaced)
     {
-        sys->private.interlacing.has_deint = sys->filter.new_interlaced;
+        sys->interlacing.has_deint = sys->filter.new_interlaced;
         ChangeFilters(sys);
     }
     vlc_mutex_unlock(&sys->filter.lock);
@@ -1438,12 +1476,11 @@ static bool UpdateCurrentPicture(vout_thread_sys_t *sys)
         return false;
 
     const vlc_tick_t system_now = vlc_tick_now();
+    vlc_clock_Lock(sys->clock);
     const vlc_tick_t system_swap_current =
         vlc_clock_ConvertToSystem(sys->clock, system_now,
                                   sys->displayed.current->date, sys->rate);
-    if (unlikely(system_swap_current == VLC_TICK_MAX))
-        // the clock is paused but the vout thread is not ?
-        return false;
+    vlc_clock_Unlock(sys->clock);
 
     const vlc_tick_t render_delay = vout_chrono_GetHigh(&sys->chrono.render) + VOUT_MWAIT_TOLERANCE;
     vlc_tick_t system_prepare_current = system_swap_current - render_delay;
@@ -1491,7 +1528,8 @@ static vlc_tick_t DisplayPicture(vout_thread_sys_t *vout)
     else if (sys->wait_interrupted)
     {
         sys->wait_interrupted = false;
-        RenderPicture(vout, true);
+        if (likely(sys->displayed.current != NULL))
+            RenderPicture(vout, true);
         return VLC_TICK_INVALID;
     }
     else if (likely(sys->displayed.date != VLC_TICK_INVALID))
@@ -1577,8 +1615,10 @@ static void vout_FlushUnlocked(vout_thread_sys_t *vout, bool below,
 
     if (sys->clock != NULL)
     {
+        vlc_clock_Lock(sys->clock);
         vlc_clock_Reset(sys->clock);
         vlc_clock_SetDelay(sys->clock, sys->delay);
+        vlc_clock_Unlock(sys->clock);
     }
 }
 
@@ -1615,7 +1655,9 @@ void vout_ChangeDelay(vout_thread_t *vout, vlc_tick_t delay)
     assert(sys->display);
 
     vout_control_Hold(&sys->control);
+    vlc_clock_Lock(sys->clock);
     vlc_clock_SetDelay(sys->clock, delay);
+    vlc_clock_Unlock(sys->clock);
     sys->delay = delay;
     vout_control_Release(&sys->control);
 }
@@ -1660,8 +1702,7 @@ static int vout_Start(vout_thread_sys_t *vout, vlc_video_context *vctx, const vo
     vlc_mutex_unlock(&sys->window_lock);
 
     sys->decoder_fifo = picture_fifo_New();
-    sys->private.display_pool = NULL;
-    sys->private.private_pool = NULL;
+    sys->private_pool = NULL;
 
     sys->filter.configuration = NULL;
     video_format_Copy(&sys->filter.src_fmt, &sys->original);
@@ -1717,7 +1758,14 @@ static int vout_Start(vout_thread_sys_t *vout, vlc_video_context *vctx, const vo
     dcfg.display.width = sys->window_width;
     dcfg.display.height = sys->window_height;
 
-    sys->display = vout_OpenWrapper(&vout->obj, &sys->private, sys->splitter_name, &dcfg,
+    sys->private_pool =
+        picture_pool_NewFromFormat(&sys->original, FILTER_POOL_SIZE);
+    if (sys->private_pool == NULL) {
+        vlc_queuedmutex_unlock(&sys->display_lock);
+        goto error;
+    }
+
+    sys->display = vout_OpenWrapper(&vout->obj, sys->splitter_name, &dcfg,
                                     &sys->original, vctx);
     if (sys->display == NULL) {
         vlc_queuedmutex_unlock(&sys->display_lock);
@@ -1730,8 +1778,6 @@ static int vout_Start(vout_thread_sys_t *vout, vlc_video_context *vctx, const vo
         vout_SetDisplayAspect(sys->display, num, den);
     vlc_queuedmutex_unlock(&sys->display_lock);
 
-    assert(sys->private.display_pool != NULL && sys->private.private_pool != NULL);
-
     sys->displayed.current       = NULL;
     sys->displayed.decoded       = NULL;
     sys->displayed.date          = VLC_TICK_INVALID;
@@ -1741,7 +1787,6 @@ static int vout_Start(vout_thread_sys_t *vout, vlc_video_context *vctx, const vo
     sys->pause.is_on = false;
     sys->pause.date  = VLC_TICK_INVALID;
 
-    sys->spu_blend_chroma        = 0;
     sys->spu_blend               = NULL;
 
     video_format_Print(VLC_OBJECT(&vout->obj), "original format", &sys->original);
@@ -1759,6 +1804,11 @@ error:
         filter_chain_Delete(ci);
     if (cs != NULL)
         filter_chain_Delete(cs);
+    if (sys->private_pool)
+    {
+        picture_pool_Release(sys->private_pool);
+        sys->private_pool = NULL;
+    }
     video_format_Clean(&sys->filter.src_fmt);
     if (sys->filter.src_vctx)
     {
@@ -1809,7 +1859,7 @@ static void *Thread(void *object)
 
         const bool picture_interlaced = sys->displayed.is_interlaced;
 
-        vout_SetInterlacingState(&vout->obj, &sys->private, picture_interlaced);
+        vout_SetInterlacingState(&vout->obj, &sys->interlacing, picture_interlaced);
     }
     return NULL;
 }
@@ -1825,11 +1875,16 @@ static void vout_ReleaseDisplay(vout_thread_sys_t *vout)
         filter_DeleteBlend(sys->spu_blend);
 
     /* Destroy the rendering display */
-    if (sys->private.display_pool != NULL)
+    if (sys->private_pool != NULL)
+    {
         vout_FlushUnlocked(vout, true, VLC_TICK_MAX);
 
+        picture_pool_Release(sys->private_pool);
+        sys->private_pool = NULL;
+    }
+
     vlc_queuedmutex_lock(&sys->display_lock);
-    vout_CloseWrapper(&vout->obj, &sys->private, sys->display);
+    vout_CloseWrapper(&vout->obj, sys->display);
     sys->display = NULL;
     vlc_queuedmutex_unlock(&sys->display_lock);
 
@@ -1856,7 +1911,7 @@ static void vout_ReleaseDisplay(vout_thread_sys_t *vout)
         picture_fifo_Delete(sys->decoder_fifo);
         sys->decoder_fifo = NULL;
     }
-    assert(sys->private.display_pool == NULL);
+    assert(sys->private_pool == NULL);
 
     vlc_mutex_lock(&sys->window_lock);
     vout_display_window_SetMouseHandler(sys->display_cfg.window, NULL, NULL);
@@ -1864,6 +1919,14 @@ static void vout_ReleaseDisplay(vout_thread_sys_t *vout)
 
     if (sys->spu)
         spu_Detach(sys->spu);
+
+    if (sys->clock_listener_id != NULL)
+    {
+        vlc_clock_Lock(sys->clock);
+        vlc_clock_RemoveListener(sys->clock, sys->clock_listener_id);
+        vlc_clock_Unlock(sys->clock);
+        sys->clock_listener_id = NULL;
+    }
 
     vlc_mutex_lock(&sys->clock_lock);
     sys->clock = NULL;
@@ -1911,8 +1974,7 @@ void vout_Close(vout_thread_t *vout)
     vout_thread_sys_t *sys = VOUT_THREAD_TO_SYS(vout);
     assert(!sys->dummy);
 
-    if (sys->display != NULL)
-        vout_Stop(vout);
+    vout_Stop(vout);
 
     vout_IntfDeinit(VLC_OBJECT(vout));
     vout_snapshot_End(sys->snapshot);
@@ -2036,7 +2098,9 @@ vout_thread_t *vout_Create(vlc_object_t *object)
     sys->title.timeout  = var_InheritInteger(vout, "video-title-timeout");
     sys->title.position = var_InheritInteger(vout, "video-title-position");
 
-    vout_InitInterlacingSupport(vout, &sys->private);
+    sys->private_pool = NULL;
+
+    vout_InitInterlacingSupport(vout, &sys->interlacing);
 
     sys->is_late_dropped = var_InheritBool(vout, "drop-late-frames");
 
@@ -2096,12 +2160,15 @@ int vout_ChangeSource( vout_thread_t *vout, const video_format_t *original,
      /* TODO: If dimensions are equal or slightly smaller, update the aspect
      * ratio and crop settings, instead of recreating a display.
      */
-    if (video_format_IsSimilar(original, &sys->original)) {
-        /* It is assumed that the SPU input matches input already. */
-        return 0;
+    if (!video_format_IsSimilar(original, &sys->original))
+    {
+        msg_Dbg(&vout->obj, "vout format changed");
+        video_format_LogDifferences(vlc_object_logger(&vout->obj), "current", &sys->original, "new", original);
+        return -1;
     }
 
-    return -1;
+    /* It is assumed that the SPU input matches input already. */
+    return 0;
 }
 
 static int EnableWindowLocked(vout_thread_sys_t *vout, const video_format_t *original)
@@ -2140,6 +2207,20 @@ static void vout_InitSource(vout_thread_sys_t *vout)
             vout->source.crop.mode = VOUT_CROP_NONE;
         free(psz_crop);
     }
+}
+
+static void clock_event_OnDiscontinuity(void *data)
+{
+    vout_thread_sys_t *vout = data;
+    vout_thread_sys_t *sys = vout;
+
+    /* The Render thread wait for a deadline that is either:
+     *  - VOUT_REDISPLAY_DELAY
+     *  - calculated from the clock
+     * In case of a clock discontinuity, we need to wake up the Render thread,
+     * in order to trigger the rendering of the next picture, if new timings
+     * require it. */
+    vout_control_Wake(&sys->control);
 }
 
 int vout_Request(const vout_configuration_t *cfg, vlc_video_context *vctx, input_thread_t *input)
@@ -2183,7 +2264,7 @@ int vout_Request(const vout_configuration_t *cfg, vlc_video_context *vctx, input
     if (sys->display != NULL)
         vout_StopDisplay(cfg->vout);
 
-    vout_ReinitInterlacingSupport(cfg->vout, &sys->private);
+    vout_ReinitInterlacingSupport(cfg->vout, &sys->interlacing);
 
     sys->delay = 0;
     sys->rate = 1.f;
@@ -2192,6 +2273,14 @@ int vout_Request(const vout_configuration_t *cfg, vlc_video_context *vctx, input
     vlc_mutex_lock(&sys->clock_lock);
     sys->clock = cfg->clock;
     vlc_mutex_unlock(&sys->clock_lock);
+
+    static const struct vlc_clock_event_cbs clock_event_cbs = {
+        .on_discontinuity = clock_event_OnDiscontinuity,
+    };
+    vlc_clock_Lock(sys->clock);
+    sys->clock_listener_id =
+        vlc_clock_AddListener(sys->clock, &clock_event_cbs, vout);
+    vlc_clock_Unlock(sys->clock);
 
     sys->delay = 0;
 
@@ -2213,6 +2302,13 @@ error_thread:
     vout_ReleaseDisplay(vout);
 error_display:
     vout_DisableWindow(vout);
+    if (sys->clock_listener_id != NULL)
+    {
+        vlc_clock_Lock(sys->clock);
+        vlc_clock_RemoveListener(sys->clock, sys->clock_listener_id);
+        vlc_clock_Unlock(sys->clock);
+    }
+    sys->clock_listener_id = NULL;
     vlc_mutex_lock(&sys->clock_lock);
     sys->clock = NULL;
     vlc_mutex_unlock(&sys->clock_lock);

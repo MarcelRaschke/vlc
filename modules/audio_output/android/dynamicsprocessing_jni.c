@@ -25,6 +25,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_fourcc.h>
 
 #include <jni.h>
@@ -190,8 +191,10 @@ int
     float dB = volume == 0.0f ? -144 : 20.0f * log10f( volume );
 
     JNI_CALL_VOID( dp, jfields.DynamicsProcessing.setInputGainAllChannelsTo, dB );
-    int ret = JNI_CALL_INT( dp, jfields.DynamicsProcessing.setEnabled, volume != 1.0f );
+    if( CHECK_EXCEPTION( "DynamicsProcessing", "setInputGainAllChannelsTo" ) )
+        return VLC_EGENERIC;
 
+    int ret = JNI_CALL_INT( dp, jfields.DynamicsProcessing.setEnabled, volume != 1.0f );
     if( CHECK_EXCEPTION( "DynamicsProcessing", "setEnabled" ) || ret != 0 )
         return VLC_EGENERIC;
 

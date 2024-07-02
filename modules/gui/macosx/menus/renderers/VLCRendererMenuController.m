@@ -32,7 +32,6 @@
 
 @interface VLCRendererMenuController ()
 {
-    NSMutableDictionary         *_rendererItems;
     NSMutableArray              *_rendererDiscoveries;
     BOOL                         _isDiscoveryEnabled;
     NSMenuItem                  *_selectedItem;
@@ -48,7 +47,6 @@
 {
     self = [super init];
     if (self) {
-        _rendererItems = [NSMutableDictionary dictionary];
         _rendererDiscoveries = [NSMutableArray array];
         _isDiscoveryEnabled = NO;
         p_intf = getIntf();
@@ -95,6 +93,11 @@
 
 - (void)addRendererItem:(VLCRendererItem *)item
 {
+    NSParameterAssert(item != nil);
+    NSMutableArray * const mutableRenderers = _rendererItems.mutableCopy;
+    [mutableRenderers addObject:item];
+    _rendererItems = mutableRenderers.copy;
+
     // Check if the item is already selected
     if (_selectedItem.representedObject != nil)
     {
@@ -125,18 +128,31 @@
                    range:[unformattedTitle rangeOfString:item.userReadableType options:NSBackwardsSearch]];
     menuItem.attributedTitle = title;
 
-    [_rendererMenu insertItem:menuItem atIndex:[_rendererMenu indexOfItem:_rendererNoneItem] + 1];
+    // The main menu must only be updated from the main thread
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [_rendererMenu insertItem:menuItem atIndex:[_rendererMenu indexOfItem:_rendererNoneItem] + 1];
+    });
 }
 
 - (void)removeRendererItem:(VLCRendererItem *)item
 {
-    NSInteger index = [_rendererMenu indexOfItemWithRepresentedObject:item];
-    if (index != NSNotFound) {
-        NSMenuItem *menuItem = [_rendererMenu itemAtIndex:index];
-        // Don't remove selected item
-        if (menuItem != _selectedItem)
-            [_rendererMenu removeItemAtIndex:index];
-    }
+    NSParameterAssert(item != nil);
+
+    // The main menu must only be updated from the main thread
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSMutableArray * const mutableRenderers = _rendererItems.mutableCopy;
+        [mutableRenderers removeObject:item];
+        _rendererItems = mutableRenderers.copy;
+
+        const NSInteger index = [_rendererMenu indexOfItemWithRepresentedObject:item];
+        if (index >= 0) {
+            NSMenuItem * const menuItem = [_rendererMenu itemAtIndex:index];
+            // Don't remove selected item
+            if (menuItem != _selectedItem) {
+                [_rendererMenu removeItemAtIndex:index];
+            }
+        }
+    });
 }
 
 - (void)startRendererDiscoveries
@@ -172,7 +188,7 @@
     _selectedItem = sender;
 
     VLCRendererItem *item = [sender representedObject];
-    VLCPlayerController *playerController = [[[VLCMain sharedInstance] playlistController] playerController];
+    VLCPlayerController *playerController = VLCMain.sharedInstance.playlistController.playerController;
 
     if (item) {
         [item setRendererForPlayerController:playerController];

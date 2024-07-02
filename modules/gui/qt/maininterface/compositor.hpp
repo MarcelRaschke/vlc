@@ -27,10 +27,14 @@
 #include <QObject>
 
 #include <vlc_common.h>
-#include <vlc_window.h>
 
 #include "qt.hpp"
 
+
+extern "C" {
+    typedef struct vlc_window vlc_window_t;
+    typedef struct vlc_window_cfg vlc_window_cfg_t;
+}
 
 class MainCtx;
 class VideoWindowHandler;
@@ -44,6 +48,7 @@ class QWindow;
 class QQuickItem;
 class QQuickView;
 class QQuickWindow;
+struct WindowEffectsModule;
 
 namespace vlc {
 
@@ -54,7 +59,9 @@ public:
         DummyCompositor,
         Win7Compositor,
         DirectCompositionCompositor,
-        X11Compositor
+        X11Compositor,
+        WaylandCompositor,
+        PlatformCompositor
     };
 
     typedef void (*VoutDestroyCb)(vlc_window_t *p_wnd);
@@ -62,14 +69,14 @@ public:
 public:
     virtual ~Compositor() = default;
 
-    virtual bool init() = 0;
+    [[nodiscard]] virtual bool init() = 0;
 
-    virtual bool makeMainInterface(MainCtx* intf) = 0;
+    [[nodiscard]] virtual bool makeMainInterface(MainCtx* intf) = 0;
     virtual void destroyMainInterface() = 0;
 
     virtual void unloadGUI() = 0;
 
-    virtual bool setupVoutWindow(vlc_window_t *p_wnd, VoutDestroyCb destroyCb) = 0;
+    [[nodiscard]] virtual bool setupVoutWindow(vlc_window_t *p_wnd, VoutDestroyCb destroyCb) = 0;
 
     virtual Type type() const = 0;
 
@@ -88,7 +95,8 @@ public:
     enum Flag : unsigned
     {
         CAN_SHOW_PIP = 1,
-        HAS_ACRYLIC = 2
+        HAS_ACRYLIC = 2,
+        HAS_EXTENDED_FRAME = 4,
     };
     Q_DECLARE_FLAGS(Flags, Flag)
 
@@ -120,14 +128,16 @@ protected:
     void commonWindowEnable();
     void commonWindowDisable();
 
+    bool setBlurBehind(QWindow* window, bool enable = true);
+
 protected:
-    bool commonGUICreate(QWindow* window, QWidget* rootWidget, QmlUISurface* , CompositorVideo::Flags flags);
-    bool commonGUICreate(QWindow* window, QWidget* rootWidget, QQuickView* , CompositorVideo::Flags flags);
+    bool commonGUICreate(QWindow* window, QmlUISurface* , CompositorVideo::Flags flags);
+    bool commonGUICreate(QWindow* window, QQuickView* , CompositorVideo::Flags flags);
     void commonGUIDestroy();
     void commonIntfDestroy();
 
 private:
-    bool commonGUICreateImpl(QWindow* window, QWidget* rootWidget, CompositorVideo::Flags flags);
+    bool commonGUICreateImpl(QWindow* window, CompositorVideo::Flags flags);
 
 protected slots:
     virtual void onSurfacePositionChanged(const QPointF&) {}
@@ -148,6 +158,10 @@ protected:
 #ifdef _WIN32
     std::unique_ptr<WinTaskbarWidget> m_taskbarWidget;
 #endif
+
+    bool m_blurBehind = false;
+    WindowEffectsModule* m_windowEffectsModule = nullptr;
+    bool m_failedToLoadWindowEffectsModule = false;
 };
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(CompositorVideo::Flags)
@@ -160,9 +174,6 @@ Q_DECLARE_OPERATORS_FOR_FLAGS(CompositorVideo::Flags)
  *
  * the usual scenario is:
  *
- *   - call to preInit that will try to preInit compositors from list until we find
- *     a matching candidate
- *
  *   - start Qt main loop
  *
  *   - call to createCompositor to instantiate the compositor, if it fails it will
@@ -172,18 +183,6 @@ class CompositorFactory {
 public:
 
     CompositorFactory(qt_intf_t *p_intf, const char* compositor = "auto");
-
-    /**
-     * @brief preInit will check whether a compositor can be used, before starting Qt,
-     * each candidate may perform some basic checks and can setup Qt environment variable if required
-     *
-     * @note if a compositor return true on preinit but fails to initialize afterwards, next
-     * compositor in chain will be initialized without the preinit phaze (as Qt will be already started)
-     * this might lead to an unstable configuration if incompatible operations are done in the preInit phase
-     *
-     * @return true if a compositor can be instantiated
-     */
-    bool preInit();
 
     /**
      * @brief createCompositor will instantiate a compositor

@@ -117,20 +117,44 @@ if HAVE_WIN32_DESKTOP
 aout_LTLIBRARIES += libwaveout_plugin.la
 endif
 
-libauhal_plugin_la_SOURCES = audio_output/auhal.c \
-	audio_output/coreaudio_common.c audio_output/coreaudio_common.h
+libavsamplebuffer_plugin_la_SOURCES = audio_output/apple/avsamplebuffer.m \
+	audio_output/apple/channel_layout.c
+if HAVE_IOS
+libavsamplebuffer_plugin_la_SOURCES += audio_output/apple/avaudiosession_common.m
+endif
+if HAVE_TVOS
+libavsamplebuffer_plugin_la_SOURCES += audio_output/apple/avaudiosession_common.m
+endif
+if HAVE_XROS
+libavsamplebuffer_plugin_la_SOURCES += audio_output/apple/avaudiosession_common.m
+endif
+if HAVE_WATCHOS
+libavsamplebuffer_plugin_la_SOURCES += audio_output/apple/avaudiosession_common.m
+endif
+libavsamplebuffer_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(aoutdir)' \
+	-Wl,-framework,CoreMedia,-framework,Foundation,-framework,AVFoundation
+libavsamplebuffer_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS) -fobjc-arc
+
+libauhal_plugin_la_SOURCES = audio_output/apple/auhal.c \
+	audio_output/apple/coreaudio_common.c audio_output/apple/coreaudio_common.h \
+	audio_output/apple/channel_layout.c
+
 libauhal_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(aoutdir)' \
 	-Wl,-framework,CoreAudio,-framework,AudioUnit,-framework,AudioToolbox,-framework,CoreServices
 if HAVE_OSX
-aout_LTLIBRARIES += libauhal_plugin.la
+aout_LTLIBRARIES += libauhal_plugin.la libavsamplebuffer_plugin.la
 endif
-libaudiounit_ios_plugin_la_SOURCES = audio_output/audiounit_ios.m \
-	audio_output/coreaudio_common.c audio_output/coreaudio_common.h
+libaudiounit_ios_plugin_la_SOURCES = audio_output/apple/audiounit_ios.m \
+	audio_output/apple/coreaudio_common.c audio_output/apple/coreaudio_common.h \
+	audio_output/apple/channel_layout.c audio_output/apple/avaudiosession_common.m
 libaudiounit_ios_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(aoutdir)' \
 	-Wl,-framework,Foundation,-framework,CoreAudio,-framework,AudioToolbox,-framework,UIKit,-framework,AVFoundation
-if HAVE_IOS
-aout_LTLIBRARIES += libaudiounit_ios_plugin.la
+if HAVE_IOS_OR_TVOS
+aout_LTLIBRARIES += libaudiounit_ios_plugin.la libavsamplebuffer_plugin.la
 endif
-if HAVE_TVOS
-aout_LTLIBRARIES += libaudiounit_ios_plugin.la
+if HAVE_XROS
+aout_LTLIBRARIES += libaudiounit_ios_plugin.la libavsamplebuffer_plugin.la
+endif
+if HAVE_WATCHOS
+aout_LTLIBRARIES += libavsamplebuffer_plugin.la
 endif

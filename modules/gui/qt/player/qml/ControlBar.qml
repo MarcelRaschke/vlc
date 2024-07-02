@@ -16,11 +16,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
-import QtQuick.Layouts 1.11
-import QtQml.Models 2.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
+import QtQuick.Layouts
+import QtQml.Models
 
 import org.videolan.vlc 0.1
 
@@ -29,7 +29,7 @@ import "qrc:///widgets/" as Widgets
 import "qrc:///playlist/" as PL
 
 
-Control {
+T.Pane {
     id: root
 
     enum TimeTextPosition {
@@ -38,77 +38,57 @@ Control {
         LeftRightSlider
     }
 
-    readonly property alias sliderY: row2.y
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            contentWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + bottomInset,
+                             contentHeight + topPadding + bottomPadding)
+
+    topInset: sliderY
+
+    bottomPadding: VLCStyle.margin_xsmall
+
+    readonly property real sliderY: mapFromItem(contentItem, 0, contentItem.sliderY).y
     property int textPosition: ControlBar.TimeTextPosition.AboveSlider
-    property alias identifier: playerControlLayout.identifier
-    property alias sliderHeight: trackPositionSlider.barHeight
-    property real bookmarksHeight: VLCStyle.icon_xsmall * 0.9
+    property int identifier: -1
+    property real sliderHeight: VLCStyle.heightBar_xxsmall
+    property real bookmarksHeight: VLCStyle.controlBarBookmarksHeight
+    property bool showRemainingTime: true
+
+    property var menu: undefined
 
     signal requestLockUnlockAutoHide(bool lock)
 
-    function showChapterMarks() {
-        trackPositionSlider.showChapterMarks()
-    }
+    enabled: visible
 
     Keys.priority: Keys.AfterItem
-    Keys.onPressed: root.Navigation.defaultKeyAction(event)
-    Navigation.cancelAction: function() { History.previous() }
+    Keys.onPressed: (event) => root.Navigation.defaultKeyAction(event)
+    Navigation.cancelAction: function() { History.previous(Qt.BacktabFocusReason) }
 
-    onActiveFocusChanged: if (activeFocus) trackPositionSlider.forceActiveFocus(focusReason)
+    Accessible.name: qsTr("Player controls")
 
-    Component.onCompleted: {
-        // if initially textPosition = Hide, then _onTextPositionChanged isn't called
-        if (textPosition === ControlBar.TimeTextPosition.Hide)
-            _layout()
+    function showChapterMarks() {
+        if (contentItem.trackPositionSlider)
+            contentItem.trackPositionSlider.showChapterMarks()
     }
 
-    onTextPositionChanged: _layout()
+    function applyMenu(menu) {
+        if (root.menu === menu)
+            return
 
-    function _layout() {
-        switch (textPosition) {
-            case ControlBar.TimeTextPosition.Hide:
-                row1.children = []
-                row2.children = [trackPositionSlider]
-                mediaTime.visible = false
-                mediaRemainingTime.visible = false
-                spacer.visible = false
-                row2.Layout.leftMargin = 0
-                row2.Layout.rightMargin = 0
-                mediaTime.font.pixelSize = Qt.binding(function() { return VLCStyle.fontSize_normal })
-                mediaRemainingTime.font.pixelSize = Qt.binding(function() { return VLCStyle.fontSize_normal })
-                break;
+        // NOTE: When applying a new menu we hide the previous one.
+        if (menu)
+            dismiss()
 
-            case ControlBar.TimeTextPosition.AboveSlider:
-                row1.children = [mediaTime, spacer, mediaRemainingTime]
-                row2.children = [trackPositionSlider]
-                mediaTime.visible = true
-                mediaRemainingTime.visible = Qt.binding(function() { return !playlistVisibility.isPlaylistVisible })
-                spacer.visible = true
-                row2.Layout.leftMargin = 0
-                row2.Layout.rightMargin = 0
-                mediaTime.font.pixelSize = Qt.binding(function() { return VLCStyle.fontSize_normal })
-                mediaRemainingTime.font.pixelSize = Qt.binding(function() { return VLCStyle.fontSize_normal })
-                break;
+        root.menu = menu
+    }
 
-            case ControlBar.TimeTextPosition.LeftRightSlider:
-                row1.children = []
-                row2.children = [mediaTime, trackPositionSlider, mediaRemainingTime]
-                mediaTime.visible = true
-                mediaRemainingTime.visible = true
-                spacer.visible = false
-                row2.Layout.leftMargin = VLCStyle.margin_xsmall
-                row2.Layout.rightMargin = VLCStyle.margin_xsmall
-                mediaTime.font.pixelSize = Qt.binding(function() { return VLCStyle.fontSize_small })
-                mediaRemainingTime.font.pixelSize = Qt.binding(function() { return VLCStyle.fontSize_small })
-                trackPositionSlider.Layout.alignment = Qt.AlignVCenter
-                break;
-
-            default:
-                console.assert(false, "invalid text position")
-        }
-
-        row1.visible = row1.children.length > 0
-        row2.visible = row2.children.length > 0
+    function dismiss() {
+        if ((typeof menu === undefined) || !menu)
+            return
+        if (menu.hasOwnProperty("dismiss"))
+            menu.dismiss()
+        else if (menu.hasOwnProperty("close"))
+            menu.close()
     }
 
     readonly property ColorContext colorContext: ColorContext {
@@ -116,98 +96,163 @@ Control {
         colorSet: ColorContext.Window
     }
 
+    background: Rectangle {
+        color: theme.bg.primary
+    }
+
     contentItem: ColumnLayout {
         spacing: VLCStyle.margin_xsmall
-        z: 1
 
-        RowLayout {
-            id: row1
+        readonly property real sliderY: row2.y
 
-            spacing: 0
+        property alias trackPositionSlider: trackPositionSlider
+
+        property alias mediaRemainingTime: mediaRemainingTime
+
+        property alias playerControlLayout: playerControlLayout
+
+        readonly property list<Item> strayItems: [
+            T.Label {
+                id: mediaTime
+                text: Player.time.formatHMS()
+                color: theme.fg.primary
+                font.pixelSize: (textPosition === ControlBar.TimeTextPosition.LeftRightSlider) ? VLCStyle.fontSize_small
+                                                                                               : VLCStyle.fontSize_normal
+
+                anchors.left: (parent === pseudoRow) ? parent.left : undefined
+                anchors.verticalCenter: (parent === pseudoRow) ? parent.verticalCenter : undefined
+            },
+            T.Label {
+                id: mediaRemainingTime
+
+                text: (MainCtx.showRemainingTime && Player.remainingTime.valid())
+                      ? "-" + Player.remainingTime.formatHMS()
+                      : Player.length.formatHMS()
+                color: mediaTime.color
+                font.pixelSize: mediaTime.font.pixelSize
+
+                visible: root.showRemainingTime
+
+                anchors.right: (parent === pseudoRow) ? parent.right : undefined
+                anchors.verticalCenter: (parent === pseudoRow) ? parent.verticalCenter : undefined
+
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: MainCtx.showRemainingTime = !MainCtx.showRemainingTime
+                }
+            },
+            SliderBar {
+                id: trackPositionSlider
+
+                barHeight: root.sliderHeight
+                Layout.fillWidth: true
+                enabled: Player.playingState === Player.PLAYING_STATE_PLAYING || Player.playingState === Player.PLAYING_STATE_PAUSED
+
+                Navigation.parentItem: root
+                Navigation.downItem: playerControlLayout
+
+                activeFocusOnTab: true
+
+                focus: true
+
+                Keys.onPressed: (event) => {
+                    Navigation.defaultKeyAction(event)
+                }
+            },
+            Loader {
+                id: bookmarksLoader
+
+                parent: root
+                active: MainCtx.mediaLibraryAvailable
+                source: "qrc:/player/Bookmarks.qml"
+
+                x: root.leftPadding + trackPositionSlider.x + row2.Layout.leftMargin
+                y: row2.y + row2.height + VLCStyle.margin_xxsmall
+                width: trackPositionSlider.width
+
+                onLoaded: {
+                   item.barHeight = Qt.binding(function() { return bookmarksHeight })
+                   item.controlBarHovered = Qt.binding(function() { return root.hovered })
+                   item.yShift = Qt.binding(function() { return row2.height + VLCStyle.margin_xxsmall })
+                }
+            }
+        ]
+
+        Item {
+            // BUG: RowLayout can not be used here
+            // because of a Qt bug. (Height is
+            // incorrectly determined. Could be
+            // about nested layouting).
+
+            id: pseudoRow
             Layout.fillWidth: true
+            Layout.fillHeight: false
             Layout.leftMargin: VLCStyle.margin_normal
             Layout.rightMargin: VLCStyle.margin_normal
+
+            implicitHeight: visible ? Math.max(mediaTime.implicitHeight, mediaRemainingTime.implicitHeight) : 0
+
+            visible: children.length > 0
+
+            children: {
+                switch (textPosition) {
+                case ControlBar.TimeTextPosition.AboveSlider:
+                    return [mediaTime, mediaRemainingTime]
+                case ControlBar.TimeTextPosition.Hide:
+                case ControlBar.TimeTextPosition.LeftRightSlider:
+                default:
+                    return []
+                }
+            }
         }
 
         RowLayout {
             id: row2
 
+            children: {
+                switch (textPosition) {
+                case ControlBar.TimeTextPosition.Hide:
+                case ControlBar.TimeTextPosition.AboveSlider:
+                    return [trackPositionSlider]
+                case ControlBar.TimeTextPosition.LeftRightSlider:
+                    return [mediaTime, trackPositionSlider, mediaRemainingTime]
+                default:
+                    return []
+                }
+            }
+
+            visible: children.length > 0
+
             spacing: VLCStyle.margin_xsmall
+
             Layout.fillWidth: true
+            Layout.fillHeight: false
+            Layout.leftMargin: (textPosition === ControlBar.TimeTextPosition.LeftRightSlider) ? VLCStyle.margin_xsmall
+                                                                                              : 0
+
+            Layout.rightMargin: Layout.leftMargin
         }
 
         PlayerControlLayout {
             id: playerControlLayout
 
             Layout.fillWidth: true
+            Layout.fillHeight: true
             Layout.leftMargin: VLCStyle.margin_large
             Layout.rightMargin: VLCStyle.margin_large
-            Layout.bottomMargin: VLCStyle.margin_xsmall
+
+            identifier: root.identifier
+
+            implicitHeight: MainCtx.pinVideoControls ? VLCStyle.controlLayoutHeightPinned
+                                                     : VLCStyle.controlLayoutHeight
+
+            visible: !model?.empty ?? false
 
             Navigation.upItem: trackPositionSlider.enabled ? trackPositionSlider : root.Navigation.upItem
 
-            onRequestLockUnlockAutoHide: root.requestLockUnlockAutoHide(lock)
-        }
-    }
+            onRequestLockUnlockAutoHide: (lock) => root.requestLockUnlockAutoHide(lock)
 
-    T.Label {
-        id: mediaTime
-
-        text: Player.time.formatHMS()
-        color: theme.fg.primary
-    }
-
-    T.Label {
-        id: mediaRemainingTime
-
-        text: (MainCtx.showRemainingTime && Player.remainingTime.valid())
-              ? "-" + Player.remainingTime.formatHMS()
-              : Player.length.formatHMS()
-        color: theme.fg.primary
-
-        MouseArea {
-            anchors.fill: parent
-            onClicked: MainCtx.showRemainingTime = !MainCtx.showRemainingTime
-        }
-    }
-
-    Item {
-        id: spacer
-
-        Layout.fillWidth: true
-    }
-
-    SliderBar {
-        id: trackPositionSlider
-
-        barHeight: VLCStyle.heightBar_xxsmall
-        Layout.fillWidth: true
-        enabled: Player.playingState === Player.PLAYING_STATE_PLAYING || Player.playingState === Player.PLAYING_STATE_PAUSED
-
-        Navigation.parentItem: root
-        Navigation.downItem: playerControlLayout
-
-        activeFocusOnTab: true
-
-        Keys.onPressed: {
-            Navigation.defaultKeyAction(event)
-        }
-    }
-
-    Loader {
-        id: bookmarksLoader
-
-        active: MainCtx.mediaLibraryAvailable
-        source: "qrc:/player/Bookmarks.qml"
-
-        x: root.leftPadding + trackPositionSlider.x + row2.Layout.leftMargin
-        y: row2.y + row2.height + VLCStyle.margin_xxsmall
-        width: trackPositionSlider.width
-
-        onLoaded: {
-           item.barHeight = Qt.binding(function() { return bookmarksHeight })
-           item.controlBarHovered = Qt.binding(function() { return root.hovered })
-           item.yShift = Qt.binding(function() { return row2.height + VLCStyle.margin_xxsmall })
+            onMenuOpened: (menu) => root.applyMenu(menu)
         }
     }
 }

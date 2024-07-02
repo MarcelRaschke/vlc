@@ -23,6 +23,7 @@
 #include "util/variables.hpp"
 #include "input_models.hpp"
 #include "util/varchoicemodel.hpp"
+#include "util/shared_input_item.hpp"
 
 #include <QTimer>
 #include <QUrl>
@@ -58,11 +59,10 @@ public:
     void callAsync(Fun&& fun)
     {
         Q_Q(PlayerController);
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 10, 0))
-        QMetaObject::invokeMethod(q, std::forward<Fun>(fun), Qt::QueuedConnection, nullptr);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+        QMetaObject::invokeMethod(q, [fun = std::forward<Fun>(fun)]() -> void* { fun(); return nullptr; }, Qt::QueuedConnection);
 #else
-        QObject src;
-        QObject::connect(&src, &QObject::destroyed, q, std::forward<Fun>(fun), Qt::QueuedConnection);
+        QMetaObject::invokeMethod(q, std::forward<Fun>(fun), Qt::QueuedConnection, nullptr);
 #endif
     }
 
@@ -80,7 +80,6 @@ public:
     QString         m_name;
     float           m_buffering = 0.f;
     float           m_rate = 1.f;
-    PlayerController::MediaStopAction m_mediaStopAction = PlayerController::MEDIA_STOPPED_CONTINUE;
 
     VLCTick      m_time = 0;
     VLCTick      m_remainingTime = 0;
@@ -90,11 +89,7 @@ public:
     QString m_highResolutionTime { "00:00:00:00" };
     unsigned m_smpteTimerRequestCount = 0;
 
-    using InputItemPtr = vlc_shared_data_ptr_type(input_item_t,
-                                                  input_item_Hold,
-                                                  input_item_Release);
-
-    InputItemPtr    m_currentItem;
+    SharedInputItem    m_currentItem;
     bool            m_canRestorePlayback = false;
 
     int             m_capabilities = 0;
@@ -115,6 +110,7 @@ public:
     vlc_player_timer_id* m_player_timer = nullptr;
     vlc_player_timer_id* m_player_timer_smpte = nullptr;
     struct vlc_player_timer_point m_player_time;
+    bool seeking = false;
     QTimer m_position_timer;
     QTimer m_time_timer;
 

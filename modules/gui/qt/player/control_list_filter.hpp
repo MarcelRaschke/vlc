@@ -24,22 +24,31 @@
 // Qt includes
 #include <QSortFilterProxyModel>
 
+Q_MOC_INCLUDE("maininterface/mainctx.hpp")
+Q_MOC_INCLUDE("player/player_controller.hpp")
+Q_MOC_INCLUDE("player/control_list_model.hpp")
+
 // Forward declarations
 class PlayerController;
 class MainCtx;
+class ControlListModel;
 
 class ControlListFilter : public QSortFilterProxyModel
 {
+    using QSortFilterProxyModel::setSourceModel;
+
     Q_OBJECT
 
-    Q_PROPERTY(PlayerController * player READ player WRITE setPlayer NOTIFY playerChanged)
-    Q_PROPERTY(MainCtx* ctx READ ctx WRITE setCtx NOTIFY ctxChanged)
+    Q_PROPERTY(ControlListModel* sourceModel READ sourceModel WRITE setSourceModel NOTIFY sourceModelChanged1 FINAL)
+    Q_PROPERTY(PlayerController * player READ player WRITE setPlayer NOTIFY playerChanged FINAL)
+    Q_PROPERTY(MainCtx* ctx READ ctx WRITE setCtx NOTIFY ctxChanged FINAL)
 
 public:
     explicit ControlListFilter(QObject * parent = nullptr);
 
-public: // QAbstractProxyModel reimplementation
-    void setSourceModel(QAbstractItemModel * sourceModel) override;
+    void setSourceModel(ControlListModel* sourceModel);
+
+    ControlListModel* sourceModel() const;
 
 protected: // QSortFilterProxyModel reimplementation
     bool filterAcceptsRow(int source_row, const QModelIndex & source_parent) const override;
@@ -47,6 +56,7 @@ protected: // QSortFilterProxyModel reimplementation
 signals:
     void playerChanged();
     void ctxChanged();
+    void sourceModelChanged1();
 
 public: // Properties
     PlayerController * player();

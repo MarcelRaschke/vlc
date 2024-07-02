@@ -16,63 +16,76 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
+import QtQuick
+
+import org.videolan.vlc 0.1
 
 import "qrc:///style/"
 
 // A convenience file to encapsulate two drop shadow images stacked on top
 // of each other
-Item {
+ScaledImage {
     id: root
 
-    property var xRadius: null
-    property var yRadius: null
+    property Item sourceItem: null
 
-    property alias primaryVerticalOffset: primaryShadow.yOffset
-    property alias primaryHorizontalOffset: primaryShadow.xOffset
-    property alias primaryColor: primaryShadow.color
-    property alias primaryBlurRadius: primaryShadow.blurRadius
-    property alias primaryXRadius: primaryShadow.xRadius
-    property alias primaryYRadius: primaryShadow.yRadius
+    property real viewportWidth: rectWidth + (Math.max(Math.abs(primaryHorizontalOffset) + primaryBlurRadius, Math.abs(secondaryHorizontalOffset) + secondaryBlurRadius)) * 2
+    property real viewportHeight: rectHeight + (Math.max(Math.abs(primaryVerticalOffset) + primaryBlurRadius, Math.abs(secondaryVerticalOffset) + secondaryBlurRadius)) * 2
 
-    property alias secondaryVerticalOffset: secondaryShadow.yOffset
-    property alias secondaryHorizontalOffset: secondaryShadow.xOffset
-    property alias secondaryColor: secondaryShadow.color
-    property alias secondaryBlurRadius: secondaryShadow.blurRadius
-    property alias secondaryXRadius: secondaryShadow.xRadius
-    property alias secondaryYRadius: secondaryShadow.yRadius
+    property real rectWidth: sourceItem ? Math.min(sourceItem.paintedWidth ?? Number.MAX_VALUE, sourceItem.width) : 0
+    property real rectHeight: sourceItem ? Math.min(sourceItem.paintedHeight ?? Number.MAX_VALUE, sourceItem.height) : 0
+    property real xRadius: sourceItem?.radius ?? 0
+    property real yRadius: sourceItem?.radius ?? 0
 
-    property alias cache: primaryShadow.cache
+    property color primaryColor: Qt.rgba(0, 0, 0, .18)
+    property real primaryVerticalOffset: 0
+    property real primaryHorizontalOffset: 0
+    property real primaryBlurRadius: 0
+
+    property color secondaryColor: Qt.rgba(0, 0, 0, .22)
+    property real secondaryVerticalOffset: 0
+    property real secondaryHorizontalOffset: 0
+    property real secondaryBlurRadius: 0
+
+    //by default we request
+    sourceSize: Qt.size(viewportWidth, viewportHeight)
+
+    cache: true
+    asynchronous: true
+
+    fillMode: Image.Stretch
 
     visible: (width > 0 && height > 0)
 
-    DropShadowImage {
-        id: primaryShadow
+    z: -1
 
-        anchors.centerIn: parent
+    onSourceSizeChanged: {
+        // Do not load the image when size is not valid:
+        if (sourceSize.width > 0 && sourceSize.height > 0)
+            source = Qt.binding(() => {
+                return Effects.url(
+                    Effects.DoubleRoundedRectDropShadow,
+                    {
+                        "viewportWidth" : viewportWidth,
+                        "viewportHeight" :viewportHeight,
 
-        color: Qt.rgba(0, 0, 0, .18)
-        xOffset: 0
+                        "rectWidth": rectWidth,
+                        "rectHeight": rectHeight,
+                        "xRadius": xRadius,
+                        "yRadius": yRadius,
 
-        xRadius: root.xRadius
-        yRadius: root.yRadius
+                        "primaryColor": primaryColor,
+                        "primaryBlurRadius": primaryBlurRadius,
+                        "primaryXOffset": primaryHorizontalOffset,
+                        "primaryYOffset": primaryVerticalOffset,
 
-        sourceSize: Qt.size(parent.width, parent.height)
-    }
-
-    DropShadowImage {
-        id: secondaryShadow
-
-        anchors.centerIn: parent
-
-        color: Qt.rgba(0, 0, 0, .22)
-        xOffset: 0
-
-        xRadius: root.xRadius
-        yRadius: root.yRadius
-
-        sourceSize: Qt.size(parent.width, parent.height)
-
-        cache: root.cache
+                        "secondaryColor": secondaryColor,
+                        "secondaryBlurRadius": secondaryBlurRadius,
+                        "secondaryXOffset": secondaryHorizontalOffset,
+                        "secondaryYOffset": secondaryVerticalOffset,
+                    })
+            })
+        else
+            source = ""
     }
 }

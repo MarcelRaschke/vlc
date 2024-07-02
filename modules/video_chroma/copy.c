@@ -921,17 +921,12 @@ int picture_UpdatePlanes(picture_t *picture, uint8_t *data, unsigned pitch)
             assert(p->i_visible_pitch <= p->i_pitch);
             assert(p->i_visible_lines <= p->i_lines);
         }
-        /* The dx/d3d buffer is always allocated as NV12 */
-        if (vlc_fourcc_AreUVPlanesSwapped(picture->format.i_chroma, VLC_CODEC_NV12)) {
-            /* TODO : Swap NV21 UV planes to match NV12 */
-            return VLC_EGENERIC;
-        }
+        return VLC_SUCCESS;
     }
 
     /*  Fill chroma planes for planar YUV */
     else
     if (picture->format.i_chroma == VLC_CODEC_I420 ||
-        picture->format.i_chroma == VLC_CODEC_J420 ||
         picture->format.i_chroma == VLC_CODEC_YV12) {
 
         for (int n = 1; n < picture->i_planes; n++) {
@@ -942,11 +937,9 @@ int picture_UpdatePlanes(picture_t *picture, uint8_t *data, unsigned pitch)
             p->i_pitch  = pitch / 2;
             p->i_lines  = picture->format.i_height / 2;
         }
-        /* The dx/d3d buffer is always allocated as YV12 */
-        if (vlc_fourcc_AreUVPlanesSwapped(picture->format.i_chroma, VLC_CODEC_YV12))
-            picture_SwapUV( picture );
+        return VLC_SUCCESS;
     }
-    return VLC_SUCCESS;
+    return VLC_ENOTSUP;
 }
 
 #ifdef COPY_TEST
@@ -1089,17 +1082,27 @@ static picture_t *pic_new_unaligned(const video_format_t *fmt)
 {
     /* Allocate a no-aligned picture in order to ease buffer overflow detection
      * from the source picture */
+    unsigned i = 0;
     const vlc_chroma_description_t *dsc = vlc_fourcc_GetChromaDescription(fmt->i_chroma);
     assert(dsc);
     picture_resource_t rsc = { .pf_destroy = pic_rsc_destroy };
-    for (unsigned i = 0; i < dsc->plane_count; i++)
+    for (; i < dsc->plane_count; i++)
     {
         rsc.p[i].i_lines = ((fmt->i_visible_height + (dsc->p[i].h.den - 1)) / dsc->p[i].h.den) * dsc->p[i].h.num;
         rsc.p[i].i_pitch = ((fmt->i_visible_width + (dsc->p[i].w.den - 1)) / dsc->p[i].w.den) * dsc->p[i].w.num * dsc->pixel_size;
         rsc.p[i].p_pixels = malloc(rsc.p[i].i_lines * rsc.p[i].i_pitch);
-        assert(rsc.p[i].p_pixels);
+        if (rsc.p[i].p_pixels == NULL)
+            goto cleanup;
     }
-    return picture_NewFromResource(fmt, &rsc);
+    picture_t *pic = picture_NewFromResource(fmt, &rsc);
+    if (pic == NULL)
+        goto cleanup;
+    return pic;
+
+cleanup:
+    while (i != 0)
+        free(rsc.p[--i].p_pixels);
+    return NULL;
 }
 
 int main(void)

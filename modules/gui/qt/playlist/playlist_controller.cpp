@@ -22,9 +22,9 @@
 
 #include "playlist_controller.hpp"
 #include "playlist_controller_p.hpp"
-#include "vlc_player.h"
-#include "vlc_url.h"
-#include "util/qmlinputitem.hpp"
+#include <vlc_player.h>
+#include <vlc_url.h>
+#include "util/shared_input_item.hpp"
 #include <algorithm>
 #include <QVariant>
 #include <QDesktopServices>
@@ -79,11 +79,15 @@ QVector<Media> toMediaList(const QVariantList &sources)
             if (mrl.isLocalFile())
                 mrl = resolveWinSymlinks(mrl);
 
-            return Media(mrl.toString(QUrl::None), mrl.fileName());
-        } else if (value.canConvert<QmlInputItem>())
+            return Media(mrl.toString(QUrl::FullyEncoded), mrl.fileName());
+        }
+        else if (value.canConvert<SharedInputItem>())
         {
-            const QmlInputItem & item = value.value<QmlInputItem>();
-            return Media(item.item.get());
+            return Media(value.value<SharedInputItem>().get());
+        }
+        else if (value.canConvert<PlaylistItem>())
+        {
+            return Media(value.value<PlaylistItem>().inputItem());
         }
         return Media{};
     });
@@ -99,14 +103,14 @@ on_playlist_items_reset(vlc_playlist_t *playlist,
                         vlc_playlist_item_t *const items[],
                         size_t len, void *userdata)
 {
-    PlaylistControllerModelPrivate *that = static_cast<PlaylistControllerModelPrivate *>(userdata);
+    PlaylistControllerPrivate *that = static_cast<PlaylistControllerPrivate *>(userdata);
     auto vec = toVec(items, len);
     size_t totalCount = vlc_playlist_Count(playlist);
 
     that->callAsync([=](){
         if (that->m_playlist != playlist)
             return;
-        PlaylistControllerModel* q = that->q_func();
+        PlaylistController* q = that->q_func();
         bool empty = vec.size() == 0;
         if (that->m_empty != empty)
         {
@@ -128,13 +132,13 @@ on_playlist_items_added(vlc_playlist_t *playlist, size_t index,
                         vlc_playlist_item_t *const items[], size_t len,
                         void *userdata)
 {
-    PlaylistControllerModelPrivate *that = static_cast<PlaylistControllerModelPrivate *>(userdata);
+    PlaylistControllerPrivate *that = static_cast<PlaylistControllerPrivate *>(userdata);
     auto vec = toVec(items, len);
     size_t totalCount = vlc_playlist_Count(playlist);
     that->callAsync([=](){
         if (that->m_playlist != playlist)
             return;
-        PlaylistControllerModel* q = that->q_func();
+        PlaylistController* q = that->q_func();
         if (that->m_empty && vec.size() > 0)
         {
             that->m_empty = false;
@@ -154,7 +158,7 @@ static void
 on_playlist_items_moved(vlc_playlist_t *playlist, size_t index, size_t count,
                         size_t target, void *userdata)
 {
-    PlaylistControllerModelPrivate *that = static_cast<PlaylistControllerModelPrivate *>(userdata);
+    PlaylistControllerPrivate *that = static_cast<PlaylistControllerPrivate *>(userdata);
     that->callAsync([=](){
         if (that->m_playlist != playlist)
             return;
@@ -166,13 +170,13 @@ static void
 on_playlist_items_removed(vlc_playlist_t *playlist, size_t index, size_t count,
                           void *userdata)
 {
-    PlaylistControllerModelPrivate *that = static_cast<PlaylistControllerModelPrivate *>(userdata);
+    PlaylistControllerPrivate *that = static_cast<PlaylistControllerPrivate *>(userdata);
     size_t totalCount = vlc_playlist_Count(playlist);
     bool empty = (totalCount == 0);
     that->callAsync([=](){
         if (that->m_playlist != playlist)
             return;
-        PlaylistControllerModel* q = that->q_func();
+        PlaylistController* q = that->q_func();
         if (that->m_empty != empty)
         {
             that->m_empty = empty;
@@ -192,7 +196,7 @@ on_playlist_items_updated(vlc_playlist_t *playlist, size_t index,
                           vlc_playlist_item_t *const items[], size_t len,
                           void *userdata)
 {
-    PlaylistControllerModelPrivate *that = static_cast<PlaylistControllerModelPrivate *>(userdata);
+    PlaylistControllerPrivate *that = static_cast<PlaylistControllerPrivate *>(userdata);
     auto vec = toVec(items, len);
     that->callAsync([=](){
         if (that->m_playlist != playlist)
@@ -214,11 +218,11 @@ on_playlist_playback_repeat_changed(vlc_playlist_t *playlist,
                                     enum vlc_playlist_playback_repeat repeat,
                                     void *userdata)
 {
-    PlaylistControllerModelPrivate *that = static_cast<PlaylistControllerModelPrivate *>(userdata);
+    PlaylistControllerPrivate *that = static_cast<PlaylistControllerPrivate *>(userdata);
     that->callAsync([=](){
         if (that->m_playlist != playlist)
             return;
-        PlaylistControllerModel::PlaybackRepeat repeatMode = static_cast<PlaylistControllerModel::PlaybackRepeat>(repeat);
+        PlaylistController::PlaybackRepeat repeatMode = static_cast<PlaylistController::PlaybackRepeat>(repeat);
         if (that->m_repeat != repeatMode )
         {
             that->m_repeat = repeatMode;
@@ -232,7 +236,7 @@ on_playlist_playback_order_changed(vlc_playlist_t *playlist,
                                    enum vlc_playlist_playback_order order,
                                    void *userdata)
 {
-    PlaylistControllerModelPrivate *that = static_cast<PlaylistControllerModelPrivate *>(userdata);
+    PlaylistControllerPrivate *that = static_cast<PlaylistControllerPrivate *>(userdata);
     that->callAsync([=](){
         if (that->m_playlist != playlist)
             return;
@@ -249,7 +253,7 @@ static void
 on_playlist_current_item_changed(vlc_playlist_t *playlist, ssize_t index,
                                  void *userdata)
 {
-    PlaylistControllerModelPrivate *that = static_cast<PlaylistControllerModelPrivate *>(userdata);
+    PlaylistControllerPrivate *that = static_cast<PlaylistControllerPrivate *>(userdata);
 
 
     vlc_playlist_item_t* playlistItem = nullptr;
@@ -258,7 +262,7 @@ on_playlist_current_item_changed(vlc_playlist_t *playlist, ssize_t index,
     PlaylistItem newItem{ playlistItem };
 
     that->callAsync([=](){
-        PlaylistControllerModel* q = that->q_func();
+        PlaylistController* q = that->q_func();
 
         if (that->m_playlist != playlist)
             return;
@@ -276,7 +280,7 @@ static void
 on_playlist_has_prev_changed(vlc_playlist_t *playlist, bool has_prev,
                              void *userdata)
 {
-    PlaylistControllerModelPrivate *that = static_cast<PlaylistControllerModelPrivate *>(userdata);
+    PlaylistControllerPrivate *that = static_cast<PlaylistControllerPrivate *>(userdata);
     that->callAsync([=](){
         if (that->m_playlist != playlist)
             return;
@@ -292,7 +296,7 @@ static void
 on_playlist_has_next_changed(vlc_playlist_t *playlist, bool has_next,
                              void *userdata)
 {
-    PlaylistControllerModelPrivate *that = static_cast<PlaylistControllerModelPrivate *>(userdata);
+    PlaylistControllerPrivate *that = static_cast<PlaylistControllerPrivate *>(userdata);
     that->callAsync([=](){
         if (that->m_playlist != playlist)
             return;
@@ -301,6 +305,23 @@ on_playlist_has_next_changed(vlc_playlist_t *playlist, bool has_next,
             that->m_hasNext = has_next;
             emit that->q_func()->hasNextChanged(has_next);
         }
+    });
+}
+
+static void
+on_media_stopped_action_changed(vlc_playlist_t *playlist,
+                          enum vlc_playlist_media_stopped_action new_action,
+                          void *userdata)
+{
+    PlaylistControllerPrivate *that = static_cast<PlaylistControllerPrivate *>(userdata);
+    that->callAsync([=](){
+        auto action = static_cast<PlaylistController::MediaStopAction>(new_action);
+        if (that->m_playlist != playlist)
+            return;
+        if (that->m_mediaStopAction == action)
+            return;
+        that->m_mediaStopAction = action;
+        emit that->q_func()->mediaStopActionChanged(action);
     });
 }
 
@@ -318,71 +339,72 @@ static const struct vlc_playlist_callbacks playlist_callbacks = []{
     cbs.on_current_index_changed = on_playlist_current_item_changed;
     cbs.on_has_next_changed = on_playlist_has_next_changed;
     cbs.on_has_prev_changed = on_playlist_has_prev_changed;
+    cbs.on_media_stopped_action_changed = on_media_stopped_action_changed;
     return cbs;
 }();
 
 
 //private API
 
-PlaylistControllerModelPrivate::PlaylistControllerModelPrivate(PlaylistControllerModel* playlistController)
+PlaylistControllerPrivate::PlaylistControllerPrivate(PlaylistController* playlistController)
     : q_ptr(playlistController)
 {
     fillSortKeyTitleList();
 }
 
-PlaylistControllerModelPrivate::~PlaylistControllerModelPrivate()
+PlaylistControllerPrivate::~PlaylistControllerPrivate()
 {
     if (m_playlist && m_listener)
     {
-        PlaylistLocker lock(m_playlist);
+        vlc_playlist_locker lock(m_playlist);
         vlc_playlist_RemoveListener(m_playlist, m_listener);
     }
 }
 
 //public API
 
-PlaylistControllerModel::PlaylistControllerModel(QObject *parent)
+PlaylistController::PlaylistController(QObject *parent)
     : QObject(parent)
-    , d_ptr( new PlaylistControllerModelPrivate(this) )
+    , d_ptr( new PlaylistControllerPrivate(this) )
 {
-    connect(this, &PlaylistControllerModel::itemsMoved, this, &PlaylistControllerModel::resetSortKey);
-    connect(this, &PlaylistControllerModel::itemsAdded, this, &PlaylistControllerModel::resetSortKey);
-    connect(this, &PlaylistControllerModel::isEmptyChanged, [this](bool isEmpty) {if (isEmpty) emit resetSortKey();});
+    connect(this, &PlaylistController::itemsMoved, this, &PlaylistController::resetSortKey);
+    connect(this, &PlaylistController::itemsAdded, this, &PlaylistController::resetSortKey);
+    connect(this, &PlaylistController::isEmptyChanged, [this](bool isEmpty) {if (isEmpty) emit resetSortKey();});
 }
 
-PlaylistControllerModel::PlaylistControllerModel(vlc_playlist_t *playlist, QObject *parent)
+PlaylistController::PlaylistController(vlc_playlist_t *playlist, QObject *parent)
     : QObject(parent)
-    , d_ptr( new PlaylistControllerModelPrivate(this) )
+    , d_ptr( new PlaylistControllerPrivate(this) )
 {
-    setPlaylistPtr(playlist);
+    setPlaylist(playlist);
 }
 
-PlaylistControllerModel::~PlaylistControllerModel()
+PlaylistController::~PlaylistController()
 {
 }
 
-PlaylistItem PlaylistControllerModel::getCurrentItem() const
+PlaylistItem PlaylistController::getCurrentItem() const
 {
-    Q_D(const PlaylistControllerModel);
+    Q_D(const PlaylistController);
     return d->m_currentItem;
 }
 
-void PlaylistControllerModel::append(const QVariantList& sourceList, bool startPlaying)
+void PlaylistController::append(const QVariantList& sourceList, bool startPlaying)
 {
     append(toMediaList(sourceList), startPlaying);
 }
 
-void PlaylistControllerModel::insert(unsigned index, const QVariantList& sourceList, bool startPlaying)
+void PlaylistController::insert(unsigned index, const QVariantList& sourceList, bool startPlaying)
 {
     insert(index, toMediaList(sourceList), startPlaying);
 }
 
 void
-PlaylistControllerModel::append(const QVector<Media> &media, bool startPlaying)
+PlaylistController::append(const QVector<Media> &media, bool startPlaying)
 {
-    Q_D(PlaylistControllerModel);
+    Q_D(PlaylistController);
 
-    PlaylistLocker locker(d->m_playlist);
+    vlc_playlist_locker locker(d->m_playlist);
 
     auto rawMedia = toRaw<input_item_t *>(media);
     /* We can't append an empty media. */
@@ -403,10 +425,10 @@ PlaylistControllerModel::append(const QVector<Media> &media, bool startPlaying)
 }
 
 void
-PlaylistControllerModel::insert(size_t index, const QVector<Media> &media, bool startPlaying)
+PlaylistController::insert(size_t index, const QVector<Media> &media, bool startPlaying)
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker locker(d->m_playlist);
+    Q_D(PlaylistController);
+    vlc_playlist_locker locker(d->m_playlist);
 
     auto rawMedia = toRaw<input_item_t *>(media);
     /* We can't insert an empty media. */
@@ -426,11 +448,11 @@ PlaylistControllerModel::insert(size_t index, const QVector<Media> &media, bool 
 }
 
 void
-PlaylistControllerModel::move(const QVector<PlaylistItem> &items, size_t target,
+PlaylistController::move(const QVector<PlaylistItem> &items, size_t target,
                ssize_t indexHint)
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker locker(d->m_playlist);
+    Q_D(PlaylistController);
+    vlc_playlist_locker locker(d->m_playlist);
 
     auto rawItems = toRaw<vlc_playlist_item_t *>(items);
     int ret = vlc_playlist_RequestMove(d->m_playlist, rawItems.constData(),
@@ -440,10 +462,10 @@ PlaylistControllerModel::move(const QVector<PlaylistItem> &items, size_t target,
 }
 
 void
-PlaylistControllerModel::remove(const QVector<PlaylistItem> &items, ssize_t indexHint)
+PlaylistController::remove(const QVector<PlaylistItem> &items, ssize_t indexHint)
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker locker(d->m_playlist);
+    Q_D(PlaylistController);
+    vlc_playlist_locker locker(d->m_playlist);
     auto rawItems = toRaw<vlc_playlist_item_t *>(items);
     int ret = vlc_playlist_RequestRemove(d->m_playlist, rawItems.constData(),
                                          rawItems.size(), indexHint);
@@ -452,22 +474,22 @@ PlaylistControllerModel::remove(const QVector<PlaylistItem> &items, ssize_t inde
 }
 
 void
-PlaylistControllerModel::shuffle()
+PlaylistController::shuffle()
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker locker(d->m_playlist);
+    Q_D(PlaylistController);
+    vlc_playlist_locker locker(d->m_playlist);
     vlc_playlist_Shuffle(d->m_playlist);
 }
 
 void
-PlaylistControllerModel::sort(const QVector<vlc_playlist_sort_criterion> &criteria)
+PlaylistController::sort(const QVector<vlc_playlist_sort_criterion> &criteria)
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker locker(d->m_playlist);
+    Q_D(PlaylistController);
+    vlc_playlist_locker locker(d->m_playlist);
     vlc_playlist_Sort(d->m_playlist, criteria.constData(), criteria.size());
 }
 
-void PlaylistControllerModel::sort(PlaylistControllerModel::SortKey key, PlaylistControllerModel::SortOrder order)
+void PlaylistController::sort(PlaylistController::SortKey key, PlaylistController::SortOrder order)
 {
     if(key != SortKey::SORT_KEY_NONE)
         setSortKey(key);
@@ -476,7 +498,7 @@ void PlaylistControllerModel::sort(PlaylistControllerModel::SortKey key, Playlis
     sort();
 }
 
-void PlaylistControllerModel::sort(PlaylistControllerModel::SortKey key)
+void PlaylistController::sort(PlaylistController::SortKey key)
 {
     if (key == SortKey::SORT_KEY_NONE)
         return;
@@ -494,9 +516,9 @@ void PlaylistControllerModel::sort(PlaylistControllerModel::SortKey key)
     sort();
 }
 
-void PlaylistControllerModel::sort(void)
+void PlaylistController::sort(void)
 {
-    Q_D(PlaylistControllerModel);
+    Q_D(PlaylistController);
 
     if (d->m_sortKey == SortKey::SORT_KEY_NONE)
         return;
@@ -509,28 +531,26 @@ void PlaylistControllerModel::sort(void)
     sort( criteria );
 }
 
-void PlaylistControllerModel::explore(const PlaylistItem& pItem)
+void PlaylistController::explore(const PlaylistItem& pItem)
 {
     vlc_playlist_item_t * const playlistItem = pItem.raw();
     if( playlistItem )
     {
         input_item_t * const p_input = vlc_playlist_item_GetMedia(playlistItem);
-        char * const uri = input_item_GetURI(p_input);
+        auto uri = vlc::wrap_cptr( input_item_GetURI(p_input) );
 
-        if( uri && uri[0] != '\0')
+        if( uri && uri.get()[0] != '\0')
         {
-            char * const path = vlc_uri2path( uri );
+            auto path = vlc::wrap_cptr( vlc_uri2path( uri.get() ) );
 
             if( !path )
                 return;
 
-            QString containingDir = QFileInfo( path ).absolutePath();
+            QString containingDir = QFileInfo( path.get() ).absolutePath();
             if( !QFileInfo( containingDir ).isDir() )
                 return;
 
             QUrl file = QUrl::fromLocalFile( containingDir );
-            free( path );
-
             if( !file.isLocalFile() )
                 return;
 
@@ -539,45 +559,51 @@ void PlaylistControllerModel::explore(const PlaylistItem& pItem)
     }
 }
 
-void PlaylistControllerModel::play()
+int PlaylistController::currentIndex() const
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker lock{ d->m_playlist };
+    Q_D(const PlaylistController);
+    return d->m_currentIndex;
+}
+
+void PlaylistController::play()
+{
+    Q_D(PlaylistController);
+    vlc_playlist_locker lock{ d->m_playlist };
     vlc_playlist_Start( d->m_playlist );
 }
 
-void PlaylistControllerModel::pause()
+void PlaylistController::pause()
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker lock{ d->m_playlist };
+    Q_D(PlaylistController);
+    vlc_playlist_locker lock{ d->m_playlist };
     vlc_playlist_Pause( d->m_playlist );
 }
 
-void PlaylistControllerModel::stop()
+void PlaylistController::stop()
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker lock{ d->m_playlist };
+    Q_D(PlaylistController);
+    vlc_playlist_locker lock{ d->m_playlist };
     vlc_playlist_Stop( d->m_playlist );
 }
 
-void PlaylistControllerModel::next()
+void PlaylistController::next()
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker lock{ d->m_playlist };
+    Q_D(PlaylistController);
+    vlc_playlist_locker lock{ d->m_playlist };
     vlc_playlist_Next( d->m_playlist );
 }
 
-void PlaylistControllerModel::prev()
+void PlaylistController::prev()
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker lock{ d->m_playlist };
+    Q_D(PlaylistController);
+    vlc_playlist_locker lock{ d->m_playlist };
     vlc_playlist_Prev( d->m_playlist );
 }
 
-void PlaylistControllerModel::prevOrReset()
+void PlaylistController::prevOrReset()
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker lock{ d->m_playlist };
+    Q_D(PlaylistController);
+    vlc_playlist_locker lock{ d->m_playlist };
     bool seek = false;
     vlc_player_t* player = vlc_playlist_GetPlayer( d->m_playlist );
     Q_ASSERT(player);
@@ -593,10 +619,10 @@ void PlaylistControllerModel::prevOrReset()
         vlc_player_JumpPos( player, 0.f );
 }
 
-void PlaylistControllerModel::togglePlayPause()
+void PlaylistController::togglePlayPause()
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker lock{ d->m_playlist };
+    Q_D(PlaylistController);
+    vlc_playlist_locker lock{ d->m_playlist };
     vlc_player_t* player = vlc_playlist_GetPlayer( d->m_playlist );
     if ( vlc_player_IsStarted(player) )
         vlc_player_TogglePause( player );
@@ -604,11 +630,11 @@ void PlaylistControllerModel::togglePlayPause()
         vlc_playlist_Start( d->m_playlist );
 }
 
-void PlaylistControllerModel::toggleRandom()
+void PlaylistController::toggleRandom()
 {
-    Q_D(PlaylistControllerModel);
+    Q_D(PlaylistController);
     vlc_playlist_playback_order new_order;
-    PlaylistLocker lock{ d->m_playlist };
+    vlc_playlist_locker lock{ d->m_playlist };
     if ( d->m_random )
         new_order = VLC_PLAYLIST_PLAYBACK_ORDER_NORMAL;
     else
@@ -617,9 +643,9 @@ void PlaylistControllerModel::toggleRandom()
     config_PutInt( "random", new_order );
 }
 
-void PlaylistControllerModel::toggleRepeatMode()
+void PlaylistController::toggleRepeatMode()
 {
-    Q_D(PlaylistControllerModel);
+    Q_D(PlaylistController);
     vlc_playlist_playback_repeat new_repeat;
     /* Toggle Normal -> Loop -> Repeat -> Normal ... */
     switch ( d->m_repeat ) {
@@ -635,23 +661,23 @@ void PlaylistControllerModel::toggleRepeatMode()
         break;
     }
     {
-        PlaylistLocker lock{ d->m_playlist };
+        vlc_playlist_locker lock{ d->m_playlist };
         vlc_playlist_SetPlaybackRepeat( d->m_playlist, new_repeat );
     }
     config_PutInt( "repeat", new_repeat );
 }
 
-void PlaylistControllerModel::clear()
+void PlaylistController::clear()
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker lock{ d->m_playlist };
+    Q_D(PlaylistController);
+    vlc_playlist_locker lock{ d->m_playlist };
     vlc_playlist_Clear( d->m_playlist );
 }
 
-void PlaylistControllerModel::goTo(uint index, bool startPlaying)
+void PlaylistController::goTo(uint index, bool startPlaying)
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker lock{ d->m_playlist };
+    Q_D(PlaylistController);
+    vlc_playlist_locker lock{ d->m_playlist };
     size_t count = vlc_playlist_Count( d->m_playlist );
     if (count == 0 || index > count-1)
         return;
@@ -660,38 +686,38 @@ void PlaylistControllerModel::goTo(uint index, bool startPlaying)
         vlc_playlist_Start( d->m_playlist );
 }
 
-bool PlaylistControllerModel::isRandom() const
+bool PlaylistController::isRandom() const
 {
-    Q_D(const PlaylistControllerModel);
+    Q_D(const PlaylistController);
     return d->m_random;
 }
 
-void PlaylistControllerModel::setRandom(bool random)
+void PlaylistController::setRandom(bool random)
 {
-    Q_D(const PlaylistControllerModel);
-    PlaylistLocker lock{ d->m_playlist };
+    Q_D(const PlaylistController);
+    vlc_playlist_locker lock{ d->m_playlist };
     vlc_playlist_SetPlaybackOrder( d->m_playlist, random ? VLC_PLAYLIST_PLAYBACK_ORDER_RANDOM : VLC_PLAYLIST_PLAYBACK_ORDER_NORMAL );
 }
 
-PlaylistPtr PlaylistControllerModel::getPlaylistPtr() const
+Playlist PlaylistController::getPlaylist() const
 {
-    Q_D(const PlaylistControllerModel);
-    return PlaylistPtr(d->m_playlist);
+    Q_D(const PlaylistController);
+    return Playlist(d->m_playlist);
 }
 
-void PlaylistControllerModel::setPlaylistPtr(vlc_playlist_t* newPlaylist)
+void PlaylistController::setPlaylist(vlc_playlist_t* newPlaylist)
 {
-    Q_D(PlaylistControllerModel);
+    Q_D(PlaylistController);
     if (d->m_playlist && d->m_listener)
     {
-        PlaylistLocker locker(d->m_playlist);
+        vlc_playlist_locker locker(d->m_playlist);
         vlc_playlist_RemoveListener(d->m_playlist, d->m_listener);
         d->m_playlist = nullptr;
         d->m_listener = nullptr;
     }
     if (newPlaylist)
     {
-        PlaylistLocker locker(newPlaylist);
+        vlc_playlist_locker locker(newPlaylist);
         d->m_playlist = newPlaylist;
         d->m_listener = vlc_playlist_AddListener(d->m_playlist, &playlist_callbacks, d, true);
         /*
@@ -704,64 +730,63 @@ void PlaylistControllerModel::setPlaylistPtr(vlc_playlist_t* newPlaylist)
             emit playlistInitialized();
         });
     }
-    emit playlistPtrChanged( PlaylistPtr(newPlaylist) );
+    emit playlistChanged( Playlist(newPlaylist) );
 }
 
-void PlaylistControllerModel::resetSortKey()
+void PlaylistController::resetSortKey()
 {
-    Q_D(PlaylistControllerModel);
+    Q_D(PlaylistController);
     d->m_sortKey = SortKey::SORT_KEY_NONE;
     emit sortKeyChanged();
 }
 
-void PlaylistControllerModel::setPlaylistPtr(PlaylistPtr ptr)
+void PlaylistController::setPlaylist(const Playlist& playlist)
 {
-    setPlaylistPtr(ptr.m_playlist);
+    setPlaylist(playlist.m_playlist);
 }
 
-PlaylistControllerModel::PlaybackRepeat PlaylistControllerModel::getRepeatMode() const
+PlaylistController::PlaybackRepeat PlaylistController::getRepeatMode() const
 {
-    Q_D(const PlaylistControllerModel);
+    Q_D(const PlaylistController);
     return d->m_repeat;
 }
 
-void PlaylistControllerModel::setRepeatMode(PlaylistControllerModel::PlaybackRepeat mode)
+void PlaylistController::setRepeatMode(PlaylistController::PlaybackRepeat mode)
 {
-    Q_D(const PlaylistControllerModel);
-    PlaylistLocker lock{ d->m_playlist };
+    Q_D(const PlaylistController);
+    vlc_playlist_locker lock{ d->m_playlist };
     vlc_playlist_SetPlaybackRepeat( d->m_playlist, static_cast<vlc_playlist_playback_repeat>(mode) );
 }
 
-
-bool PlaylistControllerModel::isPlayAndExit() const
+PlaylistController::MediaStopAction PlaylistController::getMediaStopAction() const
 {
-    Q_D(const PlaylistControllerModel);
-    return d->m_isPlayAndExit;
+    Q_D(const PlaylistController);
+    return d->m_mediaStopAction;
 }
 
-void PlaylistControllerModel::setPlayAndExit(bool enable)
+void PlaylistController::setMediaStopAction(PlaylistController::MediaStopAction action)
 {
-    Q_D(PlaylistControllerModel);
-    PlaylistLocker lock{ d->m_playlist };
-    vlc_player_t* player = vlc_playlist_GetPlayer( d->m_playlist );
-    vlc_player_SetMediaStoppedAction( player, enable ? VLC_PLAYER_MEDIA_STOPPED_EXIT :  VLC_PLAYER_MEDIA_STOPPED_CONTINUE );
+    Q_D(PlaylistController);
+    vlc_playlist_locker lock{ d->m_playlist };
+    vlc_playlist_SetMediaStoppedAction(d->m_playlist, static_cast<vlc_playlist_media_stopped_action>(action) );
 }
 
-bool PlaylistControllerModel::isEmpty() const
+bool PlaylistController::isEmpty() const
 {
-    Q_D(const PlaylistControllerModel);
+    Q_D(const PlaylistController);
     return d->m_empty;
 }
 
-size_t PlaylistControllerModel::count() const
+int PlaylistController::count() const
 {
-    Q_D(const PlaylistControllerModel);
+    Q_D(const PlaylistController);
+    assert(d->m_count <= (size_t)INT_MAX);
     return d->m_count;
 }
 
-void PlaylistControllerModel::setSortKey(SortKey sortKey)
+void PlaylistController::setSortKey(SortKey sortKey)
 {
-    Q_D(PlaylistControllerModel);
+    Q_D(PlaylistController);
 
     if (sortKey == d->m_sortKey)
         return;
@@ -770,9 +795,9 @@ void PlaylistControllerModel::setSortKey(SortKey sortKey)
     emit sortKeyChanged();
 }
 
-void PlaylistControllerModel::setSortOrder(SortOrder sortOrder)
+void PlaylistController::setSortOrder(SortOrder sortOrder)
 {
-    Q_D(PlaylistControllerModel);
+    Q_D(PlaylistController);
 
     SortOrder order = d->m_sortOrder;
     if(sortOrder == order)
@@ -782,9 +807,9 @@ void PlaylistControllerModel::setSortOrder(SortOrder sortOrder)
     emit sortOrderChanged();
 }
 
-void PlaylistControllerModel::switchSortOrder()
+void PlaylistController::switchSortOrder()
 {
-    Q_D(PlaylistControllerModel);
+    Q_D(PlaylistController);
 
     SortOrder order = d->m_sortOrder;
     if (order == SortOrder::SORT_ORDER_ASC)
@@ -798,33 +823,33 @@ void PlaylistControllerModel::switchSortOrder()
     emit sortOrderChanged();
 }
 
-PlaylistControllerModel::SortKey PlaylistControllerModel::getSortKey() const
+PlaylistController::SortKey PlaylistController::getSortKey() const
 {
-    Q_D(const PlaylistControllerModel);
+    Q_D(const PlaylistController);
     return d->m_sortKey;
 }
 
-PlaylistControllerModel::SortOrder PlaylistControllerModel::getSortOrder() const
+PlaylistController::SortOrder PlaylistController::getSortOrder() const
 {
-    Q_D(const PlaylistControllerModel);
+    Q_D(const PlaylistController);
     return d->m_sortOrder;
 }
 
-bool PlaylistControllerModel::hasNext() const
+bool PlaylistController::hasNext() const
 {
-    Q_D(const PlaylistControllerModel);
+    Q_D(const PlaylistController);
     return d->m_hasNext;
 }
 
-bool PlaylistControllerModel::hasPrev() const
+bool PlaylistController::hasPrev() const
 {
-    Q_D(const PlaylistControllerModel);
+    Q_D(const PlaylistController);
     return d->m_hasPrev;
 }
 
-QVariantList PlaylistControllerModel::getSortKeyTitleList() const
+QVariantList PlaylistController::getSortKeyTitleList() const
 {
-    Q_D(const PlaylistControllerModel);
+    Q_D(const PlaylistController);
 
     return d->sortKeyTitleList;
 }

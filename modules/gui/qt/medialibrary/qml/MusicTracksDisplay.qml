@@ -15,8 +15,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
+import QtQuick
+import QtQuick.Controls
 import org.videolan.medialib 0.1
 import org.videolan.vlc 0.1
 
@@ -29,15 +29,17 @@ FocusScope {
 
     // Properties
 
-    readonly property bool isViewMultiView: false
+    readonly property bool hasGridListMode: false
+
+    property var pagePrefix: []
 
     property var sortModel: [
-        { text: I18n.qtr("Title"),    criteria: "title"},
-        { text: I18n.qtr("Album"),    criteria: "album_title" },
-        { text: I18n.qtr("Artist"),   criteria: "main_artist" },
-        { text: I18n.qtr("Duration"), criteria: "duration" },
-        { text: I18n.qtr("Track"),    criteria: "track_number" },
-        { text: I18n.qtr("Disc"),     criteria: "disc_number" }
+        { text: qsTr("Title"),    criteria: "title"},
+        { text: qsTr("Album"),    criteria: "album_title" },
+        { text: qsTr("Artist"),   criteria: "main_artist" },
+        { text: qsTr("Duration"), criteria: "duration" },
+        { text: qsTr("Track"),    criteria: "track_number" },
+        { text: qsTr("Disc"),     criteria: "disc_number" }
     ]
 
     // Aliases
@@ -45,8 +47,9 @@ FocusScope {
     property alias leftPadding: tracklistdisplay_id.leftPadding
     property alias rightPadding: tracklistdisplay_id.rightPadding
 
+    property alias isSearchable: tracklistdisplay_id.isSearchable
     property alias model: tracklistdisplay_id.model
-    property alias selectionModel: tracklistdisplay_id.selectionDelegateModel
+    property alias selectionModel: tracklistdisplay_id.selectionModel
 
     function setCurrentItemFocus(reason) {
         tracklistdisplay_id.setCurrentItemFocus(reason);
@@ -59,7 +62,17 @@ FocusScope {
 
         visible: model.count > 0
         focus: model.count > 0
-        headerTopPadding: VLCStyle.margin_normal
+
+        header: Widgets.ViewHeader {
+            view: tracklistdisplay_id
+
+            text: qsTr("Tracks")
+        }
+
+        searchPattern: MainCtx.search.pattern
+        sortOrder: MainCtx.sort.order
+        sortCriteria: MainCtx.sort.criteria
+
         Navigation.parentItem: root
         Navigation.cancelAction: function() {
             if (tracklistdisplay_id.currentIndex <= 0)
@@ -72,11 +85,11 @@ FocusScope {
         displayMarginEnd: g_mainDisplay.displayMargin
     }
 
-    EmptyLabelButton {
+    Widgets.EmptyLabelButton {
         anchors.fill: parent
-        visible: tracklistdisplay_id.model.isReady && (tracklistdisplay_id.model.count <= 0)
+        visible: !tracklistdisplay_id.model.loading && (tracklistdisplay_id.model.count <= 0)
         focus: visible
-        text: I18n.qtr("No tracks found\nPlease try adding sources, by going to the Browse tab")
+        text: qsTr("No tracks found\nPlease try adding sources, by going to the Browse tab")
         Navigation.parentItem: root
         cover: VLCStyle.noArtAlbumCover
     }

@@ -49,8 +49,8 @@
  *****************************************************************************/
 static int  Create    ( filter_t * );
 static void Destroy   ( filter_t * );
-static int  RenderText( filter_t *p_filter, subpicture_region_t *p_region_out,
-                        subpicture_region_t *p_region_in,
+static subpicture_region_t *RenderText( filter_t *p_filter,
+                        const subpicture_region_t *p_region_in,
                         const vlc_fourcc_t * );
 
 typedef struct
@@ -252,7 +252,6 @@ static picture_t * svg_RenderPicture( filter_t *p_filter,
     /* Create a new subpicture region */
     video_format_t fmt;
     video_format_Init( &fmt, VLC_CODEC_BGRA ); /* CAIRO_FORMAT_ARGB32 == VLC_CODEC_BGRA, go figure */
-    fmt.i_bits_per_pixel = 32;
     fmt.i_chroma = VLC_CODEC_BGRA;
     fmt.i_width = fmt.i_visible_width = dim.width;
     fmt.i_height = fmt.i_visible_height = dim.height;
@@ -315,7 +314,8 @@ static char * SegmentsToSVG( text_segment_t *p_segment, int i_height, int *pi_to
     {
         char *psz_prev = psz_result;
         char *psz_encoded = vlc_xml_encode( p_segment->psz_text );
-        if( asprintf( &psz_result, "%s<tspan x='0' dy='%upx'>%s</tspan>\n",
+        if( psz_encoded == NULL ||
+            asprintf( &psz_result, "%s<tspan x='0' dy='%upx'>%s</tspan>\n",
                                    (psz_prev) ? psz_prev : "",
                                     i_height,
                                     psz_encoded ) < 0 )
@@ -329,40 +329,36 @@ static char * SegmentsToSVG( text_segment_t *p_segment, int i_height, int *pi_to
     return psz_result;
 }
 
-static int RenderText( filter_t *p_filter, subpicture_region_t *p_region_out,
-                       subpicture_region_t *p_region_in,
+static subpicture_region_t *RenderText( filter_t *p_filter,
+                       const subpicture_region_t *p_region_in,
                        const vlc_fourcc_t *p_chroma_list )
 {
-    /* Sanity check */
-    if( !p_region_in || !p_region_out || !p_region_in->p_text )
-        return VLC_EGENERIC;
-
     for( size_t i=0; p_chroma_list[i]; i++ )
     {
         if( p_chroma_list[i] == VLC_CODEC_BGRA )
             break;
         if( p_chroma_list[i] == 0 )
-            return VLC_EGENERIC;
+        {
+            msg_Warn( p_filter, "no output chroma supported for rendering" );
+            return NULL;
+        }
     }
 
-    p_region_out->i_x = p_region_in->i_x;
-    p_region_out->i_y = p_region_in->i_y;
-
     unsigned i_width = p_filter->fmt_out.video.i_visible_width;
-    if( (unsigned) p_region_out->i_x <= i_width )
-        i_width -= p_region_out->i_x;
+    if( (unsigned) p_region_in->i_x <= i_width )
+        i_width -= p_region_in->i_x;
 
     unsigned i_height = p_filter->fmt_out.video.i_visible_height;
-    if( (unsigned) p_region_out->i_y <= i_height )
-        i_height -= p_region_out->i_y;
+    if( (unsigned) p_region_in->i_y <= i_height )
+        i_height -= p_region_in->i_y;
 
     if( i_height == 0 || i_width == 0 )
-        return VLC_EGENERIC;
+        return NULL;
 
     char *psz_svg;
     /* Check if the data is SVG or pure text. In the latter case,
        convert the text to SVG. FIXME: find a better test */
-    if( p_region_in->p_text && strstr( p_region_in->p_text->psz_text, "<svg" ) )
+    if( strstr( p_region_in->p_text->psz_text, "<svg" ) )
     {
         psz_svg = strdup( p_region_in->p_text->psz_text );
     }
@@ -380,18 +376,23 @@ static int RenderText( filter_t *p_filter, subpicture_region_t *p_region_out,
     }
 
     if( !psz_svg )
-        return VLC_EGENERIC;
+        return NULL;
 
     picture_t *p_picture = svg_RenderPicture( p_filter, psz_svg );
 
     free( psz_svg );
 
-    if (p_picture)
-    {
-        p_region_out->p_picture = p_picture;
-        video_format_Clean( &p_region_out->fmt );
-        video_format_Copy( &p_region_out->fmt, &p_picture->format );
-        return VLC_SUCCESS;
-    }
-    return VLC_EGENERIC;
+    if (p_picture == NULL)
+        return NULL;
+
+    subpicture_region_t *p_region_out = subpicture_region_ForPicture(NULL, p_picture);
+    picture_Release(p_picture);
+    if (unlikely(p_region_out == NULL))
+        return NULL;
+    p_region_out->i_x     = p_region_in->i_x;
+    p_region_out->i_y     = p_region_in->i_y;
+    p_region_out->i_alpha = p_region_in->i_alpha;
+    p_region_out->i_align = p_region_in->i_align;
+
+    return p_region_out;
 }

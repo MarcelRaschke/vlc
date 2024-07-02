@@ -160,11 +160,12 @@ static void UpdateDecoderOutput(decoder_t *dec, const Dav1dSequenceHeader *seq_h
 static int NewPicture(Dav1dPicture *img, void *cookie)
 {
     decoder_t *dec = cookie;
+    decoder_sys_t *p_sys = dec->p_sys;
 
     video_format_t *v = &dec->fmt_out.video;
 
-    v->i_visible_width  = img->p.w;
-    v->i_visible_height = img->p.h;
+    v->i_visible_width  = img->seq_hdr->max_width;
+    v->i_visible_height = img->seq_hdr->max_height;
 
     UpdateDecoderOutput(dec, img->seq_hdr);
 
@@ -199,9 +200,18 @@ static int NewPicture(Dav1dPicture *img, void *cookie)
     v->multiview_mode = dec->fmt_in->video.multiview_mode;
     v->pose = dec->fmt_in->video.pose;
     dec->fmt_out.i_codec = FindVlcChroma(img);
-    v->i_width  = (img->p.w + 0x7F) & ~0x7F;
-    v->i_height = (img->p.h + 0x7F) & ~0x7F;
+    v->i_width  = (img->seq_hdr->max_width + 0x7F) & ~0x7F;
+    v->i_height = (img->seq_hdr->max_height + 0x7F) & ~0x7F;
     v->i_chroma = dec->fmt_out.i_codec;
+
+#if DAV1D_API_VERSION_MAJOR >= 6
+    dec->i_extra_picture_buffers = p_sys->s.max_frame_delay;
+#else
+    dec->i_extra_picture_buffers = (p_sys->s.n_frame_threads - 1);
+#endif
+    if (img->seq_hdr->super_res)
+        // dav1d seems to buffer more pictures when using super resolution
+        dec->i_extra_picture_buffers += dec->i_extra_picture_buffers > 1 ? 2 : 1;
 
     if (decoder_UpdateVideoFormat(dec) == 0)
     {
@@ -481,6 +491,7 @@ static int OpenDecoder(vlc_object_t *p_this)
     dec->fmt_out.video.i_frame_rate = dec->fmt_in->video.i_frame_rate;
     dec->fmt_out.video.i_frame_rate_base = dec->fmt_in->video.i_frame_rate_base;
 
+    bool super_res = false;
     if (!sequence_hdr)
     {
         dec->fmt_out.i_codec = VLC_CODEC_I420;
@@ -497,6 +508,7 @@ static int OpenDecoder(vlc_object_t *p_this)
         if (dec->fmt_out.video.transfer == TRANSFER_FUNC_UNDEF)
             AV1_get_colorimetry(sequence_hdr, &dec->fmt_out.video.primaries, &dec->fmt_out.video.transfer,
                                 &dec->fmt_out.video.space, &dec->fmt_out.video.color_range);
+        super_res = AV1_get_super_res(sequence_hdr);
     }
     dec->fmt_out.video.i_visible_width  = dec->fmt_out.video.i_width;
     dec->fmt_out.video.i_visible_height = dec->fmt_out.video.i_height;
@@ -518,6 +530,9 @@ static int OpenDecoder(vlc_object_t *p_this)
 
     dec->i_extra_picture_buffers = (p_sys->s.n_frame_threads - 1);
 #endif
+    if (super_res)
+        // dav1d seems to buffer more pictures when using super resolution
+        dec->i_extra_picture_buffers += dec->i_extra_picture_buffers > 1 ? 2 : 1;
     dec->fmt_out.video.i_width  = (dec->fmt_out.video.i_width + 0x7F) & ~0x7F;
     dec->fmt_out.video.i_height = (dec->fmt_out.video.i_height + 0x7F) & ~0x7F;
 

@@ -51,15 +51,21 @@ struct vlc_aout_stream
 
     struct
     {
+        bool draining;
+        block_t **fifo_last;
+        block_t *fifo_first;
+    } discontinuity;
+
+    struct
+    {
         struct vlc_clock_t *clock;
         float rate; /**< Play-out speed rate */
         vlc_tick_t resamp_start_drift; /**< Resampler drift absolute value */
         int resamp_type; /**< Resampler mode (FIXME: redundant / resampling) */
-        bool discontinuity;
+        bool played;
         vlc_tick_t request_delay;
         vlc_tick_t delay;
     } sync;
-    vlc_tick_t original_pts;
 
     struct
     {
@@ -76,6 +82,8 @@ struct vlc_aout_stream
 
         vlc_tick_t system_ts;
         vlc_tick_t audio_ts;
+
+        vlc_tick_t pause_date;
         float rate;
     } timing;
 
@@ -154,10 +162,98 @@ static int stream_GetDelay(vlc_aout_stream *stream, vlc_tick_t *delay)
     return 0;
 }
 
-static void stream_Discontinuity(vlc_aout_stream *stream)
+static bool stream_IsDrained(vlc_aout_stream *stream)
 {
-    stream->sync.discontinuity = true;
-    stream->original_pts = VLC_TICK_INVALID;
+    audio_output_t *aout = aout_stream_aout(stream);
+
+    if (aout->drain == NULL)
+    {
+        vlc_tick_t drain_deadline =
+            atomic_load_explicit(&stream->drain_deadline, memory_order_relaxed);
+        return drain_deadline != VLC_TICK_INVALID
+            && vlc_tick_now() >= drain_deadline;
+    }
+    else
+        return atomic_load_explicit(&stream->drained, memory_order_relaxed);
+}
+
+static int stream_StartDiscontinuity(vlc_aout_stream *stream, block_t *block)
+{
+    audio_output_t *aout = aout_stream_aout(stream);
+    assert(!stream->discontinuity.draining);
+
+    /* Changing timings of the stream module while playing is an intricate
+     * task, therefore modules don't handle any PTS discontinuity.
+     *
+     * The PTS discontinuity is handled in the core:
+     *
+     *  - Drain the current stream in case of discontinuity
+     *  - Check from future Play() calls if the stream is drained
+     *  - Keep blocks in a list while waiting for the drain
+     *  - Flush when the stream is finally drained
+     *  - Play back all blocks that were saved
+     */
+
+    msg_Dbg(aout, "discontinuity: at %"PRId64" us, draining output",
+            block->i_pts);
+    vlc_aout_stream_Drain(stream);
+    stream->discontinuity.draining = true;
+
+    stream->discontinuity.fifo_first = NULL;
+    stream->discontinuity.fifo_last = &stream->discontinuity.fifo_first;
+
+    block->i_flags &= ~ BLOCK_FLAG_DISCONTINUITY;
+    block_ChainLastAppend(&stream->discontinuity.fifo_last, block);
+
+    return AOUT_DEC_SUCCESS;
+}
+
+static void stream_ResetDiscontinuity(vlc_aout_stream *stream)
+{
+    block_ChainRelease(stream->discontinuity.fifo_first);
+    stream->discontinuity.draining = false;
+}
+
+static int stream_HandleDiscontinuity(vlc_aout_stream *stream, block_t *block)
+{
+    audio_output_t *aout = aout_stream_aout(stream);
+
+    block_ChainLastAppend(&stream->discontinuity.fifo_last, block);
+
+    /* Will play back all blocks once the draining is finished */
+    if (!stream_IsDrained(stream))
+        return AOUT_DEC_SUCCESS;
+
+    /* Keep block list and stats before flushing */
+    int count;
+    vlc_tick_t length;
+    block_ChainProperties(stream->discontinuity.fifo_first, &count, NULL,
+                          &length);
+    block = stream->discontinuity.fifo_first;
+
+    msg_Dbg(aout, "discontinuity: flushing output");
+
+    /* Reset the discontinuity state, and flush */
+    stream->discontinuity.draining = false;
+    vlc_aout_stream_Flush(stream);
+
+    msg_Dbg(aout, "discontinuity: playing back %d blocks for a total length of "
+            "%"PRId64" us", count, length);
+
+    /* Play back all blocks past the discontinuity */
+    for (block_t *next; block != NULL; block = next)
+    {
+        next = block->p_next;
+        block->p_next = NULL;
+
+        vlc_aout_stream_Play(stream, block);
+    }
+    return AOUT_DEC_SUCCESS;
+}
+
+static void stream_ResetTimings(vlc_aout_stream *stream)
+{
+    stream->sync.played = false;
 
     vlc_mutex_lock(&stream->timing.lock);
     stream->timing.first_pts = VLC_TICK_INVALID;
@@ -165,6 +261,8 @@ static void stream_Discontinuity(vlc_aout_stream *stream)
     stream->timing.system_ts = VLC_TICK_INVALID;
     stream->timing.audio_ts = VLC_TICK_INVALID;
     vlc_mutex_unlock(&stream->timing.lock);
+
+    stream->timing.pause_date = VLC_TICK_INVALID;
     stream->timing.played_samples = 0;
 }
 
@@ -179,7 +277,9 @@ static void stream_Reset(vlc_aout_stream *stream)
         if (stream->filters)
             aout_FiltersFlush (stream->filters);
 
+        vlc_clock_Lock(stream->sync.clock);
         vlc_clock_Reset(stream->sync.clock);
+        vlc_clock_Unlock(stream->sync.clock);
         if (stream->filters)
             aout_FiltersResetClock(stream->filters);
 
@@ -191,12 +291,17 @@ static void stream_Reset(vlc_aout_stream *stream)
              * dejitter. This will allow the aout to update the master clock
              * sooner.
              */
+            vlc_clock_Lock(stream->sync.clock);
             vlc_clock_SetDelay(stream->sync.clock, 0);
+            vlc_clock_Unlock(stream->sync.clock);
             if (stream->filters)
                 aout_FiltersSetClockDelay(stream->filters, 0);
             stream->sync.request_delay = stream->sync.delay;
             stream->sync.delay = 0;
         }
+
+        if (stream->discontinuity.draining)
+            stream_ResetDiscontinuity(stream);
     }
 
     stream->timing.rate_audio_ts = VLC_TICK_INVALID;
@@ -206,7 +311,7 @@ static void stream_Reset(vlc_aout_stream *stream)
     atomic_store_explicit(&stream->drain_deadline, VLC_TICK_INVALID,
                           memory_order_relaxed);
 
-    stream_Discontinuity(stream);
+    stream_ResetTimings(stream);
 }
 
 /**
@@ -272,7 +377,9 @@ vlc_aout_stream * vlc_aout_stream_New(audio_output_t *p_aout,
     stream->sync.rate = 1.f;
     stream->sync.resamp_type = AOUT_RESAMPLING_NONE;
     stream->sync.delay = stream->sync.request_delay = 0;
-    stream_Discontinuity(stream);
+
+    stream->discontinuity.draining = false;
+    stream_ResetTimings(stream);
 
     atomic_init (&stream->buffers_lost, 0);
     atomic_init (&stream->buffers_played, 0);
@@ -325,14 +432,20 @@ void vlc_aout_stream_Delete (vlc_aout_stream *stream)
 
     if (stream->mixer_format.i_format)
     {
-        stream_Reset(stream);
         vlc_audio_meter_Reset(&owner->meter, NULL);
         if (stream->filters)
             aout_FiltersDelete (aout, stream->filters);
         aout_OutputDelete (aout);
+
+        vlc_clock_Lock(stream->sync.clock);
+        vlc_clock_Reset(stream->sync.clock);
+        vlc_clock_Unlock(stream->sync.clock);
     }
     if (stream->volume != NULL)
         aout_volume_Delete(stream->volume);
+
+    if (stream->discontinuity.draining)
+        stream_ResetDiscontinuity(stream);
 
     free(stream);
 }
@@ -345,7 +458,7 @@ static int stream_CheckReady (vlc_aout_stream *stream)
 
     int restart = atomic_exchange_explicit(&stream->restart, 0,
                                            memory_order_acquire);
-    if (unlikely(restart))
+    if (unlikely(restart != 0))
     {
         if (stream->filters)
         {
@@ -376,8 +489,10 @@ static int stream_CheckReady (vlc_aout_stream *stream)
              * suitable codec (like an HDMI audio format). However, keep the
              * same codec if the aout was restarted because of a stereo-mode
              * change from the user. */
-            if (restart == AOUT_RESTART_OUTPUT)
+            if ((restart & AOUT_RESTART_OUTPUT_DEC) == AOUT_RESTART_OUTPUT_DEC)
                 status = AOUT_DEC_CHANGED;
+
+            stream_Reset(stream);
         }
         else if (tracer != NULL)
             vlc_tracer_TraceEvent(tracer, "RENDER", stream->str_id, "filters_restart");
@@ -452,9 +567,11 @@ static void stream_Silence (vlc_aout_stream *stream, vlc_tick_t length, vlc_tick
     block->i_length = length;
 
     const vlc_tick_t system_now = vlc_tick_now();
+    vlc_clock_Lock(stream->sync.clock);
     const vlc_tick_t system_pts =
        vlc_clock_ConvertToSystem(stream->sync.clock, system_now, pts,
                                  stream->sync.rate);
+    vlc_clock_Unlock(stream->sync.clock);
     stream->timing.played_samples += block->i_nb_samples;
     aout->play(aout, block, system_pts);
 }
@@ -467,14 +584,15 @@ static void stream_HandleDrift(vlc_aout_stream *stream, vlc_tick_t drift,
 
     float rate = stream->sync.rate;
 
-    if (unlikely(drift == VLC_TICK_MAX) || owner->bitexact)
-        return; /* cf. VLC_TICK_MAX comment in vlc_aout_stream_Play() */
+    if (owner->bitexact)
+        return;
 
     struct vlc_tracer *tracer = aout_stream_tracer(stream);
     if (tracer != NULL)
         vlc_tracer_Trace(tracer, VLC_TRACE("type", "RENDER"),
-                         VLC_TRACE("id", stream->str_id),
-                         VLC_TRACE("drift", drift), VLC_TRACE_END);
+                                 VLC_TRACE("id", stream->str_id),
+                                 VLC_TRACE_TICK_NS("drift", drift),
+                                 VLC_TRACE_END);
 
     /* Following calculations expect an opposite drift. Indeed,
      * vlc_clock_Update() returns a positive relative time, corresponding to
@@ -488,13 +606,13 @@ static void stream_HandleDrift(vlc_aout_stream *stream, vlc_tick_t drift,
      * is not portable, not supported by some hardware and often unsafe/buggy
      * where supported. The other alternative is to flush the buffers
      * completely. */
-    if (drift > (stream->sync.discontinuity ? 0
-                : lroundf(+3 * AOUT_MAX_PTS_DELAY / rate)))
+    if (drift > (stream->sync.played ?
+                 lroundf(+3 * AOUT_MAX_PTS_DELAY / rate) : 0))
     {
         if (tracer != NULL)
             vlc_tracer_TraceEvent(tracer, "RENDER", stream->str_id, "late_flush");
 
-        if (!stream->sync.discontinuity)
+        if (stream->sync.played)
             msg_Warn (aout, "playback way too late (%"PRId64"): "
                       "flushing buffers", drift);
         else
@@ -508,10 +626,10 @@ static void stream_HandleDrift(vlc_aout_stream *stream, vlc_tick_t drift,
 
     /* Early audio output.
      * This is rare except at startup when the buffers are still empty. */
-    if (drift < (stream->sync.discontinuity ? 0
-                : lroundf(-3 * AOUT_MAX_PTS_ADVANCE / rate)))
+    if (drift < (stream->sync.played ?
+                 lroundf(-3 * AOUT_MAX_PTS_ADVANCE / rate) : 0))
     {
-        if (!stream->sync.discontinuity)
+        if (stream->sync.played)
         {
             if (tracer != NULL)
                 vlc_tracer_TraceEvent(tracer, "RENDER", stream->str_id, "early_silence");
@@ -522,7 +640,6 @@ static void stream_HandleDrift(vlc_aout_stream *stream, vlc_tick_t drift,
         stream_Silence(stream, -drift, audio_ts);
 
         stream_StopResampling(stream);
-        stream->sync.discontinuity = true;
         drift = 0;
     }
 
@@ -587,7 +704,7 @@ static void stream_HandleDrift(vlc_aout_stream *stream, vlc_tick_t drift,
 }
 
 static void stream_Synchronize(vlc_aout_stream *stream, vlc_tick_t system_now,
-                               vlc_tick_t dec_pts)
+                               vlc_tick_t play_date, vlc_tick_t dec_pts)
 {
     /**
      * Depending on the drift between the actual and intended playback times,
@@ -612,6 +729,17 @@ static void stream_Synchronize(vlc_aout_stream *stream, vlc_tick_t system_now,
     if (aout->time_get == NULL)
     {
         vlc_mutex_lock(&stream->timing.lock);
+        if (stream->sync.rate != stream->timing.rate)
+        {
+            /* Save the first timing point seeing a rate change */
+            stream->timing.rate_system_ts = play_date;
+            stream->timing.rate_audio_ts = dec_pts;
+            stream->timing.rate = stream->sync.rate;
+        }
+
+        if (stream->timing.first_pts == VLC_TICK_INVALID)
+            stream->timing.first_pts = dec_pts;
+
         bool is_drifting = stream->timing.last_drift != VLC_TICK_INVALID;
         vlc_mutex_unlock(&stream->timing.lock);
 
@@ -624,11 +752,6 @@ static void stream_Synchronize(vlc_aout_stream *stream, vlc_tick_t system_now,
         if (stream_GetDelay(stream, &delay) != 0)
             return; /* nothing can be done if timing is unknown */
 
-        /* Equivalent to vlc_clock_Update() but we don't want to update points
-         * (since there are already updated via aout_TimingReport()). */
-        vlc_tick_t play_date =
-            vlc_clock_ConvertToSystem(stream->sync.clock, system_now + delay, dec_pts,
-                                      stream->sync.rate);
         drift = play_date - system_now - delay;
     }
     else
@@ -636,7 +759,7 @@ static void stream_Synchronize(vlc_aout_stream *stream, vlc_tick_t system_now,
         if (stream_GetDelay(stream, &delay) != 0)
             return; /* nothing can be done if timing is unknown */
 
-        if (stream->sync.discontinuity)
+        if (!stream->sync.played)
         {
             /* Chicken-egg situation for some aout modules that can't be
              * started deferred (like alsa). These modules will start to play
@@ -647,9 +770,7 @@ static void stream_Synchronize(vlc_aout_stream *stream, vlc_tick_t system_now,
              * clock without taking the jitter into account. Therefore, we
              * manually insert silence that correspond to the clock jitter
              * value before updating the clock. */
-            vlc_tick_t play_date =
-                vlc_clock_ConvertToSystem(stream->sync.clock, system_now + delay,
-                                          dec_pts, stream->sync.rate);
+
             vlc_tick_t jitter = play_date - system_now;
             if (jitter > 0)
             {
@@ -659,8 +780,10 @@ static void stream_Synchronize(vlc_aout_stream *stream, vlc_tick_t system_now,
             }
         }
 
+        vlc_clock_Lock(stream->sync.clock);
         drift = vlc_clock_Update(stream->sync.clock, system_now + delay,
                                  dec_pts, stream->sync.rate);
+        vlc_clock_Unlock(stream->sync.clock);
     }
 
     stream_HandleDrift(stream, drift, dec_pts);
@@ -670,10 +793,9 @@ void vlc_aout_stream_NotifyTiming(vlc_aout_stream *stream, vlc_tick_t system_ts,
                                   vlc_tick_t audio_ts)
 {
     vlc_mutex_lock(&stream->timing.lock);
+
     vlc_tick_t rate_audio_ts = stream->timing.rate_audio_ts;
     vlc_tick_t rate_system_ts = stream->timing.rate_system_ts;
-
-    audio_ts += stream->timing.first_pts;
 
     if (rate_audio_ts != VLC_TICK_INVALID)
     {
@@ -691,9 +813,11 @@ void vlc_aout_stream_NotifyTiming(vlc_aout_stream *stream, vlc_tick_t system_ts,
 
     stream->timing.system_ts = system_ts;
     stream->timing.audio_ts = audio_ts;
+    vlc_clock_Lock(stream->sync.clock);
     stream->timing.last_drift =
         vlc_clock_Update(stream->sync.clock, system_ts,
                          audio_ts, stream->timing.rate);
+    vlc_clock_Unlock(stream->sync.clock);
     vlc_mutex_unlock(&stream->timing.lock);
 }
 
@@ -710,21 +834,15 @@ int vlc_aout_stream_Play(vlc_aout_stream *stream, block_t *block)
     block->i_length = vlc_tick_from_samples( block->i_nb_samples,
                                    stream->input_format.i_rate );
 
+    if (stream->discontinuity.draining)
+        return stream_HandleDiscontinuity(stream, block);
+
+    if (block->i_flags & BLOCK_FLAG_DISCONTINUITY && stream->sync.played)
+        return stream_StartDiscontinuity(stream, block);
+
     int ret = stream_CheckReady (stream);
     if (unlikely(ret == AOUT_DEC_FAILED))
         goto drop; /* Pipeline is unrecoverably broken :-( */
-
-    if (block->i_flags & BLOCK_FLAG_DISCONTINUITY)
-        stream_Discontinuity(stream);
-
-    if (stream->original_pts == VLC_TICK_INVALID)
-    {
-        /* Use the original PTS for synchronization and as a play date of the
-         * aout module. This PTS need to be saved here in order to use the PTS
-         * of the first block that has been filtered. Indeed, aout filters may
-         * need more than one block to output a new one. */
-        stream->original_pts = block->i_pts;
-    }
 
     if (stream->filters)
     {
@@ -741,9 +859,6 @@ int vlc_aout_stream_Play(vlc_aout_stream *stream, block_t *block)
             return ret;
     }
 
-    const vlc_tick_t original_pts = stream->original_pts;
-    stream->original_pts = VLC_TICK_INVALID;
-
     /* Software volume */
     if (stream->volume != NULL)
         aout_volume_Amplify(stream->volume, block);
@@ -752,7 +867,9 @@ int vlc_aout_stream_Play(vlc_aout_stream *stream, block_t *block)
     if (stream->sync.request_delay != stream->sync.delay)
     {
         stream->sync.delay = stream->sync.request_delay;
+        vlc_clock_Lock(stream->sync.clock);
         vlc_tick_t delta = vlc_clock_SetDelay(stream->sync.clock, stream->sync.delay);
+        vlc_clock_Unlock(stream->sync.clock);
         if (stream->filters)
             aout_FiltersSetClockDelay(stream->filters, stream->sync.delay);
         if (delta > 0)
@@ -761,54 +878,25 @@ int vlc_aout_stream_Play(vlc_aout_stream *stream, block_t *block)
 
     /* Drift correction */
     vlc_tick_t system_now = vlc_tick_now();
-    stream_Synchronize(stream, system_now, original_pts);
 
+    vlc_clock_Lock(stream->sync.clock);
     vlc_tick_t play_date =
-        vlc_clock_ConvertToSystem(stream->sync.clock, system_now, original_pts,
+        vlc_clock_ConvertToSystem(stream->sync.clock, system_now, block->i_pts,
                                   stream->sync.rate);
-    if (unlikely(play_date == VLC_TICK_MAX))
-    {
-        /* The clock is paused but not the output, play the audio anyway since
-         * we can't delay audio playback from here. */
-        play_date = system_now;
-
-    }
+    vlc_clock_Unlock(stream->sync.clock);
+    stream_Synchronize(stream, system_now, play_date, block->i_pts);
 
     vlc_audio_meter_Process(&owner->meter, block, play_date);
 
-    if (aout->time_get == NULL
-     && stream->sync.rate != stream->timing.rate)
-    {
-        vlc_mutex_lock(&stream->timing.lock);
-        /* Save the first timing point seeing a rate change */
-        stream->timing.rate_system_ts = play_date;
-        stream->timing.rate_audio_ts = original_pts;
-        stream->timing.rate = stream->sync.rate;
-
-        /* Update the clock immediately with the new rate, instead of waiting
-         * for a timing update that could come too late (after 1second). */
-        stream->timing.last_drift =
-            vlc_clock_Update(stream->sync.clock, play_date, original_pts,
-                             stream->sync.rate);
-        vlc_mutex_unlock(&stream->timing.lock);
-    }
-
-    if (stream->timing.first_pts == VLC_TICK_INVALID)
-    {
-        vlc_mutex_lock(&stream->timing.lock);
-        stream->timing.first_pts = original_pts;
-        vlc_mutex_unlock(&stream->timing.lock);
-    }
-
     /* Output */
-    stream->sync.discontinuity = false;
+    stream->sync.played = true;
     stream->timing.played_samples += block->i_nb_samples;
     aout->play(aout, block, play_date);
 
     atomic_fetch_add_explicit(&stream->buffers_played, 1, memory_order_relaxed);
     return ret;
 drop:
-    stream_Discontinuity(stream);
+    stream_ResetTimings(stream);
     block_Release (block);
     atomic_fetch_add_explicit(&stream->buffers_lost, 1, memory_order_relaxed);
     return ret;
@@ -834,19 +922,38 @@ void vlc_aout_stream_ChangePause(vlc_aout_stream *stream, bool paused, vlc_tick_
             vlc_tracer_TraceEvent(tracer, "RENDER", stream->str_id,
                                   paused ? "paused" : "resumed");
 
+        if (paused)
+        {
+            assert(stream->timing.pause_date == VLC_TICK_INVALID);
+            stream->timing.pause_date = date;
+        }
+        else if (stream->timing.pause_date != VLC_TICK_INVALID)
+        {
+            /* Delay the last timing with the pause duration. This will be used
+             * by stream_GetDelay() until the module updates its next point
+             * after being resumed. */
+            vlc_mutex_lock(&stream->timing.lock);
+            if (stream->timing.system_ts != VLC_TICK_INVALID)
+                stream->timing.system_ts += date - stream->timing.pause_date;
+            vlc_mutex_unlock(&stream->timing.lock);
+            stream->timing.pause_date = VLC_TICK_INVALID;
+        }
+
         if (aout->pause != NULL)
             aout->pause(aout, paused, date);
         else if (paused)
-            aout->flush(aout);
+            vlc_aout_stream_Flush(stream);
 
         /* Update the rate point after the pause */
         if (aout->time_get == NULL && !paused
          && stream->timing.rate_audio_ts != VLC_TICK_INVALID)
         {
+            vlc_clock_Lock(stream->sync.clock);
             vlc_tick_t play_date =
                 vlc_clock_ConvertToSystem(stream->sync.clock, date,
                                           stream->timing.rate_audio_ts,
                                           stream->sync.rate);
+            vlc_clock_Unlock(stream->sync.clock);
             stream->timing.rate_system_ts = play_date;
         }
     }
@@ -888,17 +995,11 @@ void vlc_aout_stream_NotifyDrained(vlc_aout_stream *stream)
 
 bool vlc_aout_stream_IsDrained(vlc_aout_stream *stream)
 {
-    audio_output_t *aout = aout_stream_aout(stream);
+    /* The internal draining state should not mess with the public one */
+    if (stream->discontinuity.draining)
+        return false;
 
-    if (aout->drain == NULL)
-    {
-        vlc_tick_t drain_deadline =
-            atomic_load_explicit(&stream->drain_deadline, memory_order_relaxed);
-        return drain_deadline != VLC_TICK_INVALID
-            && vlc_tick_now() >= drain_deadline;
-    }
-    else
-        return atomic_load_explicit(&stream->drained, memory_order_relaxed);
+    return stream_IsDrained(stream);
 }
 
 void vlc_aout_stream_Drain(vlc_aout_stream *stream)
@@ -907,6 +1008,21 @@ void vlc_aout_stream_Drain(vlc_aout_stream *stream)
 
     if (!stream->mixer_format.i_format)
         return;
+
+    if (unlikely(stream->discontinuity.draining))
+    {
+        if (stream->discontinuity.fifo_first != NULL)
+        {
+            vlc_tick_t length;
+            block_ChainProperties(stream->discontinuity.fifo_first, NULL, NULL,
+                                  &length);
+
+            msg_Err(aout, "draining while handling a discontinuity not handled"
+                    ", losing %"PRId64 " us of audio", length); /* FIXME */
+        }
+        stream_ResetDiscontinuity(stream);
+        return;
+    }
 
     struct vlc_tracer *tracer = aout_stream_tracer(stream);
 

@@ -21,7 +21,7 @@ needs to build itself and its contribs.
 sudo apt-get update -qq
 sudo apt-get install -qqy \
     git wget bzip2 file libwine-dev unzip libtool libtool-bin libltdl-dev pkg-config ant \
-    build-essential automake texinfo ragel yasm p7zip-full autopoint \
+    build-essential automake texinfo yasm p7zip-full autopoint \
     gettext cmake zip wine nsis g++-mingw-w64-i686 curl gperf flex bison \
     libcurl4-gnutls-dev python3 python3-setuptools python3-mako python3-requests \
     gcc make procps ca-certificates \
@@ -37,7 +37,7 @@ pacman -S --needed git wget bzip2 file unzip libtool pkg-config \
     gettext cmake zip curl gperf flex bison \
     python3 python3-setuptools python3-mako \
     gcc make ca-certificates nasm gnupg patch help2man \
-    ragel python3 meson
+    python3 meson
 ```
 <!-- pacman -S ant autopoint nsis python3-requests jq openjdk-11-jdk-headless -->
 
@@ -70,34 +70,45 @@ should go with the `msvcrt` version. The official VLC builds use `msvcrt` for de
 ```sh
 wget https://github.com/mstorsjo/llvm-mingw/releases/download/20220906/llvm-mingw-20220906-msvcrt-ubuntu-18.04-x86_64.tar.xz
 tar xvf llvm-mingw-20220906-msvcrt-ubuntu-18.04-x86_64.tar.xz -C /opt
-export PATH=/opt/llvm-mingw-20220906-msvcrt-ubuntu-18.04-x86_64/bin:$PATH
+```
+Every time you build VLC, you will need to have the toolchain in your PATH.
+We recommend creating a script file to do this, so that you can call
+it when you start your build sesson:
+
+```sh
+echo 'export PATH=/opt/llvm-mingw-20220906-msvcrt-ubuntu-18.04-x86_64/bin:$PATH' > toolchain.sh
+```
+
+You will need to call this file when you start your build session:
+
+```sh
+source toolchain.sh
 ```
 
 * On msys2, **use the mingw64 (blue) environment** (ie not msys (purple) the  or mingw32 (grey) environments):
 ```sh
 wget https://github.com/mstorsjo/llvm-mingw/releases/download/20220906/llvm-mingw-20220906-msvcrt-x86_64.zip
 unzip llvm-mingw-20220906-msvcrt-x86_64.zip -d /opt
-export PATH=/opt/llvm-mingw-20220906-msvcrt-x86_64/bin:$PATH
 ```
 
 Every time you build VLC, you will need to have the toolchain in your PATH.
-A convenient way to setup your environment is to set command in a file and call
+We recommend creating a script file to do this, so that you can call
 it when you start your build sesson:
 
-Create toolchain.sh:
 ```sh
-cat export PATH=/opt/llvm-mingw-20220906-msvcrt-x86_64/bin:$PATH > toolchain.sh
+echo 'export PATH=/opt/llvm-mingw-20220906-msvcrt-x86_64/bin:$PATH' > toolchain.sh
 ```
 
-Use toolchain.sh to set the path to your compiler:
+You will need to call this file when you start your build session:
+
 ```sh
 source toolchain.sh
 ```
 
 * On Docker, you can use these 2 images:
 
-  * msvcrt: `registry.videolan.org/vlc-debian-llvm-msvcrt:20221011232542`
-  * ucrt:   `registry.videolan.org/vlc-debian-llvm-ucrt:20221012005047`
+  * msvcrt: `registry.videolan.org/vlc-debian-llvm-msvcrt:20240212151604`
+  * ucrt:   `registry.videolan.org/vlc-debian-llvm-ucrt:20240212151604`
 
 You can find the latest Docker images we use in [extras/ci/gitlab-ci.yml](/extras/ci/gitlab-ci.yml)
 
@@ -127,7 +138,7 @@ Type enter to select "all"
 ```
 
 
-* On Docker, you can use the `registry.videolan.org/vlc-debian-win64:20221011230137` image.
+* On Docker, you can use the `registry.videolan.org/vlc-debian-win64-posix:20240212151604` image.
 
 You can find the latest Docker images we use in [extras/ci/gitlab-ci.yml](/extras/ci/gitlab-ci.yml)
 
@@ -179,7 +190,7 @@ and reuse prebuilt contribs:
 ```sh
 mkdir build
 cd build
-export VLC_CONTRIB_SHA="$(cd ../vlc; extras/ci/get-contrib-sha.sh)"
+export VLC_CONTRIB_SHA="$(cd ../vlc; extras/ci/get-contrib-sha.sh win32)"
 export VLC_PREBUILT_CONTRIBS_URL="https://artifacts.videolan.org/vlc/win64/vlc-contrib-x86_64-w64-mingw32-${VLC_CONTRIB_SHA}.tar.bz2"
 ../vlc/extras/package/win32/build.sh -a x86_64 -p
 ```
@@ -192,7 +203,7 @@ and reuse prebuilt contribs. The name of the prebuilt tarball is the same, but t
 ```sh
 mkdir build
 cd build
-export VLC_CONTRIB_SHA="$(cd ../vlc; extras/ci/get-contrib-sha.sh)"
+export VLC_CONTRIB_SHA="$(cd ../vlc; extras/ci/get-contrib-sha.sh win32)"
 export VLC_PREBUILT_CONTRIBS_URL="https://artifacts.videolan.org/vlc/win64-llvm/vlc-contrib-x86_64-w64-mingw32-$VLC_CONTRIB_SHA.tar.bz2"
 time ../vlc/extras/package/win32/build.sh -a x86_64 -p
 ```

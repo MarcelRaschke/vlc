@@ -44,10 +44,7 @@ static subpicture_t *spu_new_buffer( decoder_t *p_dec,
                                      const subpicture_updater_t *p_upd )
 {
     VLC_UNUSED( p_dec );
-    subpicture_t *p_subpicture = subpicture_New( p_upd );
-    if( likely(p_subpicture != NULL) )
-        p_subpicture->b_subtitle = true;
-    return p_subpicture;
+    return subpicture_New( p_upd );
 }
 
 static void decoder_queue_sub( decoder_t *p_dec, subpicture_t *p_spu )
@@ -136,7 +133,8 @@ int transcode_spu_init( sout_stream_t *p_stream, const es_format_t *p_fmt,
         id->downstream_id =
                 id->pf_transcode_downstream_add( p_stream,
                                                  id->p_decoder->fmt_in,
-                                                 transcode_encoder_format_out( id->encoder ) );
+                                                 transcode_encoder_format_out( id->encoder ),
+                                                 id->es_id );
         if( !id->downstream_id )
         {
             msg_Err( p_stream, "cannot output transcoded stream %4.4s",
@@ -215,7 +213,7 @@ int transcode_spu_process( sout_stream_t *p_stream,
             block_t *p_block;
 
             es_format_t fmt;
-            es_format_Init( &fmt, VIDEO_ES, VLC_CODEC_TEXT );
+            es_format_Init( &fmt, VIDEO_ES, 0 );
 
             unsigned w, h;
             if( id->pf_get_output_dimensions == NULL ||

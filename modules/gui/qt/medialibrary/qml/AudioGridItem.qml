@@ -15,21 +15,24 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
+import "qrc:///util/Helpers.js" as Helpers
 
 Widgets.GridItem {
     property var model: ({})
     property int index: -1
 
-    image: model.cover || VLCStyle.noArtAlbumCover
-    title: model.title || I18n.qtr("Unknown title")
-    subtitle: model.main_artist || I18n.qtr("Unknown artist")
+    image: model.cover || ""
+    fallbackImage: VLCStyle.noArtAlbumCover
+
+    title: model.title || qsTr("Unknown title")
+    subtitle: model.main_artist || qsTr("Unknown artist")
     pictureWidth: VLCStyle.gridCover_music_width
     pictureHeight: VLCStyle.gridCover_music_height
     playCoverBorderWidth: VLCStyle.gridCover_music_border

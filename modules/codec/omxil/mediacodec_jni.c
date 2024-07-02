@@ -30,17 +30,17 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 
 #include <OMX_Core.h>
 #include <OMX_Component.h>
 #include "omxil_utils.h"
-#include "../../packetizer/hevc_nal.h"
 
 #include "mediacodec.h"
 #include "../../video_output/android/env.h"
 
-char* MediaCodec_GetName(vlc_object_t *p_obj, const char *psz_mime,
-                         int profile, int *p_quirks);
+char* MediaCodec_GetName(vlc_object_t *p_obj, vlc_fourcc_t codec,
+                         const char *psz_mime, int profile, int *p_quirks);
 
 #define THREAD_NAME "mediacodec_jni"
 
@@ -348,8 +348,8 @@ end:
 /*****************************************************************************
  * MediaCodec_GetName
  *****************************************************************************/
-char* MediaCodec_GetName(vlc_object_t *p_obj, const char *psz_mime,
-                         int profile, int *p_quirks)
+char* MediaCodec_GetName(vlc_object_t *p_obj, vlc_fourcc_t codec,
+                         const char *psz_mime, int profile, int *p_quirks)
 {
     JNIEnv *env;
     int num_codecs;
@@ -448,22 +448,8 @@ char* MediaCodec_GetName(vlc_object_t *p_obj, const char *psz_mime,
                         int omx_profile = (*env)->GetIntField(env, profile_level, jfields.profile_field);
                         (*env)->DeleteLocalRef(env, profile_level);
 
-                        int codec_profile = 0;
-                        if (strcmp(psz_mime, "video/avc") == 0)
-                            codec_profile = convert_omx_to_profile_idc(omx_profile);
-                        else if (strcmp(psz_mime, "video/hevc") == 0)
-                        {
-                            switch (omx_profile)
-                            {
-                                case 0x1: /* OMX_VIDEO_HEVCProfileMain */
-                                    codec_profile = VLC_HEVC_PROFILE_MAIN;
-                                    break;
-                                case 0x2:    /* OMX_VIDEO_HEVCProfileMain10 */
-                                case 0x1000: /* OMX_VIDEO_HEVCProfileMain10HDR10 */
-                                    codec_profile = VLC_HEVC_PROFILE_MAIN_10;
-                                    break;
-                            }
-                        }
+                        int codec_profile =
+                            convert_omx_to_profile_idc(codec, omx_profile);
                         if (codec_profile != profile)
                             continue;
                         /* Some encoders set the level too high, thus we ignore it for the moment.
@@ -588,6 +574,9 @@ static int ConfigureDecoder(mc_api *api, union mc_api_args* p_args)
 
         if (p_args->video.i_angle != 0)
             SET_INTEGER(jformat, "rotation-degrees", p_args->video.i_angle);
+
+        if (p_args->video.b_low_latency)
+            SET_INTEGER(jformat, "low-latency", 1);
 
         if (b_direct_rendering)
         {
@@ -1068,7 +1057,7 @@ static int Prepare(mc_api *api, int i_profile)
     free(api->psz_name);
 
     api->i_quirks = 0;
-    api->psz_name = MediaCodec_GetName(api->p_obj, api->psz_mime,
+    api->psz_name = MediaCodec_GetName(api->p_obj, api->i_codec, api->psz_mime,
                                        i_profile, &api->i_quirks);
     if (!api->psz_name)
         return MC_API_ERROR;

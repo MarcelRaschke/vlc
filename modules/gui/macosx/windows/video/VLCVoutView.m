@@ -56,6 +56,10 @@
     CGFloat f_cumulated_magnification;
 
     vout_thread_t *p_vout;
+    vlc_window_t *_wnd;
+    dispatch_queue_t _eventQueue;
+    vlc_mutex_t _mutex;
+    NSTrackingArea *_trackingArea;
     VLCPlayerController *_playerController;
     VLCHotkeysController *_hotkeysController;
 }
@@ -68,24 +72,54 @@
 
 - (void)dealloc
 {
-    if (p_vout)
+    vlc_mutex_lock(&_mutex);
+    _wnd = NULL;
+    vlc_mutex_unlock(&_mutex);
+
+    if (p_vout) {
         vout_Release(p_vout);
+    }
 
     [self unregisterDraggedTypes];
 }
 
 -(id)initWithFrame:(NSRect)frameRect
 {
-    if (self = [super initWithFrame:frameRect]) {
-        [self registerForDraggedTypes:[NSArray arrayWithObject:NSFilenamesPboardType]];
-        i_lastScrollWheelDirection = 0;
-        f_cumulated_magnification = 0.0;
-        VLCMain *mainInstance = [VLCMain sharedInstance];
-        _playerController = [[mainInstance playlistController] playerController];
-        _hotkeysController = [[VLCHotkeysController alloc] init];
+    self = [super initWithFrame:frameRect];
+    if (self) {
+        [self setup];
     }
-
     return self;
+}
+
+- (void)awakeFromNib
+{
+    [self setup];
+}
+
+- (void)setup
+{
+    [self registerForDraggedTypes:@[NSFilenamesPboardType]];
+    i_lastScrollWheelDirection = 0;
+    f_cumulated_magnification = 0.0;
+
+    _playerController = VLCMain.sharedInstance.playlistController.playerController;
+    _hotkeysController = [[VLCHotkeysController alloc] init];
+    _eventQueue = dispatch_queue_create("org.videolan.vlc.vout.events", DISPATCH_QUEUE_SERIAL);
+    vlc_mutex_init(&_mutex);
+}
+
+- (void)layout {
+    NSRect bounds = [self convertRectToBacking:self.bounds];
+    // dispatch the event async to prevent potential deadlock 
+    // with video output's RenderPicture's display lock
+    dispatch_async(_eventQueue, ^{
+        if (self->_wnd == NULL) {
+            return;
+        }
+        vlc_window_ReportSize(self->_wnd, bounds.size.width, bounds.size.height);
+    });
+    [super layout];
 }
 
 - (void)drawRect:(NSRect)rect
@@ -136,24 +170,59 @@
     return [_hotkeysController performKeyEquivalent:o_event];
 }
 
+- (void)updateTrackingAreas {
+    if (_trackingArea) {
+        [self removeTrackingArea:_trackingArea];
+    }
+
+    _trackingArea = [[NSTrackingArea alloc]
+        initWithRect:self.bounds
+        options: NSTrackingMouseMoved | NSTrackingActiveAlways
+        owner:self
+        userInfo:nil
+    ];
+
+    [self addTrackingArea:_trackingArea];
+}
+
 - (void)mouseDown:(NSEvent *)o_event
 {
     if (([o_event type] == NSLeftMouseDown) && (! ([o_event modifierFlags] &  NSControlKeyMask))) {
-        if ([o_event clickCount] == 2)
+        if (o_event.clickCount == 1) {
+            vlc_mutex_lock(&_mutex);
+            if (_wnd) {
+                vlc_window_ReportMousePressed(_wnd, MOUSE_BUTTON_LEFT);
+            }
+            vlc_mutex_unlock(&_mutex);
+        } else if (o_event.clickCount == 2) {
             [_playerController toggleFullscreen];
-
+        }
     } else if (([o_event type] == NSRightMouseDown) ||
                (([o_event type] == NSLeftMouseDown) &&
                ([o_event modifierFlags] &  NSControlKeyMask)))
-        [NSMenu popUpContextMenu: [[[VLCMain sharedInstance] mainMenu] voutMenu] withEvent: o_event forView: self];
+        [NSMenu popUpContextMenu: VLCMain.sharedInstance.mainMenu.voutMenu withEvent: o_event forView: self];
 
     [super mouseDown: o_event];
 }
 
+- (void)mouseUp:(NSEvent *)event
+{
+    if (event.type == NSLeftMouseUp) {
+        vlc_mutex_lock(&_mutex);
+        if (_wnd) {
+            vlc_window_ReportMouseReleased(_wnd, MOUSE_BUTTON_LEFT);
+        }
+        vlc_mutex_unlock(&_mutex);
+    }
+
+    [super mouseUp:event];
+}
+
+
 - (void)rightMouseDown:(NSEvent *)o_event
 {
     if ([o_event type] == NSRightMouseDown)
-        [NSMenu popUpContextMenu: [[[VLCMain sharedInstance] mainMenu] voutMenu] withEvent: o_event forView: self];
+        [NSMenu popUpContextMenu: VLCMain.sharedInstance.mainMenu.voutMenu withEvent: o_event forView: self];
 
     [super mouseDown: o_event];
 }
@@ -161,20 +230,27 @@
 - (void)rightMouseUp:(NSEvent *)o_event
 {
     if ([o_event type] == NSRightMouseUp)
-        [NSMenu popUpContextMenu: [[[VLCMain sharedInstance] mainMenu] voutMenu] withEvent: o_event forView: self];
+        [NSMenu popUpContextMenu: VLCMain.sharedInstance.mainMenu.voutMenu withEvent: o_event forView: self];
 
     [super mouseUp: o_event];
 }
 
-- (void)mouseMoved:(NSEvent *)o_event
+- (void)mouseMoved:(NSEvent *)event
 {
-    NSPoint ml = [self convertPoint: [o_event locationInWindow] fromView: nil];
-    if ([self mouse: ml inRect: [self bounds]]) {
-        [[NSNotificationCenter defaultCenter] postNotificationName:VLCVideoWindowShouldShowFullscreenController
-                                                            object:self];
-    }
+    const NSPoint pointInView = [self convertPoint:event.locationInWindow fromView:nil];
+    if ([self mouse:pointInView inRect:self.bounds]) {
+        [NSNotificationCenter.defaultCenter postNotificationName:VLCVideoWindowShouldShowFullscreenController object:self];
+        // Invert Y coordinates
+        const CGPoint pointInWindow = CGPointMake(pointInView.x, self.bounds.size.height - pointInView.y);
+        const NSPoint pointInBacking = [self convertPointToBacking:pointInWindow];
 
-    [super mouseMoved: o_event];
+        vlc_mutex_lock(&_mutex);
+        if (_wnd) {
+            vlc_window_ReportMouseMoved(_wnd, pointInBacking.x, pointInBacking.y);
+        }
+        vlc_mutex_unlock(&_mutex);
+    }
+    [super mouseMoved:event];
 }
 
 - (void)resetScrollWheelDirection
@@ -252,6 +328,22 @@
 
 #pragma mark -
 #pragma mark Handling of vout related actions
+
+- (void)setVoutWindow:(vlc_window_t *)p_wnd
+{
+    vlc_mutex_lock(&_mutex);
+    _wnd = p_wnd;
+    vlc_mutex_unlock(&_mutex);
+}
+
+- (vlc_window_t *)voutWindow
+{
+    vlc_window_t *p_wnd = NULL;
+    vlc_mutex_lock(&_mutex);
+    p_wnd = _wnd;
+    vlc_mutex_unlock(&_mutex);
+    return p_wnd;
+}
 
 - (void)setVoutThread:(vout_thread_t *)p_vout_thread
 {

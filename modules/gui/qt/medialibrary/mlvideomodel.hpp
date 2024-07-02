@@ -43,6 +43,7 @@ public:
         VIDEO_FILENAME,
         VIDEO_TITLE,
         VIDEO_THUMBNAIL,
+        VIDEO_IS_LOCAL,
         VIDEO_DURATION,
         VIDEO_PROGRESS,
         VIDEO_PLAYCOUNT,
@@ -52,6 +53,7 @@ public:
         VIDEO_DISPLAY_MRL,
         VIDEO_VIDEO_TRACK,
         VIDEO_AUDIO_TRACK,
+        VIDEO_SUBTITLE_TRACK,
 
         VIDEO_TITLE_FIRST_SYMBOL,
     };
@@ -59,9 +61,12 @@ public:
 
 public:
     explicit MLVideoModel(QObject* parent = nullptr);
+
     virtual ~MLVideoModel() = default;
 
     QHash<int, QByteArray> roleNames() const override;
+
+    Q_INVOKABLE QUrl getParentURL(const QModelIndex & index);
 
 public: // Interface
     // NOTE: These functions are useful when we want to apply a change before the database event.
@@ -75,10 +80,10 @@ protected:
 
     void thumbnailUpdated(const QModelIndex& , MLItem* , const QString& , vlc_ml_thumbnail_status_t ) override;
 
-    std::unique_ptr<MLBaseModel::BaseLoader> createLoader() const override;
+    std::unique_ptr<MLListCacheLoader> createMLLoader() const override;
 
 protected: // MLBaseModel reimplementation
-    virtual void onVlcMlEvent( const MLEvent &event ) override;
+    void onVlcMlEvent( const MLEvent &event ) override;
 
 private:
     void generateThumbnail(uint64_t id) const;
@@ -89,13 +94,15 @@ private:
     static QHash<QByteArray, vlc_ml_sorting_criteria_t> M_names_to_criteria;
     QByteArray criteriaToName(vlc_ml_sorting_criteria_t criteria) const override;
 
-    struct Loader : public BaseLoader
+    struct Loader : public MLListCacheLoader::MLOp
     {
-        Loader(const MLVideoModel &model) : BaseLoader(model) {}
-        size_t count(vlc_medialibrary_t* ml) const override;
-        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, size_t index, size_t count) const override;
+        using MLListCacheLoader::MLOp::MLOp;
+
+        size_t count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const override;
+        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const override;
         std::unique_ptr<MLItem> loadItemById(vlc_medialibrary_t* ml, MLItemId itemId) const override;
     };
 };
 
 #endif // MCVIDEOMODEL_H
+

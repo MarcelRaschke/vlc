@@ -6,10 +6,12 @@
 # something. DIST_SUBDIRS stores the directories where nothing is built but
 # which have makefiles with distribution information.
 #  - src (libvlccore) is nedeed by modules
-SUBDIRS = compat doc po share src modules lib bin test
+SUBDIRS = compat po share src modules lib doc bin test
 DIST_SUBDIRS = m4 $(SUBDIRS)
 
 EXTRA_DIST = \
+	buildsystem/cargo-test.py \
+	buildsystem/check_qml_module.py \
 	extras/include/x86/x86inc.asm \
 	extras/include/x86/x86util.asm \
 	extras/package/macosx/package.mak \
@@ -25,7 +27,7 @@ BUILT_SOURCES = $(BUILT_SOURCES_distclean)
 
 SUFFIXES =
 
-DISTCHECK_CONFIGURE_FLAGS = \
+AM_DISTCHECK_CONFIGURE_FLAGS = \
 	--enable-fast-install \
 	--disable-a52 \
 	--disable-alsa \
@@ -39,7 +41,6 @@ DISTCHECK_CONFIGURE_FLAGS = \
 	--disable-fribidi \
 	--with-kde-solid='$${datadir}/kde4/apps'
 
-ACLOCAL_AMFLAGS = -I m4
 AUTOMAKE_OPTIONS = \
 	1.11 \
 	-Wall \
@@ -51,7 +52,7 @@ AUTOMAKE_OPTIONS = \
 ChangeLog: Makefile.am
 	rm -f -- "$@"
 	cd doc && $(MAKE) $(AM_MAKEFLAGS) changelogs
-	$(LN_S) -f doc/ChangeLog-2021 "$@"
+	$(LN_S) -f doc/ChangeLog-2024 "$@"
 
 
 ###############################################################################
@@ -63,15 +64,12 @@ EXTRA_DIST += \
 	extras/tools/tools.mak \
 	extras/tools/SHA512SUMS \
 	extras/tools/automake-clang.patch \
-	extras/tools/bison-macOS-7df04f9.patch \
-	extras/tools/bison-macOS-c41f233c.patch \
 	extras/tools/cmake-enable-ALPN-support-on-macOS-10.14.patch \
 	extras/tools/libtool-2.4.7-bitcode.patch \
 	extras/tools/libtool-2.4.7-clang-libs.patch \
 	extras/tools/libtool-2.4.7-response-files.patch \
 	extras/tools/libtool-2.4.7-lpthread.patch \
-	extras/tools/libtool-2.4.7-embed-bitcode.patch \
-	extras/tools/ragel-6.8-javacodegen.patch
+	extras/tools/libtool-2.4.7-embed-bitcode.patch
 
 ###############################################################################
 # Various utilities ( editor syntax files, D-Bus controller ... )

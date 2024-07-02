@@ -54,12 +54,12 @@
 #include <vlc_common.h>
 #include "fs.h"
 #include <vlc_access.h>
+#include <vlc_interrupt.h>
 #ifdef _WIN32
 # include <vlc_charset.h>
 #endif
 #include <vlc_fs.h>
 #include <vlc_url.h>
-#include <vlc_interrupt.h>
 
 typedef struct
 {
@@ -362,12 +362,15 @@ static int FileControl( stream_t *p_access, int i_query, va_list args )
             break;
 
         case STREAM_GET_SIZE:
+        case STREAM_GET_MTIME:
         {
             struct stat st;
 
             if (fstat (p_sys->fd, &st) || !S_ISREG(st.st_mode))
                 return VLC_EGENERIC;
-            *va_arg( args, uint64_t * ) = st.st_size;
+            const uint64_t stat =
+                (i_query == STREAM_GET_SIZE) ? st.st_size : st.st_mtime;
+            *va_arg( args, uint64_t * ) = stat;
             break;
         }
 

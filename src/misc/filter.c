@@ -27,6 +27,7 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <libvlc.h>
 #include <vlc_filter.h>
 #include <vlc_modules.h>
@@ -105,7 +106,7 @@ vlc_blender_t *filter_NewBlend( vlc_object_t *p_this,
                            const video_format_t *p_dst_chroma )
 {
     vlc_blender_t *p_blend = vlc_custom_create( p_this, sizeof(*p_blend), "blend" );
-    if( !p_blend )
+    if( unlikely( p_blend == NULL ) )
         return NULL;
 
     es_format_Init( &p_blend->fmt_in, VIDEO_ES, 0 );
@@ -114,9 +115,6 @@ vlc_blender_t *filter_NewBlend( vlc_object_t *p_this,
 
     p_blend->fmt_out.i_codec        =
     p_blend->fmt_out.video.i_chroma = p_dst_chroma->i_chroma;
-    p_blend->fmt_out.video.i_rmask  = p_dst_chroma->i_rmask;
-    p_blend->fmt_out.video.i_gmask  = p_dst_chroma->i_gmask;
-    p_blend->fmt_out.video.i_bmask  = p_dst_chroma->i_bmask;
 
     /* The blend module will be loaded when needed with the real
     * input format */
@@ -131,7 +129,7 @@ int filter_ConfigureBlend( vlc_blender_t *p_blend,
 {
     /* */
     if( p_blend->p_module &&
-        p_blend->fmt_in.video.i_chroma != p_src->i_chroma )
+        !video_format_IsSameChroma( &p_blend->fmt_in.video, p_src ) )
     {
         /* The chroma is not the same, we need to reload the blend module */
         filter_Close( p_blend );

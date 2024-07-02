@@ -71,7 +71,7 @@ static void Parse(vlc_object_t *obj, void *priv, block_t *data,
 
 #define PKT_FROM(a) PKT_FROMSZ(a, 0)
 
-int main()
+int main(void)
 {
     block_t *pkt;
     block_t *output = NULL;
@@ -92,6 +92,11 @@ int main()
     pes.transport = TS_TRANSPORT_PES;
     pes.gather.pp_last = &pes.gather.p_data;
 
+    /* filler packet */
+    const uint8_t dummy0[] = {
+        0xFF,
+    };
+
     /* General case, aligned payloads */
     /* payload == 0 */
     const uint8_t aligned0[] = {
@@ -102,7 +107,7 @@ int main()
     ASSERT(output);
     block_ChainProperties(output, &outputcount, &outputsize, NULL);
     ASSERT(outputcount == 1);
-    ASSERT(outputsize == 6+3);
+    ASSERT(outputsize == TS_PES_HEADER_SIZE+3);
     ASSERT(!memcmp(aligned0, output->p_buffer, outputsize));
     RESET;
     /* no output if not unit start */
@@ -127,7 +132,7 @@ int main()
     ASSERT(output);
     block_ChainProperties(output, &outputcount, &outputsize, NULL);
     ASSERT(outputcount == 1);
-    ASSERT(outputsize == 6+3+6);
+    ASSERT(outputsize == TS_PES_HEADER_SIZE+3+6);
     ASSERT(!memcmp(aligned1, output->p_buffer, outputsize));
     RESET;
     /* no output if not unit start */
@@ -143,39 +148,56 @@ int main()
     ASSERT(!output);
     RESET;
 
-    /* packets assembly, payload > 188 - 6 - 4 */
-    PKT_FROMSZ(aligned1, 188-sizeof(aligned1));
+    /* packets assembly, exact size, payload > 150 - TS_PES_HEADER_SIZE - 4 */
+    PKT_FROMSZ(aligned1, 150-sizeof(aligned1));
     SetWBE(&pkt->p_buffer[4], 250);
     ASSERT(!ts_pes_Gather(&cb, &pes, pkt, true, true, 0));
     ASSERT(!output);
     ASSERT(pes.gather.i_data_size == 256);
-    PKT_FROMSZ(aligned1, 188-sizeof(aligned1));
+    PKT_FROMSZ(dummy0, 106-sizeof(dummy0));
     ASSERT(ts_pes_Gather(&cb, &pes, pkt, false, true, 0));
     ASSERT(output);
     block_ChainProperties(output, &outputcount, &outputsize, NULL);
     ASSERT(outputcount == 1);
     ASSERT(outputsize == 256);
+    ASSERT(output->i_flags == 0);
     RESET;
 
-    /* no packets assembly from unit start */
+    /* packets assembly, incorrect size, overflow by %15 pkt loss or size field corruption */
+    PKT_FROMSZ(aligned1, 150-sizeof(aligned1));
+    SetWBE(&pkt->p_buffer[4], 250);
+    ASSERT(!ts_pes_Gather(&cb, &pes, pkt, true, true, 0));
+    ASSERT(!output);
+    ASSERT(pes.gather.i_data_size == 256);
+    PKT_FROMSZ(dummy0, 150-sizeof(dummy0));
+    ASSERT(ts_pes_Gather(&cb, &pes, pkt, false, true, 0));
+    ASSERT(output);
+    block_ChainProperties(output, &outputcount, &outputsize, NULL);
+    ASSERT(outputcount == 1);
+    ASSERT(outputsize == 300);
+    ASSERT(output->i_flags & BLOCK_FLAG_CORRUPTED);
+    RESET;
+
+    /* no packets assembly from unit start, early termination by fixed size */
+    PKT_FROMSZ(aligned1, 150-sizeof(aligned1));
+    SetWBE(&pkt->p_buffer[4], 250);
+    ASSERT(!ts_pes_Gather(&cb, &pes, pkt, true, true, 0));
+    ASSERT(!output);
+    ASSERT(pes.gather.i_data_size == 256);
+    PKT_FROMSZ(aligned1, 150-sizeof(aligned1));
+    ASSERT(ts_pes_Gather(&cb, &pes, pkt, true, true, 0));
+    ASSERT(output);
+    block_ChainProperties(output, &outputcount, &outputsize, NULL);
+    ASSERT(outputcount == 2);
+    ASSERT(output->i_flags & BLOCK_FLAG_CORRUPTED);
+    RESET;
+
+    /* no packets assembly from unit start, early termination by undef size  */
     PKT_FROMSZ(aligned1, 188-sizeof(aligned1));
     SetWBE(&pkt->p_buffer[4], 250);
     ASSERT(!ts_pes_Gather(&cb, &pes, pkt, true, true, 0));
     ASSERT(!output);
     ASSERT(pes.gather.i_data_size == 256);
-    PKT_FROMSZ(aligned1, 188-sizeof(aligned1));
-    ASSERT(ts_pes_Gather(&cb, &pes, pkt, true, true, 0));
-    ASSERT(output);
-    block_ChainProperties(output, &outputcount, &outputsize, NULL);
-    ASSERT(outputcount == 2);
-    RESET;
-
-    /* packets assembly, payload undef, use next sync code from another payload undef */
-    PKT_FROMSZ(aligned1, 188-sizeof(aligned1));
-    SetWBE(&pkt->p_buffer[4], 0);
-    ASSERT(!ts_pes_Gather(&cb, &pes, pkt, true, true, 0));
-    ASSERT(!output);
-    ASSERT(pes.gather.i_data_size == 0);
     PKT_FROMSZ(aligned1, 188-sizeof(aligned1));
     SetWBE(&pkt->p_buffer[4], 0);
     ASSERT(ts_pes_Gather(&cb, &pes, pkt, true, true, 0));
@@ -183,15 +205,32 @@ int main()
     block_ChainProperties(output, &outputcount, &outputsize, NULL);
     ASSERT(outputcount == 1);
     ASSERT(outputsize == 188);
+    ASSERT(output->i_flags & BLOCK_FLAG_CORRUPTED);
     RESET;
 
-    /* packets assembly, payload undef, use next sync code from fixed size */
-    PKT_FROMSZ(aligned1, 188-sizeof(aligned1));
+    /* packets assembly, payload undef, use next sync code from another payload undef */
+    PKT_FROMSZ(aligned1, 150-sizeof(aligned1));
     SetWBE(&pkt->p_buffer[4], 0);
     ASSERT(!ts_pes_Gather(&cb, &pes, pkt, true, true, 0));
     ASSERT(!output);
     ASSERT(pes.gather.i_data_size == 0);
-    PKT_FROMSZ(aligned1, 188-sizeof(aligned1));
+    PKT_FROMSZ(aligned1, 150-sizeof(aligned1));
+    SetWBE(&pkt->p_buffer[4], 0);
+    ASSERT(ts_pes_Gather(&cb, &pes, pkt, true, true, 0));
+    ASSERT(output);
+    block_ChainProperties(output, &outputcount, &outputsize, NULL);
+    ASSERT(outputcount == 1);
+    ASSERT(outputsize == 150);
+    ASSERT(output->i_flags == 0);
+    RESET;
+
+    /* packets assembly, payload undef, use next sync code from fixed size */
+    PKT_FROMSZ(aligned1, 150-sizeof(aligned1));
+    SetWBE(&pkt->p_buffer[4], 0);
+    ASSERT(!ts_pes_Gather(&cb, &pes, pkt, true, true, 0));
+    ASSERT(!output);
+    ASSERT(pes.gather.i_data_size == 0);
+    PKT_FROMSZ(aligned1, 150-sizeof(aligned1));
     ASSERT(ts_pes_Gather(&cb, &pes, pkt, true, true, 0));
     ASSERT(output);
     block_ChainProperties(output, &outputcount, &outputsize, NULL);
@@ -199,7 +238,7 @@ int main()
     RESET;
 
     /* packets assembly, payload undef, use next sync code from fixed size but uncomplete */
-    PKT_FROMSZ(aligned1, 188-sizeof(aligned1));
+    PKT_FROMSZ(aligned1, 150-sizeof(aligned1));
     SetWBE(&pkt->p_buffer[4], 0);
     ASSERT(!ts_pes_Gather(&cb, &pes, pkt, true, true, 0));
     ASSERT(!output);

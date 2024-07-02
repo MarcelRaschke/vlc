@@ -73,6 +73,8 @@ struct vlc_gl_sampler_priv {
     bool expose_planes;
     unsigned plane;
 
+    int glsl_version;
+
     struct vlc_gl_extension_vt extension_vt;
 };
 
@@ -173,7 +175,7 @@ init_conv_matrix(float conv_matrix_out[],
 }
 
 static int
-sampler_yuv_base_init(struct vlc_gl_sampler *sampler, vlc_fourcc_t chroma,
+sampler_yuv_base_init(struct vlc_gl_sampler *sampler,
                       const vlc_chroma_description_t *desc,
                       video_color_space_t yuv_space)
 {
@@ -186,7 +188,7 @@ sampler_yuv_base_init(struct vlc_gl_sampler *sampler, vlc_fourcc_t chroma,
 
     if (desc->pixel_size == 2)
     {
-        if (chroma != VLC_CODEC_P010 && chroma != VLC_CODEC_P016) {
+        if (desc->fcc != VLC_CODEC_P010 && desc->fcc != VLC_CODEC_P016) {
             /* Do a bit shift if samples are stored on LSB. */
             float yuv_range_correction = (float)((1 << 16) - 1)
                                          / ((1 << desc->pixel_bits) - 1);
@@ -232,8 +234,8 @@ sampler_yuv_base_init(struct vlc_gl_sampler *sampler, vlc_fourcc_t chroma,
      *
      * This is equivalent to swap columns 1 and 2.
      */
-    bool swap_uv = chroma == VLC_CODEC_YV12 || chroma == VLC_CODEC_YV9 ||
-                   chroma == VLC_CODEC_NV21;
+    bool swap_uv = desc->fcc == VLC_CODEC_YV12 ||
+                   desc->fcc == VLC_CODEC_NV21;
     if (swap_uv)
     {
         /* Remember, the matrix in column-major order */
@@ -261,10 +263,14 @@ sampler_base_fetch_locations(struct vlc_gl_sampler *sampler, GLuint program)
         assert(priv->uloc.ConvMatrix != -1);
     }
 
-    struct vlc_gl_format *glfmt = &sampler->glfmt;
+    const struct vlc_gl_format *glfmt = &sampler->glfmt;
+    /* To guarantee variable names length, we need to fix the number
+     * of texture from now on. */
+    const unsigned tex_count = glfmt->tex_count;
+    if (tex_count >= 10)
+        vlc_assert_unreachable();
 
-    assert(glfmt->tex_count < 10); /* to guarantee variable names length */
-    for (unsigned int i = 0; i < glfmt->tex_count; ++i)
+    for (unsigned i = 0; i < tex_count; ++i)
     {
         char name[sizeof("Textures[X]")];
 
@@ -465,7 +471,6 @@ xyz12_shader_init(struct vlc_gl_sampler *sampler)
 static int
 opengl_init_swizzle(struct vlc_gl_sampler *sampler,
                     const char *swizzle_per_tex[],
-                    vlc_fourcc_t chroma,
                     const vlc_chroma_description_t *desc)
 {
     if (desc->plane_count == 4)
@@ -492,7 +497,7 @@ opengl_init_swizzle(struct vlc_gl_sampler *sampler,
          * V  Y1 U  Y2 => GBR
          * Y1 V  Y2 U  => RAG
          */
-        switch (chroma)
+        switch (desc->fcc)
         {
             case VLC_CODEC_UYVY:
                 swizzle_per_tex[0] = "g";
@@ -519,17 +524,24 @@ opengl_init_swizzle(struct vlc_gl_sampler *sampler,
 }
 
 static void
-GetNames(GLenum tex_target, const char **glsl_sampler, const char **texture)
+GetNames(struct vlc_gl_sampler *sampler, GLenum tex_target,
+         const char **glsl_sampler, const char **texture)
 {
+    struct vlc_gl_sampler_priv *priv = PRIV(sampler);
+
+    bool has_texture_func =
+        (priv->gl->api_type == VLC_OPENGL && priv->glsl_version >= 130) ||
+        (priv->gl->api_type == VLC_OPENGL_ES2 && priv->glsl_version >= 300);
+
     switch (tex_target)
     {
         case GL_TEXTURE_EXTERNAL_OES:
             *glsl_sampler = "samplerExternalOES";
-            *texture = "texture2D";
+            *texture = has_texture_func ? "texture" : "texture2D";
             break;
         case GL_TEXTURE_2D:
             *glsl_sampler = "sampler2D";
-            *texture = "texture2D";
+            *texture = has_texture_func ? "texture" : "texture2D";
             break;
         case GL_TEXTURE_RECTANGLE:
             *glsl_sampler = "sampler2DRect";
@@ -543,10 +555,15 @@ GetNames(GLenum tex_target, const char **glsl_sampler, const char **texture)
 static int
 InitShaderExtensions(struct vlc_gl_sampler *sampler, GLenum tex_target)
 {
+    struct vlc_gl_sampler_priv *priv = PRIV(sampler);
+
+    const char *image_external = priv->glsl_version >= 300
+        ? "#extension GL_OES_EGL_image_external_essl3 : require\n"
+        : "#extension GL_OES_EGL_image_external : require\n";
+
     if (tex_target == GL_TEXTURE_EXTERNAL_OES)
     {
-        sampler->shader.extensions =
-            strdup("#extension GL_OES_EGL_image_external : require\n");
+        sampler->shader.extensions = strdup(image_external);
         if (!sampler->shader.extensions)
             return VLC_EGENERIC;
     }
@@ -612,7 +629,7 @@ sampler_planes_init(struct vlc_gl_sampler *sampler)
 
     const char *sampler_type;
     const char *texture_fn;
-    GetNames(tex_target, &sampler_type, &texture_fn);
+    GetNames(sampler, tex_target, &sampler_type, &texture_fn);
 
     ADDF("uniform %s Texture;\n", sampler_type);
 
@@ -720,21 +737,22 @@ opengl_fragment_shader_init(struct vlc_gl_sampler *sampler, bool expose_planes)
     if (expose_planes)
         return sampler_planes_init(sampler);
 
-    if (chroma == VLC_CODEC_XYZ12)
+    if (chroma == VLC_CODEC_XYZ_12L ||
+        chroma == VLC_CODEC_XYZ_12B)
         return xyz12_shader_init(sampler);
 
     if (is_yuv)
     {
-        ret = sampler_yuv_base_init(sampler, chroma, desc, yuv_space);
+        ret = sampler_yuv_base_init(sampler, desc, yuv_space);
         if (ret != VLC_SUCCESS)
             return ret;
-        ret = opengl_init_swizzle(sampler, swizzle_per_tex, chroma, desc);
+        ret = opengl_init_swizzle(sampler, swizzle_per_tex, desc);
         if (ret != VLC_SUCCESS)
             return ret;
     }
 
     const char *glsl_sampler, *lookup;
-    GetNames(tex_target, &glsl_sampler, &lookup);
+    GetNames(sampler, tex_target, &glsl_sampler, &lookup);
 
     struct vlc_memstream ms;
     if (vlc_memstream_open(&ms) != 0)
@@ -758,6 +776,7 @@ opengl_fragment_shader_init(struct vlc_gl_sampler *sampler, bool expose_planes)
 
         char *lut_file = var_InheritString(priv->gl, "gl-lut-file");
         struct pl_custom_lut *lut = LoadCustomLUT(sampler, lut_file);
+        free(lut_file);
         if (lut) {
             // Transform from the video input to the LUT input color space,
             // defaulting to a no-op if LUT input color space info is unknown
@@ -786,10 +805,13 @@ opengl_fragment_shader_init(struct vlc_gl_sampler *sampler, bool expose_planes)
 #if !defined(USE_OPENGL_ES2)
                 const opengl_vtable_t *vt = priv->vt;
                 /* fetch framebuffer depth (we are already bound to the default one). */
-                if (vt->GetFramebufferAttachmentParameteriv != NULL)
+                if (priv->gl->api_type == VLC_OPENGL &&
+                    vt->GetFramebufferAttachmentParameteriv != NULL)
+                {
                     vt->GetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_BACK_LEFT,
                                                             GL_FRAMEBUFFER_ATTACHMENT_GREEN_SIZE,
                                                             &fb_depth);
+                }
 #endif
                 if (fb_depth <= 0)
                     fb_depth = 8;
@@ -802,6 +824,11 @@ opengl_fragment_shader_init(struct vlc_gl_sampler *sampler, bool expose_planes)
         }
 
         const struct pl_shader_res *res = priv->pl_sh_res = pl_shader_finalize(sh);
+# if PL_API_VER >= 266
+        msg_Dbg(priv->gl, "libplacebo shader: %s", res->info->description);
+# else
+        msg_Dbg(priv->gl, "libplacebo shader: %s", res->description);
+# endif
 
         FREENULL(priv->uloc.pl_vars);
         priv->uloc.pl_vars = calloc(res->num_variables, sizeof(GLint));
@@ -963,6 +990,26 @@ vlc_gl_sampler_New(struct vlc_gl_t *gl, const struct vlc_gl_api *api,
     sampler->shader.extensions = NULL;
     sampler->shader.body = NULL;
 
+    int glsl_version;
+    if (api->is_gles) {
+        sampler->shader.precision = "precision highp float;\n";
+        if (api->glsl_version >= 300) {
+            sampler->shader.version = strdup("#version 300 es\n");
+            glsl_version = 300;
+        } else {
+            sampler->shader.version = strdup("#version 100\n");
+            glsl_version = 100;
+        }
+    } else {
+        sampler->shader.precision = "";
+        /* GLSL version 420+ breaks backwards compatibility with pre-GLSL 130
+         * syntax, which we use in our vertex/fragment shaders. */
+        glsl_version = __MIN(api->glsl_version, 410);
+        if (asprintf(&sampler->shader.version, "#version %d\n", glsl_version) < 0)
+            goto error;
+    }
+    priv->glsl_version = glsl_version;
+
 #ifdef HAVE_LIBPLACEBO_GL
     priv->uloc.pl_vars = NULL;
     priv->uloc.pl_descs = NULL;
@@ -982,6 +1029,14 @@ vlc_gl_sampler_New(struct vlc_gl_t *gl, const struct vlc_gl_api *api,
         .proc_ctx = gl,
 #endif
     };
+
+    const opengl_vtable_t *vt = priv->vt;
+
+    /* Workaround libplacebo changing the current framebuffer when running
+     * with OpenGL. */
+    GLint out_fb;
+    vt->GetIntegerv(GL_FRAMEBUFFER_BINDING, &out_fb);
+
     priv->pl_opengl = pl_opengl_create(priv->pl_log, &gl_params);
     if (!priv->pl_opengl)
     {
@@ -989,10 +1044,12 @@ vlc_gl_sampler_New(struct vlc_gl_t *gl, const struct vlc_gl_api *api,
         return NULL;
     }
 
+    vt->BindFramebuffer(GL_FRAMEBUFFER, out_fb);
+
     priv->pl_sh = pl_shader_alloc(priv->pl_log, &(struct pl_shader_params) {
         .gpu = priv->pl_opengl->gpu,
         .glsl = {
-            .version = gl->api_type == VLC_OPENGL_ES2 ? 100 : 120,
+            .version = glsl_version,
             .gles = gl->api_type == VLC_OPENGL_ES2,
         },
     });
@@ -1000,12 +1057,13 @@ vlc_gl_sampler_New(struct vlc_gl_t *gl, const struct vlc_gl_api *api,
 
     int ret = opengl_fragment_shader_init(sampler, expose_planes);
     if (ret != VLC_SUCCESS)
-    {
-        vlc_gl_sampler_Delete(sampler);
-        return NULL;
-    }
+        goto error;
 
     return sampler;
+
+error:
+    vlc_gl_sampler_Delete(sampler);
+    return NULL;
 }
 
 void
@@ -1026,6 +1084,7 @@ vlc_gl_sampler_Delete(struct vlc_gl_sampler *sampler)
 
     free(sampler->shader.extensions);
     free(sampler->shader.body);
+    free(sampler->shader.version);
 
     free(priv);
 }

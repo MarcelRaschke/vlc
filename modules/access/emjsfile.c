@@ -28,12 +28,14 @@
 #include <vlc_access.h>
 #include <vlc_threads.h>
 #include <stdalign.h>
+#include <assert.h>
+
 #include <emscripten.h>
 
 typedef struct
 {
     uint64_t offset;
-    uint64_t js_file_size;
+    uint64_t alignas(8) js_file_size;
 } access_sys_t;
 
 static ssize_t Read (stream_t *p_access, void *buffer, size_t size) {
@@ -44,9 +46,8 @@ static ssize_t Read (stream_t *p_access, void *buffer, size_t size) {
 
     if (offset >= js_file_size)
         return 0;
-    if (size > offset + js_file_size) {
+    if (size + offset > js_file_size)
         size = js_file_size - offset;
-    }
     EM_ASM({
         const offset = $0;
         const buffer = $1;
@@ -71,8 +72,8 @@ static int get_js_file_size(stream_t *p_access, uint64_t *value) {
       to avoid RangeError on BigUint64 view creation,
       the start offset (value) must be a multiple of 8.
     */
-    alignas(8) uint64_t file_size = 0;
-    int ret = (EM_ASM_INT({
+    assert(((uintptr_t)value % 8) == 0);
+    return (EM_ASM_INT({
         try {
             var v = new BigUint64Array(wasmMemory.buffer, $0, 1);
             v[0] = BigInt(Module.vlcAccess[$1].worker_js_file.size);
@@ -82,9 +83,7 @@ static int get_js_file_size(stream_t *p_access, uint64_t *value) {
             console.error("get_js_file_size error: " + error);
             return 1;
         }
-    }, &file_size, p_access) == 0) ? VLC_SUCCESS: VLC_EGENERIC;
-    *value = file_size;
-    return ret;
+    }, value, p_access) == 0) ? VLC_SUCCESS: VLC_EGENERIC;
 }
 
 static int Control( stream_t *p_access, int i_query, va_list args )
@@ -157,9 +156,9 @@ EM_ASYNC_JS(int, init_js_file, (stream_t *p_access, long id), {
         self.addEventListener('message', handleFileResult);
     });
     let timer = undefined;
-    let timeout = new Promise(function (resolve, reject) {
-            timer = setTimeout(resolve, 1000, 'timeout')
-        });
+    let timeout = new Promise((resolve) => {
+        timer = setTimeout(resolve, 1000, 'timeout');
+    });
     let promises = [p, timeout];
     /* id must be unique */
     self.postMessage({ cmd: "customCmd", type: "requestFile", id: id});
@@ -208,7 +207,7 @@ static int EmFileOpen( vlc_object_t *p_this ) {
     */
     MAIN_THREAD_EM_ASM({
         const thread_id = $0;
-        let w = Module.PThread.pthreads[thread_id].worker;
+        let w = Module.PThread.pthreads[thread_id];
         function handleFileRequest(e) {
             const msg = e.data;
             if (msg.type === "requestFile") {
@@ -248,17 +247,16 @@ static int EmFileOpen( vlc_object_t *p_this ) {
         w.addEventListener('message', handleFileRequest);
     }, pthread_self());
 
-    access_sys_t *p_sys = vlc_obj_malloc(p_this, sizeof (*p_sys));
-    if (unlikely(p_sys == NULL)) {
-        return VLC_ENOMEM;
-    }
-
     char *endPtr;
     long id = strtol(p_access->psz_location, &endPtr, 10);
     if ((endPtr == p_access->psz_location) || (*endPtr != '\0')) {
         msg_Err(p_access, "error: failed init uri has invalid id!");
         return VLC_EGENERIC;
     }
+
+    access_sys_t *p_sys = vlc_obj_malloc(p_this, sizeof (*p_sys));
+    if (unlikely(p_sys == NULL))
+        return VLC_ENOMEM;
 
     /*
       Request the file from the main thread.

@@ -50,7 +50,11 @@ public:
         return !m_settings.value(WIN_THEME_SETTING_LIGHT_THEME_KEY).toBool();
     }
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    bool nativeEventFilter(const QByteArray &, void *message, qintptr *)
+#else
     bool nativeEventFilter(const QByteArray &, void *message, long *)
+#endif
     {
         MSG* msg = static_cast<MSG*>( message );
         if ( msg->message == WM_SETTINGCHANGE
@@ -171,6 +175,8 @@ static int updatePalette(vlc_qt_theme_provider_t* obj)
             setQtColor(obj, CS, VQTC_SECTION_DECORATION, VQTC_NAME_BORDER, VQTC_STATE_NORMAL, COLOR_BTNTEXT);
             setQtColor(obj, CS, VQTC_SECTION_DECORATION, VQTC_NAME_BORDER, VQTC_STATE_FOCUSED, COLOR_HIGHLIGHT);
             setQtColor(obj, CS, VQTC_SECTION_DECORATION, VQTC_NAME_BORDER, VQTC_STATE_HOVERED, COLOR_HIGHLIGHT);
+
+            setQtColor(obj, CS, VQTC_SECTION_DECORATION, VQTC_NAME_INDICATOR, VQTC_STATE_NORMAL, COLOR_HIGHLIGHT);
         }
 
         //set colors on all buttons

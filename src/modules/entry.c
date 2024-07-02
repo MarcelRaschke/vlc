@@ -25,6 +25,7 @@
 
 #include <stdatomic.h>
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_plugin.h>
 #include <assert.h>
 #include <stdarg.h>
@@ -66,6 +67,7 @@ module_t *vlc_module_create(vlc_plugin_t *plugin)
     module->psz_shortname = NULL;
     module->psz_longname = NULL;
     module->psz_help = NULL;
+    module->psz_help_html = NULL;
     module->pp_shortcuts = NULL;
     module->i_shortcuts = 0;
     module->psz_capability = NULL;
@@ -308,6 +310,10 @@ static int vlc_plugin_desc_cb(void *ctx, void *tgt, int propid, ...)
 
         case VLC_MODULE_HELP:
             module->psz_help = va_arg (ap, const char *);
+            break;
+
+        case VLC_MODULE_HELP_HTML:
+            module->psz_help_html = va_arg (ap, const char *);
             break;
 
         case VLC_MODULE_TEXTDOMAIN:

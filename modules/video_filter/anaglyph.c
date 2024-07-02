@@ -25,6 +25,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
@@ -65,7 +66,7 @@ static const char *const ppsz_scheme_descriptions[] = {
     };
 
 vlc_module_begin()
-    set_description(N_("Convert 3D picture to anaglyph image video filter"));
+    set_description(N_("Convert 3D picture to anaglyph image video filter"))
     set_shortname(N_("Anaglyph"))
     set_subcategory(SUBCAT_VIDEO_VFILTER)
     add_string(FILTER_PREFIX "scheme", "red-cyan", SCHEME_TEXT, SCHEME_LONGTEXT)
@@ -89,7 +90,6 @@ static int Create(filter_t *p_filter)
     switch (p_filter->fmt_in.video.i_chroma)
     {
         case VLC_CODEC_I420:
-        case VLC_CODEC_J420:
         case VLC_CODEC_YV12:
             break;
 
@@ -162,7 +162,6 @@ static void Filter(filter_t *p_filter, picture_t *p_pic, picture_t *p_outpic)
     switch (p_pic->format.i_chroma)
     {
         case VLC_CODEC_I420:
-        case VLC_CODEC_J420:
         case VLC_CODEC_YV12:
             combine_side_by_side_yuv420(p_pic, p_outpic,
                                         p_sys->left, p_sys->right);

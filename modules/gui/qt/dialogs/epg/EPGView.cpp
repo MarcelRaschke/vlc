@@ -45,11 +45,7 @@ void EPGGraphicsScene::drawBackground( QPainter *painter, const QRectF &rect)
 
     /* day change */
     QDateTime rectstarttime = epgView->startTime().addSecs( rect.left() );
-#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
     QDateTime nextdaylimit = rectstarttime.date().startOfDay();
-#else
-    QDateTime nextdaylimit = QDateTime( rectstarttime.date() );
-#endif
 
     QRectF area( rect );
     while( area.left() < width() )
@@ -158,7 +154,7 @@ bool EPGView::updateEPG( const vlc_epg_t * const *pp_epg, size_t i_epg )
 void EPGView::reset()
 {
     /* clean our items storage and remove them from the scene */
-    qDeleteAll(programs.values());
+    qDeleteAll(programs);
     programs.clear();
     m_startTime = m_maxTime = QDateTime();
 }
@@ -177,7 +173,7 @@ void EPGView::walkItems( bool b_cleanup )
 
         if( !program->eventsbytime.isEmpty() )
         {
-            const EPGItem *last = (program->eventsbytime.end() - 1).value();
+            const EPGItem *last = program->eventsbytime.last();
             if( !maxTime.isValid() ||
                  last->start().addSecs( last->duration() ) > maxTime )
             {

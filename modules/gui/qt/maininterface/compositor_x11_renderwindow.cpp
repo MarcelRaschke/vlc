@@ -19,13 +19,16 @@
 
 #include <QtEvents>
 #include <QWindow>
-#include <QX11Info>
 #include <QMainWindow>
 #include <QThread>
 #include <QSocketNotifier>
 #ifndef QT_NO_ACCESSIBILITY
 #include <QAccessible>
 #endif
+#ifndef QT_GUI_PRIVATE
+#warning "qplatformnativeinterface is requried for x11 compositor"
+#endif
+#include <QtGui/qpa/qplatformnativeinterface.h>
 
 #include <xcb/composite.h>
 
@@ -37,11 +40,21 @@
 #include <vlc_cxx_helpers.hpp>
 
 #include "qt.hpp"
+#include "mainctx.hpp"
 
-//blur behind for KDE
-#define _KDE_NET_WM_BLUR_BEHIND_REGION_NAME "_KDE_NET_WM_BLUR_BEHIND_REGION"
+#define _GTK_FRAME_EXTENTS "_GTK_FRAME_EXTENTS"
 
 using namespace vlc;
+
+namespace
+{
+
+void assertUint16Range(int value)
+{
+    assert(value >= 0 && value <= std::numeric_limits<uint16_t>::max());
+}
+
+}
 
 RenderTask::RenderTask(qt_intf_t *intf, xcb_connection_t* conn, xcb_drawable_t wid,
                        QMutex& pictureLock, QObject *parent)
@@ -74,11 +87,16 @@ void RenderTask::render(unsigned int requestId)
     xcb_flush(m_conn);
     xcb_render_picture_t drawingarea = getBackTexture();
 
-    if (m_hasAcrylic)
+    if (m_hasAcrylic || m_hasExtendedFrame)
     {
         //clear screen
         xcb_render_color_t clear = { 0x0000, 0x0000, 0x0000, 0x0000 };
-        xcb_rectangle_t rect = {0, 0, 0xFFFF, 0xFFFF};
+
+
+        xcb_rectangle_t rect = {0, 0
+                                , static_cast<uint16_t>(m_renderSize.width())
+                                , static_cast<uint16_t>(m_renderSize.height())};
+
         xcb_render_fill_rectangles(m_conn, XCB_RENDER_PICT_OP_SRC, drawingarea,
                                    clear, 1, &rect);
     }
@@ -132,12 +150,17 @@ void RenderTask::onWindowSizeChanged(const QSize& newSize)
         m_renderSize.setWidth(vlc_align(newSize.width(), 128));
         m_renderSize.setHeight(vlc_align(newSize.height(), 128));
     }
+
+    // paint function takes uint16
+    assertUint16Range(m_renderSize.width());
+    assertUint16Range(m_renderSize.height());
+
     m_resizeRequested = true;
 }
 
 void RenderTask::requestRefresh()
 {
-    emit requestRefreshInternal(m_refreshRequestId, {});
+    emit requestRefreshInternal(m_refreshRequestId, QPrivateSignal());
 }
 
 void RenderTask::onInterfaceSurfaceChanged(CompositorX11RenderClient* surface)
@@ -160,7 +183,7 @@ void RenderTask::onVideoPositionChanged(const QRect& position)
     if (m_videoPosition == position)
         return;
     m_videoPosition = position;
-    emit requestRefreshInternal(m_refreshRequestId, {});
+    emit requestRefreshInternal(m_refreshRequestId, QPrivateSignal());
 }
 
 void RenderTask::onInterfaceSizeChanged(const QSize& size)
@@ -179,6 +202,12 @@ void RenderTask::onAcrylicChanged(bool enabled)
 {
     m_hasAcrylic = enabled;
 }
+
+void RenderTask::onExtendedFrameChanged(bool enabled)
+{
+    m_hasExtendedFrame = enabled;
+}
+
 
 xcb_render_picture_t RenderTask::getBackTexture()
 {
@@ -256,25 +285,19 @@ bool X11DamageObserver::init()
     return true;
 }
 
-#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
 //can't use QOverload with private signals
 template<class T>
 static auto privateOverload(void (QSocketNotifier::* s)( QSocketDescriptor,QSocketNotifier::Type, T) )
 {
     return s;
 }
-#endif
 
 void X11DamageObserver::start()
 {
     //listen to the x11 socket instead of blocking
     m_socketNotifier = new QSocketNotifier(m_connFd, QSocketNotifier::Read, this);
-#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
     connect(m_socketNotifier, privateOverload(&QSocketNotifier::activated),
             this, &X11DamageObserver::onEvent);
-#else
-    connect(m_socketNotifier, &QSocketNotifier::activated, this, &X11DamageObserver::onEvent);
-#endif
 }
 
 bool X11DamageObserver::onRegisterSurfaceDamage(unsigned int wid)
@@ -351,16 +374,27 @@ bool CompositorX11RenderWindow::init()
         return false;
     }
 
-    xcb_connection_t* qtConn = QX11Info::connection();
+    const auto nativeInterface = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
+    assert(nativeInterface);
+    xcb_connection_t* qtConn = nativeInterface->connection();
+    QPlatformNativeInterface *native = qApp->platformNativeInterface();
+    if (!native)
+        return true;
 
-    //check if KDE "acrylic" effect is available
-    xcb_atom_t blurBehindAtom = getInternAtom(qtConn, _KDE_NET_WM_BLUR_BEHIND_REGION_NAME);
-    if (blurBehindAtom != XCB_ATOM_NONE)
+    if (const int screen = reinterpret_cast<intptr_t>(native->nativeResourceForIntegration(QByteArrayLiteral("x11screen"))))
     {
-        uint32_t val = 0;
-        xcb_change_property(qtConn, XCB_PROP_MODE_REPLACE, m_wid,
-                            blurBehindAtom, XCB_ATOM_CARDINAL, 32, 1, &val);
-        m_hasAcrylic = true;
+        if (!wmScreenHasCompositor(qtConn, screen))
+            return true;
+    }
+
+    //_GTK_FRAME_EXTENTS should be available at least on Gnome/KDE/FXCE/Enlightement
+    const xcb_window_t rootWindow = reinterpret_cast<intptr_t>(native->nativeResourceForIntegration(QByteArrayLiteral("rootwindow")));
+    xcb_atom_t gtkExtendFrame = getInternAtom(qtConn, _GTK_FRAME_EXTENTS);
+    if (gtkExtendFrame != XCB_ATOM_NONE && wmNetSupport(qtConn, rootWindow, gtkExtendFrame))
+    {
+        m_supportExtendedFrame = true;
+        connect(m_intf->p_mi, &MainCtx::windowExtendedMarginChanged,
+               this, &CompositorX11RenderWindow::onWindowExtendedMarginChanged);
     }
     return true;
 }
@@ -385,12 +419,13 @@ bool CompositorX11RenderWindow::startRendering()
     connect(this, &CompositorX11RenderWindow::videoPositionChanged, m_renderTask, &RenderTask::onVideoPositionChanged);
     connect(this, &CompositorX11RenderWindow::registerVideoWindow, m_renderTask, &RenderTask::onRegisterVideoWindow);
     connect(this, &CompositorX11RenderWindow::videoSurfaceChanged, m_renderTask, &RenderTask::onVideoSurfaceChanged, Qt::BlockingQueuedConnection);
-
+    connect(this, &CompositorX11RenderWindow::hasExtendedFrameChanged, m_renderTask, &RenderTask::onExtendedFrameChanged, Qt::BlockingQueuedConnection);
     //pass initial values
     m_renderTask->onInterfaceSurfaceChanged(m_interfaceClient.get());
     m_renderTask->onVideoSurfaceChanged(m_videoClient.get());
     m_renderTask->onWindowSizeChanged(size() * devicePixelRatio());
     m_renderTask->onAcrylicChanged(m_hasAcrylic);
+    m_renderTask->onExtendedFrameChanged(m_hasExtendedFrame);
 
     //use the same thread as the rendering thread, neither tasks are blocking.
     m_damageObserver->moveToThread(m_renderThread);
@@ -423,7 +458,7 @@ void CompositorX11RenderWindow::stopRendering()
 void CompositorX11RenderWindow::resetClientPixmaps()
 {
     QMutexLocker lock(&m_pictureLock);
-    xcb_flush(QX11Info::connection());
+    xcb_flush(qGuiApp->nativeInterface<QNativeInterface::QX11Application>()->connection());
     //reset and recreate the clients surfaces
     if (m_interfaceClient)
     {
@@ -482,7 +517,7 @@ void CompositorX11RenderWindow::setVideoSize(const QSize& size)
         m_videoWindow->resize(size);
         {
             QMutexLocker lock(&m_pictureLock);
-            xcb_flush(QX11Info::connection());
+            xcb_flush(qGuiApp->nativeInterface<QNativeInterface::QX11Application>()->connection());
             //reset and recreate the clients surfaces
             m_videoClient->resetPixmap();
             m_videoClient->getPicture();
@@ -495,8 +530,10 @@ void CompositorX11RenderWindow::setVideoSize(const QSize& size)
 void CompositorX11RenderWindow::setVideoWindow( QWindow* window)
 {
     //ensure Qt x11 pending operation have been forwarded to the server
-    xcb_flush(QX11Info::connection());
-    m_videoClient = std::make_unique<CompositorX11RenderClient>(m_intf, m_conn, window);
+    xcb_flush(qGuiApp->nativeInterface<QNativeInterface::QX11Application>()->connection());
+    m_videoClient = std::make_unique<CompositorX11RenderClient>(m_intf, m_conn, window->winId());
+    connect(window, &QWindow::widthChanged, m_videoClient.get(), &CompositorX11RenderClient::resetPixmap);
+    connect(window, &QWindow::heightChanged, m_videoClient.get(), &CompositorX11RenderClient::resetPixmap);
     m_videoPosition = QRect(0,0,0,0);
     m_videoWindow = window;
     emit videoSurfaceChanged(m_videoClient.get());
@@ -504,24 +541,56 @@ void CompositorX11RenderWindow::setVideoWindow( QWindow* window)
 
 void CompositorX11RenderWindow::enableVideoWindow()
 {
+    //if we stop the rendering, m_videoWindow may be null
+    if (!m_videoWindow)
+        return;
+
     emit registerVideoWindow(m_videoWindow->winId());
 }
 
 void CompositorX11RenderWindow::disableVideoWindow()
 {
+    //if we stop the rendering, m_videoWindow may be null
+    if (!m_videoWindow)
+        return;
+
     emit registerVideoWindow(0);
 }
 
 QQuickWindow* CompositorX11RenderWindow::getOffscreenWindow() const
 {
+    if (!m_interfaceWindow)
+        return nullptr;
     return m_interfaceWindow->getOffscreenWindow();
 }
 
 void CompositorX11RenderWindow::setInterfaceWindow(CompositorX11UISurface* window)
 {
     //ensure Qt x11 pending operation have been forwarded to the server
-    xcb_flush(QX11Info::connection());
-    m_interfaceClient = std::make_unique<CompositorX11RenderClient>(m_intf, m_conn, window);
+    xcb_flush(qGuiApp->nativeInterface<QNativeInterface::QX11Application>()->connection());
+    m_interfaceClient = std::make_unique<CompositorX11RenderClient>(m_intf, m_conn, window->winId());
+    connect(window, &CompositorX11UISurface::requestPixmapReset, m_interfaceClient.get(), &CompositorX11RenderClient::resetPixmap);
     m_interfaceWindow = window;
-
 }
+
+
+void CompositorX11RenderWindow::setHasExtendedFrame(bool hasExtendedFrame)
+{
+    if (hasExtendedFrame == m_hasExtendedFrame)
+        return;
+    m_hasExtendedFrame = hasExtendedFrame;
+    emit hasExtendedFrameChanged(m_hasExtendedFrame);
+}
+
+void CompositorX11RenderWindow::onWindowExtendedMarginChanged(unsigned margin)
+{
+    xcb_atom_t gtkExtendFrame = getInternAtom(m_conn, _GTK_FRAME_EXTENTS);
+
+    margin *= m_intf->p_mi->intfMainWindow()->devicePixelRatio();
+
+    uint32_t val[4] = {margin, margin, margin, margin};
+    xcb_change_property(m_conn, XCB_PROP_MODE_REPLACE, m_wid,
+                        gtkExtendFrame, XCB_ATOM_CARDINAL, 32, 4, &val);
+    setHasExtendedFrame(margin != 0);
+}
+

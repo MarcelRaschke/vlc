@@ -49,7 +49,6 @@
    DRM_FORMAT_ABGR1555
    DRM_FORMAT_RGBA5551
    DRM_FORMAT_BGRA5551
-   DRM_FORMAT_RGBA8888 (VLC_CODEC_ABGR, not defined)
    DRM_FORMAT_XRGB2101010
    DRM_FORMAT_XBGR2101010
    DRM_FORMAT_RGBX1010102
@@ -109,65 +108,6 @@
 
  */
 
-/* RGB (no alpha) formats.
- * For historical reasons, VLC uses same FourCC with different masks. */
-static const struct {
-    uint32_t drm_fourcc;
-    vlc_fourcc_t vlc_fourcc;
-    uint32_t red; /**< Little endian red mask */
-    uint32_t green; /**< Little endian green mask */
-    uint32_t blue; /**< Little endian blue mask */
-} rgb_fourcc_list[] = {
-    /* 8-bit RGB */
-    { DRM_FORMAT_RGB332,   VLC_CODEC_RGB8, 0xD0, 0x16, 0x03 },
-    { DRM_FORMAT_BGR233,   VLC_CODEC_RGB8, 0x07, 0x28, 0xC0 },
-#ifdef WORDS_BIGENDIAN
-    /* 16-bit-padded 12-bit RGB */
-    { DRM_FORMAT_XRGB4444, VLC_CODEC_RGB12, 0x000F, 0xF000, 0x0F00 },
-    { DRM_FORMAT_XBGR4444, VLC_CODEC_RGB12, 0x0F00, 0xF000, 0x000F },
-    { DRM_FORMAT_RGBX4444, VLC_CODEC_RGB12, 0x00F0, 0x000F, 0xF000 },
-    { DRM_FORMAT_BGRX4444, VLC_CODEC_RGB12, 0xF000, 0x000F, 0x00F0 },
-    /* 24-bit RGB */
-    { DRM_FORMAT_RGB888,   VLC_CODEC_RGB24, 0x0000FF, 0x00FF00, 0xFF0000 },
-    { DRM_FORMAT_BGR888,   VLC_CODEC_RGB24, 0xFF0000, 0x00FF00, 0x0000FF },
-    /* 32-bit-padded 24-bit RGB */
-    { DRM_FORMAT_XRGB8888, VLC_CODEC_RGB32,
-                                          0x0000FF00, 0x00FF0000, 0xFF000000 },
-    { DRM_FORMAT_XBGR8888, VLC_CODEC_RGB32,
-                                          0xFF000000, 0x00FF0000, 0x0000FF00 },
-    { DRM_FORMAT_RGBX8888, VLC_CODEC_RGB32,
-                                          0x000000FF, 0x0000FF00, 0x00FF0000 },
-    { DRM_FORMAT_BGRX8888, VLC_CODEC_RGB32,
-                                          0x00FF0000, 0x0000FF00, 0x000000FF },
-#else
-    /* 16-bit-padded 12-bit RGB */
-    { DRM_FORMAT_XRGB4444, VLC_CODEC_RGB12, 0x0F00, 0x00F0, 0x000F },
-    { DRM_FORMAT_XBGR4444, VLC_CODEC_RGB12, 0x000F, 0x00F0, 0x0F00 },
-    { DRM_FORMAT_RGBX4444, VLC_CODEC_RGB12, 0xF000, 0x0F00, 0x00F0 },
-    { DRM_FORMAT_BGRX4444, VLC_CODEC_RGB12, 0x00F0, 0x0F00, 0xF000 },
-    /* 16-bit-padded 15-bit RGB */
-    { DRM_FORMAT_XRGB1555, VLC_CODEC_RGB15, 0x7C00, 0x03E0, 0x001F },
-    { DRM_FORMAT_XBGR1555, VLC_CODEC_RGB15, 0x001F, 0x03E0, 0x7C00 },
-    { DRM_FORMAT_RGBX5551, VLC_CODEC_RGB15, 0xF800, 0x07C0, 0x003E },
-    { DRM_FORMAT_BGRX5551, VLC_CODEC_RGB15, 0x003E, 0x07C0, 0xF800 },
-    /* 16-bit RGB */
-    { DRM_FORMAT_RGB565,   VLC_CODEC_RGB16, 0xF800, 0x07E0, 0x001F },
-    { DRM_FORMAT_BGR565,   VLC_CODEC_RGB16, 0x001F, 0x07E0, 0xF800 },
-    /* 24-bit RGB */
-    { DRM_FORMAT_RGB888,   VLC_CODEC_RGB24, 0xFF0000, 0x00FF00, 0x0000FF },
-    { DRM_FORMAT_BGR888,   VLC_CODEC_RGB24, 0x0000FF, 0x00FF00, 0xFF0000 },
-    /* 32-bit-padded 24-bit RGB */
-    { DRM_FORMAT_XRGB8888, VLC_CODEC_RGB32,
-                                          0x00FF0000, 0x0000FF00, 0x000000FF },
-    { DRM_FORMAT_XBGR8888, VLC_CODEC_RGB32,
-                                          0x000000FF, 0x0000FF00, 0x00FF0000 },
-    { DRM_FORMAT_RGBX8888, VLC_CODEC_RGB32,
-                                          0xFF000000, 0x00FF0000, 0x0000FF00 },
-    { DRM_FORMAT_BGRX8888, VLC_CODEC_RGB32,
-                                          0x0000FF00, 0x00FF0000, 0xFF000000 },
-#endif
-};
-
 static const struct {
     uint32_t drm_fourcc;
     vlc_fourcc_t vlc_fourcc;
@@ -179,8 +119,35 @@ static const struct {
     { DRM_FORMAT_BGRA8888, VLC_CODEC_ARGB },
     { DRM_FORMAT_RGBA8888, VLC_CODEC_ABGR },
 #ifndef WORDS_BIGENDIAN
-    { DRM_FORMAT_ABGR2101010, VLC_CODEC_RGBA10 },
+    { DRM_FORMAT_ABGR2101010, VLC_CODEC_RGBA10LE },
 #endif
+
+    /* Packed RGB+x formats */
+    { DRM_FORMAT_XRGB8888, VLC_CODEC_BGRX },
+    { DRM_FORMAT_XBGR8888, VLC_CODEC_RGBX },
+    { DRM_FORMAT_RGBX8888, VLC_CODEC_XBGR },
+    { DRM_FORMAT_BGRX8888, VLC_CODEC_XRGB },
+
+    /* Packed RGB24 formats */
+    { DRM_FORMAT_RGB888, VLC_CODEC_BGR24 },
+    { DRM_FORMAT_BGR888, VLC_CODEC_RGB24 },
+
+    /* Packed RGB16 formats */
+    { DRM_FORMAT_RGB565, VLC_CODEC_RGB565LE },
+    { DRM_FORMAT_BGR565, VLC_CODEC_BGR565LE },
+    { DRM_FORMAT_RGB565 | DRM_FORMAT_BIG_ENDIAN, VLC_CODEC_RGB565BE },
+    { DRM_FORMAT_BGR565 | DRM_FORMAT_BIG_ENDIAN, VLC_CODEC_BGR565BE },
+
+    /* 16-bit-padded 15-bit RGB */
+    { DRM_FORMAT_XRGB1555, VLC_CODEC_RGB555LE },
+    { DRM_FORMAT_XBGR1555, VLC_CODEC_BGR555LE },
+    { DRM_FORMAT_XRGB1555 | DRM_FORMAT_BIG_ENDIAN, VLC_CODEC_RGB555BE },
+    // { DRM_FORMAT_RGBX5551, 0 },
+    // { DRM_FORMAT_BGRX5551, 0 },
+
+    /* 8-bit RGB */
+    { DRM_FORMAT_RGB332,   VLC_CODEC_RGB332 },
+    { DRM_FORMAT_BGR233,   VLC_CODEC_BGR233 },
 
     /* Packed YUV formats */
     /* DRM uses big-endian for YUY2, otherwise little endian. */
@@ -204,7 +171,6 @@ static const struct {
 
     /* Planar YUV */
     { DRM_FORMAT_YUV410,   VLC_CODEC_I410 },
-    { DRM_FORMAT_YVU410,   VLC_CODEC_YV9 },
     { DRM_FORMAT_YUV411,   VLC_CODEC_I411 },
     { DRM_FORMAT_YUV420,   VLC_CODEC_I420 },
     { DRM_FORMAT_YVU420,   VLC_CODEC_YV12 },
@@ -221,53 +187,11 @@ uint_fast32_t vlc_drm_fourcc(vlc_fourcc_t vlc_fourcc)
     return DRM_FORMAT_INVALID;
 }
 
-uint_fast32_t vlc_drm_format(const video_format_t *restrict fmt)
-{
-    uint_fast32_t drm_fourcc = vlc_drm_fourcc(fmt->i_chroma);
-    if (drm_fourcc != DRM_FORMAT_INVALID)
-        return drm_fourcc;
-
-    for (size_t i = 0; i < ARRAY_SIZE(rgb_fourcc_list); i++)
-        if (rgb_fourcc_list[i].vlc_fourcc == fmt->i_chroma
-         && rgb_fourcc_list[i].red == fmt->i_rmask
-         && rgb_fourcc_list[i].green == fmt->i_gmask
-         && rgb_fourcc_list[i].blue == fmt->i_bmask)
-            return rgb_fourcc_list[i].drm_fourcc;
-
-    return DRM_FORMAT_INVALID;
-}
-
 vlc_fourcc_t vlc_fourcc_drm(uint_fast32_t drm_fourcc)
 {
     for (size_t i = 0; i < ARRAY_SIZE(fourcc_list); i++)
         if (fourcc_list[i].drm_fourcc == drm_fourcc)
             return fourcc_list[i].vlc_fourcc;
 
-    for (size_t i = 0; i < ARRAY_SIZE(rgb_fourcc_list); i++)
-        if (rgb_fourcc_list[i].drm_fourcc == drm_fourcc)
-            return rgb_fourcc_list[i].vlc_fourcc;
-
     return 0;
-}
-
-bool vlc_video_format_drm(video_format_t *restrict fmt,
-                          uint_fast32_t drm_fourcc)
-{
-    for (size_t i = 0; i < ARRAY_SIZE(fourcc_list); i++)
-        if (fourcc_list[i].drm_fourcc == drm_fourcc) {
-            fmt->i_chroma = fourcc_list[i].vlc_fourcc;
-            fmt->i_rmask = fmt->i_gmask = fmt->i_bmask = 0;
-            return true;
-        }
-
-    for (size_t i = 0; i < ARRAY_SIZE(rgb_fourcc_list); i++)
-        if (rgb_fourcc_list[i].drm_fourcc == drm_fourcc) {
-            fmt->i_chroma = rgb_fourcc_list[i].vlc_fourcc;
-            fmt->i_rmask = rgb_fourcc_list[i].red;
-            fmt->i_gmask = rgb_fourcc_list[i].green;
-            fmt->i_bmask = rgb_fourcc_list[i].blue;
-            return true;
-        }
-
-    return false;
 }

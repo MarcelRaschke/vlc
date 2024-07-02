@@ -121,7 +121,7 @@ static void Copy(filter_t *p_filter, picture_t *dst, picture_t *src,
                 DO(Copy420_SP_to_SP);
             else
             {
-                assert(dst->format.i_chroma == VLC_CODEC_I420_10L);
+                assert(outfcc == VLC_CODEC_I420_10L);
                 DO_S(Copy420_16_SP_to_P, 6);
             }
             break;
@@ -197,6 +197,8 @@ static picture_t *SW_TO_CVPX_Filter(filter_t *p_filter, picture_t *src)
         picture_Release(src);
         return NULL;
     }
+
+    cvpx_attach_mapped_color_properties(cvpx, &p_sys->sw.fmt);
 
     /* Allocate a CPVX backed picture mapped for read/write */
     picture_t *mapped_dst =
@@ -516,7 +518,7 @@ chain_CVPX_Flush(filter_t *filter)
 }
 
 static vlc_fourcc_t
-GetIntermediateChroma(input_chroma, output_chroma)
+GetIntermediateChroma(vlc_fourcc_t input_chroma, vlc_fourcc_t output_chroma)
 {
     vlc_fourcc_t chromas[2] = { input_chroma, output_chroma };
 
@@ -673,11 +675,11 @@ Open_chain_CVPX(filter_t *filter)
 
     /* Append intermediate CVPX chroma */
     ret = filter_chain_AppendConverter(chain, &fmt_out);
-    if (ret != 0)
+    if (ret != VLC_SUCCESS)
         goto error;
     /* Append final chroma, either CVPX or software. */
     ret = filter_chain_AppendConverter(chain, NULL);
-    if (ret != 0)
+    if (ret != VLC_SUCCESS)
         goto error;
 
     struct vlc_video_context *vctx_out =

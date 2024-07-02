@@ -70,45 +70,44 @@ if get_option('oss').disable_auto_if(
 endif
 
 # JACK input module
-if jack_dep.found()
-    vlc_modules += {
-        'name' : 'access_jack',
-        'sources' : files('jack.c'),
-        'dependencies' : [jack_dep]
-    }
-endif
+vlc_modules += {
+    'name' : 'access_jack',
+    'sources' : files('jack.c'),
+    'dependencies' : [jack_dep],
+    'enabled' : jack_dep.found(),
+}
 
 # Pulseaudio module
-if pulse_dep.found()
-    vlc_modules += {
-        'name' : 'pulsesrc',
-        'sources' : files('pulse.c'),
-        'dependencies' : [pulse_dep],
-        'link_with' : [libvlc_pulse],
-    }
-endif
+vlc_modules += {
+    'name' : 'pulsesrc',
+    'sources' : files('pulse.c'),
+    'dependencies' : [pulse_dep],
+    'link_with' : [libvlc_pulse],
+    'enabled' : pulse_dep.found(),
+}
 
 # AVFoundation audio capture access
-if have_osx
-    vlc_modules += {
-        'name' : 'avaudiocapture',
-        'sources' : files('avaudiocapture.m'),
-        'objc_args' : ['-fobjc-arc'],
-        'dependencies' : [avfoundation_dep, coremedia_dep, foundation_dep]
-    }
-endif
+vlc_modules += {
+    'name' : 'avaudiocapture',
+    'sources' : files('avaudiocapture.m'),
+    'objc_args' : ['-fobjc-arc'],
+    'dependencies' : [
+        frameworks['Foundation'],
+        frameworks['AVFoundation'],
+        frameworks['CoreMedia'],
+    ],
+    'enabled' : have_osx,
+}
 
 # WASAPI access
-if (get_option('wasapi')
-    .require(host_system == 'windows', error_message: 'WASAPI requires Windows')
-    .allowed() and ksuser_lib.found())
-    vlc_modules += {
-        'name' : 'access_wasapi',
-        'sources' : files('wasapi.c'),
-        'dependencies' : [ksuser_lib]
-    }
-endif
-
+vlc_modules += {
+    'name' : 'access_wasapi',
+    'sources' : files('wasapi.c'),
+    'dependencies' : [ksuser_lib],
+    'enabled' : get_option('wasapi')
+      .require(host_system == 'windows', error_message: 'WASAPI requires Windows')
+      .allowed() and ksuser_lib.found()
+}
 
 ## Video capture
 
@@ -120,7 +119,12 @@ if (get_option('macosx_avfoundation')
         'name' : 'avcapture',
         'sources' : files('avcapture.m'),
         'objc_args' : ['-fobjc-arc'],
-        'dependencies' : [avfoundation_dep, coremedia_dep, foundation_dep, corevideo_dep],
+        'dependencies' : [
+            frameworks['Foundation'],
+            frameworks['AVFoundation'],
+            frameworks['CoreMedia'],
+            frameworks['CoreVideo'],
+        ],
     }
 endif
 
@@ -281,7 +285,7 @@ if dvdread_dep.found()
 endif
 
 # Blu-ray access
-libbluray_dep = dependency('libbluray', version: '>= 0.6.2', required: get_option('bluray'))
+libbluray_dep = dependency('libbluray', version: '>= 1.1.0', required: get_option('bluray'))
 if libbluray_dep.found()
     vlc_modules += {
         'name' : 'bluray',
@@ -447,3 +451,6 @@ if librist_dep.found()
         'dependencies' : [socket_libs, librist_dep]
     }
 endif
+
+# RTP
+subdir('rtp')

@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 
@@ -23,10 +23,10 @@ import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 
 
-Widgets.IconControlButton {
+Widgets.IconToolButton {
     id: chapterPreviousBtn
-    iconText: VLCIcons.dvd_prev
+    text: VLCIcons.dvd_prev
     onClicked: Player.chapterPrev()
     enabled: Player.hasChapters
-    text: I18n.qtr("Previous chapter")
+    description: qsTr("Previous chapter")
 }

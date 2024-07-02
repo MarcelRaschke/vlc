@@ -29,14 +29,15 @@
 #include <ctype.h>
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_url.h>
-#include <vlc_interface.h>
-#include <vlc_charset.h>
 #include <vlc_strings.h>
 
 #include "item.h"
 #include "info.h"
 #include "input_internal.h"
+
+#include <vlc_charset.h>
 
 struct input_item_opaque
 {
@@ -47,50 +48,16 @@ struct input_item_opaque
 
 static enum input_item_type_e GuessType( const input_item_t *p_item, bool *p_net );
 
-void input_item_SetErrorWhenReading( input_item_t *p_i, bool b_error )
+void input_item_SetPreparsed( input_item_t *p_i )
 {
-    bool b_changed;
-
-    vlc_mutex_lock( &p_i->lock );
-
-    b_changed = p_i->b_error_when_reading != b_error;
-    p_i->b_error_when_reading = b_error;
-
-    vlc_mutex_unlock( &p_i->lock );
-
-    if( b_changed )
-    {
-        vlc_event_send( &p_i->event_manager, &(vlc_event_t) {
-            .type = vlc_InputItemErrorWhenReadingChanged,
-            .u.input_item_error_when_reading_changed.new_value = b_error } );
-    }
-}
-void input_item_SetPreparsed( input_item_t *p_i, bool b_preparsed )
-{
-    bool b_send_event = false;
-
     vlc_mutex_lock( &p_i->lock );
 
     int status = vlc_meta_GetStatus(p_i->p_meta);
-    int new_status;
-    if( b_preparsed )
-        new_status = status | ITEM_PREPARSED;
-    else
-        new_status = status & ~ITEM_PREPARSED;
+    int new_status = status | ITEM_PREPARSED;
     if( status != new_status )
-    {
         vlc_meta_SetStatus(p_i->p_meta, new_status);
-        b_send_event = true;
-    }
 
     vlc_mutex_unlock( &p_i->lock );
-
-    if( b_send_event )
-    {
-        vlc_event_send( &p_i->event_manager, &(vlc_event_t) {
-            .type = vlc_InputItemPreparsedChanged,
-            .u.input_item_preparsed_changed.new_status = new_status } );
-    }
 }
 
 void input_item_SetArtNotFound( input_item_t *p_i, bool b_not_found )
@@ -130,11 +97,13 @@ void input_item_SetMeta( input_item_t *p_i, vlc_meta_type_t meta_type, const cha
     vlc_mutex_lock( &p_i->lock );
     vlc_meta_Set( p_i->p_meta, meta_type, psz_val );
     vlc_mutex_unlock( &p_i->lock );
+}
 
-    /* Notify interested third parties */
-    vlc_event_send( &p_i->event_manager, &(vlc_event_t) {
-        .type = vlc_InputItemMetaChanged,
-        .u.input_item_meta_changed.meta_type = meta_type } );
+void input_item_SetMetaExtra( input_item_t *p_i, const char *psz_name, const char *psz_value )
+{
+    vlc_mutex_lock( &p_i->lock );
+    vlc_meta_SetExtra( p_i->p_meta, psz_name, psz_value );
+    vlc_mutex_unlock( &p_i->lock );
 }
 
 void input_item_CopyOptions( input_item_t *p_child,
@@ -210,17 +179,6 @@ void input_item_CopyOptions( input_item_t *p_child,
     free( optv );
 }
 
-bool input_item_HasErrorWhenReading( input_item_t *p_item )
-{
-    vlc_mutex_lock( &p_item->lock );
-
-    bool b_error = p_item->b_error_when_reading;
-
-    vlc_mutex_unlock( &p_item->lock );
-
-    return b_error;
-}
-
 bool input_item_MetaMatch( input_item_t *p_i,
                            vlc_meta_type_t meta_type, const char *psz )
 {
@@ -249,6 +207,30 @@ char *input_item_GetMeta( input_item_t *p_i, vlc_meta_type_t meta_type )
     char *psz = value ? strdup( value ) : NULL;
     vlc_mutex_unlock( &p_i->lock );
     return psz;
+}
+
+static const char *input_item_GetMetaExtraLocked( input_item_t *item, const char *psz_name )
+{
+    vlc_mutex_assert( &item->lock );
+    return vlc_meta_GetExtra( item->p_meta, psz_name );
+}
+
+char *input_item_GetMetaExtra( input_item_t *p_i, const char *psz_name )
+{
+    vlc_mutex_lock( &p_i->lock );
+    const char *value = input_item_GetMetaExtraLocked( p_i, psz_name );
+    char *psz = value ? strdup( value ) : NULL;
+    vlc_mutex_unlock( &p_i->lock );
+    return psz;
+}
+
+unsigned input_item_GetMetaExtraNames( input_item_t *p_i, char ***pppsz_names )
+{
+    vlc_mutex_lock( &p_i->lock );
+    unsigned count = vlc_meta_GetExtraCount( p_i->p_meta );
+    *pppsz_names = vlc_meta_CopyExtraNames( p_i->p_meta );
+    vlc_mutex_unlock( &p_i->lock );
+    return count;
 }
 
 /* Get the title of a given item or fallback to the name if the title is empty */
@@ -380,22 +362,10 @@ vlc_tick_t input_item_GetDuration( input_item_t *p_i )
 
 void input_item_SetDuration( input_item_t *p_i, vlc_tick_t i_duration )
 {
-    bool b_send_event = false;
-
     vlc_mutex_lock( &p_i->lock );
     if( p_i->i_duration != i_duration )
-    {
         p_i->i_duration = i_duration;
-        b_send_event = true;
-    }
     vlc_mutex_unlock( &p_i->lock );
-
-    if( b_send_event )
-    {
-        vlc_event_send( &p_i->event_manager, &(vlc_event_t) {
-            .type = vlc_InputItemDurationChanged,
-            .u.input_item_duration_changed.new_duration = i_duration } );
-    }
 }
 
 char *input_item_GetNowPlayingFb( input_item_t *p_item )
@@ -454,8 +424,6 @@ void input_item_Release( input_item_t *p_item )
     if( !vlc_atomic_rc_dec( &owner->rc ) )
         return;
 
-    vlc_event_manager_fini( &p_item->event_manager );
-
     free( p_item->psz_name );
     free( p_item->psz_uri );
     free( p_item->p_stats );
@@ -472,12 +440,13 @@ void input_item_Release( input_item_t *p_item )
     TAB_CLEAN( p_item->i_options, p_item->ppsz_options );
     free( p_item->optflagv );
 
-    for( int i = 0; i < p_item->i_es; i++ )
+    for( size_t i = 0; i < p_item->es_vec.size; ++i )
     {
-        es_format_Clean( p_item->es[i] );
-        free( p_item->es[i] );
+        struct input_item_es *item_es = &p_item->es_vec.data[i];
+        es_format_Clean( &item_es->es );
+        free( item_es->id );
     }
-    TAB_CLEAN( p_item->i_es, p_item->es );
+    vlc_vector_destroy( &p_item->es_vec );
 
     for( int i = 0; i < p_item->i_epg; i++ )
         vlc_epg_Delete( p_item->pp_epg[i] );
@@ -679,6 +648,16 @@ static info_category_t *InputItemFindCat( input_item_t *p_item,
     return NULL;
 }
 
+bool input_item_Playable(const char *psz_filename)
+{
+    if (psz_filename == NULL) {
+        return false;
+    }
+
+    enum slave_type unused;
+    return input_item_slave_GetType(psz_filename, &unused) || input_item_IsMaster(psz_filename);
+}
+
 /**
  * Get a info item from a given category in a given input item.
  *
@@ -708,7 +687,7 @@ char *input_item_GetInfoLocked( input_item_t *p_i,
 {
     vlc_mutex_assert( &p_i->lock );
 
-    const info_category_t *p_cat = InputItemFindCat( p_i, psz_cat );
+    info_category_t *p_cat = InputItemFindCat( p_i, psz_cat );
     if( p_cat )
     {
         info_t *p_info = info_category_FindInfo( p_cat, psz_name );
@@ -758,11 +737,6 @@ int input_item_AddInfo( input_item_t *p_i,
 
     vlc_mutex_unlock( &p_i->lock );
 
-
-    if( !i_ret )
-        vlc_event_send( &p_i->event_manager, &(vlc_event_t) {
-            .type = vlc_InputItemInfoChanged } );
-
     return i_ret;
 }
 
@@ -796,9 +770,6 @@ int input_item_DelInfo( input_item_t *p_i,
     }
     vlc_mutex_unlock( &p_i->lock );
 
-    vlc_event_send( &p_i->event_manager,
-                    &(vlc_event_t) { .type = vlc_InputItemInfoChanged } );
-
     return VLC_SUCCESS;
 }
 void input_item_ReplaceInfos( input_item_t *p_item, info_category_t *p_cat )
@@ -814,9 +785,6 @@ void input_item_ReplaceInfos( input_item_t *p_item, info_category_t *p_cat )
     else
         vlc_list_append( &p_cat->node, &p_item->categories );
     vlc_mutex_unlock( &p_item->lock );
-
-    vlc_event_send( &p_item->event_manager,
-                    &(vlc_event_t) { .type = vlc_InputItemInfoChanged } );
 }
 
 void input_item_MergeInfos( input_item_t *p_item, info_category_t *p_cat )
@@ -835,14 +803,10 @@ void input_item_MergeInfos( input_item_t *p_item, info_category_t *p_cat )
     else
         vlc_list_append( &p_cat->node, &p_item->categories );
     vlc_mutex_unlock( &p_item->lock );
-
-    vlc_event_send( &p_item->event_manager,
-                    &(vlc_event_t) { .type = vlc_InputItemInfoChanged } );
 }
 
 void input_item_SetEpgEvent( input_item_t *p_item, const vlc_epg_event_t *p_epg_evt )
 {
-    bool b_changed = false;
     vlc_mutex_lock( &p_item->lock );
 
     for( int i = 0; i < p_item->i_epg; i++ )
@@ -860,19 +824,12 @@ void input_item_SetEpgEvent( input_item_t *p_item, const vlc_epg_event_t *p_epg_
                         p_epg->p_current = p_dup;
                     vlc_epg_event_Delete( p_epg->pp_event[j] );
                     p_epg->pp_event[j] = p_dup;
-                    b_changed = true;
                 }
                 break;
             }
         }
     }
     vlc_mutex_unlock( &p_item->lock );
-
-    if ( b_changed )
-    {
-        vlc_event_send( &p_item->event_manager,
-                        &(vlc_event_t) { .type = vlc_InputItemInfoChanged } );
-    }
 }
 
 //#define EPG_DEBUG
@@ -933,7 +890,7 @@ void input_item_SetEpg( input_item_t *p_item, const vlc_epg_t *p_update, bool b_
 #ifdef EPG_DEBUG
     char *psz_epg;
     if( asprintf( &psz_epg, "EPG %s", p_epg->psz_name ? p_epg->psz_name : "unknown" ) < 0 )
-        goto signal;
+        return;
 
     input_item_DelInfo( p_item, psz_epg, NULL );
 
@@ -963,10 +920,7 @@ void input_item_SetEpg( input_item_t *p_item, const vlc_epg_t *p_update, bool b_
     }
     vlc_mutex_unlock( &p_item->lock );
     free( psz_epg );
-signal:
 #endif
-    vlc_event_send( &p_item->event_manager,
-                    &(vlc_event_t){ .type = vlc_InputItemInfoChanged, } );
 }
 
 void input_item_ChangeEPGSource( input_item_t *p_item, int i_source_id )
@@ -1025,9 +979,6 @@ void input_item_SetEpgOffline( input_item_t *p_item )
     else
         vlc_mutex_unlock( &p_item->lock );
 #endif
-
-    vlc_event_send( &p_item->event_manager,
-                    &(vlc_event_t) { .type = vlc_InputItemInfoChanged } );
 }
 
 input_item_t *
@@ -1041,7 +992,6 @@ input_item_NewExt( const char *psz_uri, const char *psz_name,
     vlc_atomic_rc_init( &owner->rc );
 
     input_item_t *p_input = &owner->item;
-    vlc_event_manager_t * p_em = &p_input->event_manager;
 
     p_input->p_meta = vlc_meta_New();
     if( unlikely(p_input->p_meta == NULL) )
@@ -1072,16 +1022,13 @@ input_item_NewExt( const char *psz_uri, const char *psz_name,
 
     p_input->i_duration = duration;
     vlc_list_init( &p_input->categories );
-    TAB_INIT( p_input->i_es, p_input->es );
+    vlc_vector_init( &p_input->es_vec );
     p_input->p_stats = NULL;
     TAB_INIT( p_input->i_epg, p_input->pp_epg );
     TAB_INIT( p_input->i_slaves, p_input->pp_slaves );
 
-    vlc_event_manager_init( p_em, p_input );
-
     if( type != ITEM_TYPE_UNKNOWN )
         p_input->i_type = type;
-    p_input->b_error_when_reading = false;
 
     if( i_net != ITEM_NET_UNKNOWN )
         p_input->b_net = i_net == ITEM_NET;
@@ -1292,32 +1239,43 @@ void input_item_node_RemoveNode( input_item_node_t *parent,
 }
 
 /* Called by es_out when a new Elementary Stream is added or updated. */
-void input_item_UpdateTracksInfo(input_item_t *item, const es_format_t *fmt)
+void input_item_UpdateTracksInfo(input_item_t *item, const es_format_t *fmt,
+                                 const char *es_id, bool es_id_stable)
 {
-    int i;
-    es_format_t *fmt_copy = malloc(sizeof *fmt_copy);
-    if (!fmt_copy)
-        return;
-
-    es_format_Copy(fmt_copy, fmt);
-
+    assert( es_id != NULL );
     vlc_mutex_lock( &item->lock );
 
-    for( i = 0; i < item->i_es; i++ )
+    for( size_t i = 0; i < item->es_vec.size; ++i )
     {
-        if (item->es[i]->i_id != fmt->i_id)
+        struct input_item_es *item_es = &item->es_vec.data[i];
+        if (strcmp(item_es->id, es_id) != 0)
             continue;
 
         /* We've found the right ES, replace it */
-        es_format_Clean(item->es[i]);
-        free(item->es[i]);
-        item->es[i] = fmt_copy;
+        es_format_Clean(&item_es->es);
+        es_format_Copy(&item_es->es, fmt);
+        vlc_mutex_unlock( &item->lock );
+        return;
+    }
+
+    char *es_id_dup = strdup( es_id );
+    if( es_id_dup == NULL )
+    {
         vlc_mutex_unlock( &item->lock );
         return;
     }
 
     /* ES not found, insert it */
-    TAB_APPEND(item->i_es, item->es, fmt_copy);
+    if (vlc_vector_push_hole( &item->es_vec, 1 ))
+    {
+        struct input_item_es *item_es = &item->es_vec.data[item->es_vec.size - 1];
+        item_es->id = es_id_dup;
+        item_es->id_stable = es_id_stable;
+        es_format_Copy( &item_es->es, fmt );
+    }
+    else
+        free( es_id_dup );
+
     vlc_mutex_unlock( &item->lock );
 }
 
@@ -1339,82 +1297,6 @@ char *input_item_CreateFilename(input_item_t *item,
 
     free(filename);
     return path;
-}
-
-struct input_item_parser_id_t
-{
-    input_thread_t *input;
-    input_state_e state;
-    const input_item_parser_cbs_t *cbs;
-    void *userdata;
-};
-
-static void
-input_item_parser_InputEvent(input_thread_t *input,
-                             const struct vlc_input_event *event, void *parser_)
-{
-    input_item_parser_id_t *parser = parser_;
-
-    switch (event->type)
-    {
-        case INPUT_EVENT_TIMES:
-            input_item_SetDuration(input_GetItem(input), event->times.length);
-            break;
-        case INPUT_EVENT_STATE:
-            parser->state = event->state.value;
-            break;
-        case INPUT_EVENT_DEAD:
-        {
-            int status = parser->state == END_S ? VLC_SUCCESS : VLC_EGENERIC;
-            parser->cbs->on_ended(input_GetItem(input), status, parser->userdata);
-            break;
-        }
-        case INPUT_EVENT_SUBITEMS:
-            if (parser->cbs->on_subtree_added)
-                parser->cbs->on_subtree_added(input_GetItem(input),
-                                              event->subitems, parser->userdata);
-            break;
-        default:
-            break;
-    }
-}
-
-input_item_parser_id_t *
-input_item_Parse(input_item_t *item, vlc_object_t *obj,
-                 const input_item_parser_cbs_t *cbs, void *userdata)
-{
-    assert(cbs && cbs->on_ended);
-    input_item_parser_id_t *parser = malloc(sizeof(*parser));
-    if (!parser)
-        return NULL;
-
-    parser->state = INIT_S;
-    parser->cbs = cbs;
-    parser->userdata = userdata;
-    parser->input = input_Create(obj, input_item_parser_InputEvent, parser,
-                                 item, INPUT_TYPE_PREPARSING, NULL, NULL);
-    if (!parser->input || input_Start(parser->input))
-    {
-        if (parser->input)
-            input_Close(parser->input);
-        free(parser);
-        return NULL;
-    }
-    return parser;
-}
-
-void
-input_item_parser_id_Interrupt(input_item_parser_id_t *parser)
-{
-    input_Stop(parser->input);
-}
-
-void
-input_item_parser_id_Release(input_item_parser_id_t *parser)
-{
-    input_item_parser_id_Interrupt(parser);
-    input_Close(parser->input);
-    free(parser);
 }
 
 static int rdh_compar_type(input_item_t *p1, input_item_t *p2)

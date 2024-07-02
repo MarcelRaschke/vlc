@@ -24,6 +24,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <stdckdint.h>
 
 #include <vlc/libvlc.h>
 #include <vlc/libvlc_picture.h>
@@ -119,6 +120,7 @@ libvlc_media_trackpriv_new( void )
         return NULL;
 
     trackpriv->es_id = NULL;
+    trackpriv->item_str_id = NULL;
     vlc_atomic_rc_init( &trackpriv->rc );
     return trackpriv;
 }
@@ -163,6 +165,7 @@ libvlc_media_track_release( libvlc_media_track_t *track )
         libvlc_media_track_clean( track );
         if( trackpriv->es_id )
             vlc_es_id_Release( trackpriv->es_id );
+        free( trackpriv->item_str_id );
         free( trackpriv );
     }
 }
@@ -171,9 +174,8 @@ static libvlc_media_tracklist_t *
 libvlc_media_tracklist_alloc( size_t count )
 {
     size_t size;
-    if( mul_overflow( count, sizeof(libvlc_media_trackpriv_t *), &size) )
-        return NULL;
-    if( add_overflow( size, sizeof(libvlc_media_tracklist_t), &size) )
+    if (ckd_mul(&size, count, sizeof (libvlc_media_trackpriv_t *)) ||
+        ckd_add(&size, size, sizeof (libvlc_media_tracklist_t)))
         return NULL;
 
     libvlc_media_tracklist_t *list = malloc( size );
@@ -185,16 +187,15 @@ libvlc_media_tracklist_alloc( size_t count )
 }
 
 libvlc_media_tracklist_t *
-libvlc_media_tracklist_from_es_array( es_format_t **es_array,
-                                      size_t es_count,
-                                      libvlc_track_type_t type )
+libvlc_media_tracklist_from_item( input_item_t *item, libvlc_track_type_t type )
 {
     size_t count = 0;
     const enum es_format_category_e cat = libvlc_track_type_to_escat( type );
 
-    for( size_t i = 0; i < es_count; ++i )
+    for( size_t i = 0; i < item->es_vec.size; ++i )
     {
-        if( es_array[i]->i_cat == cat )
+        const es_format_t *es_fmt = &item->es_vec.data[i].es;
+        if( es_fmt->i_cat == cat )
             count++;
     }
 
@@ -203,9 +204,11 @@ libvlc_media_tracklist_from_es_array( es_format_t **es_array,
     if( count == 0 || list == NULL )
         return list;
 
-    for( size_t i = 0; i < es_count; ++i )
+    for( size_t i = 0; i < item->es_vec.size; ++i )
     {
-        if( es_array[i]->i_cat == cat )
+        const struct input_item_es *item_es = &item->es_vec.data[i];
+        const es_format_t *es_fmt = &item_es->es;
+        if( es_fmt->i_cat == cat )
         {
             libvlc_media_trackpriv_t *trackpriv = libvlc_media_trackpriv_new();
             if( trackpriv == NULL )
@@ -214,7 +217,16 @@ libvlc_media_tracklist_from_es_array( es_format_t **es_array,
                 return NULL;
             }
             list->tracks[list->count++] = trackpriv;
-            libvlc_media_trackpriv_from_es( trackpriv, es_array[i] );
+            libvlc_media_trackpriv_from_es( trackpriv, es_fmt );
+
+            trackpriv->item_str_id = strdup( item_es->id );
+            if( trackpriv->item_str_id == NULL )
+            {
+                libvlc_media_tracklist_delete( list );
+                return NULL;
+            }
+            trackpriv->t.psz_id = trackpriv->item_str_id;
+            trackpriv->t.id_stable = item_es->id_stable;
         }
     }
 

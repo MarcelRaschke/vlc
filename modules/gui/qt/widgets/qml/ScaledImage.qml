@@ -18,10 +18,9 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
-import org.videolan.compat 0.1
 
 Image {
     id: root
@@ -30,12 +29,7 @@ Image {
 
     property bool disableSmoothWhenIntegerUpscaling: false
 
-    // TODO: Remove this Qt >= 5.14 (Binding.restoreMode == Binding.RestoreBindingOrValue)
-    // Only required for the Binding to restore the value back
-    readonly property bool _smooth: true
-    smooth: _smooth
-
-    BindingCompat on smooth {
+    Binding on smooth {
         when: root.disableSmoothWhenIntegerUpscaling &&
               !((root.paintedWidth % root.implicitWidth) || (root.paintedHeight % root.implicitHeight))
         value: false

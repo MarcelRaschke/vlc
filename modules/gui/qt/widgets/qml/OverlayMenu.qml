@@ -15,12 +15,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
+import QtQuick.Layouts
 import org.videolan.vlc 0.1
 
+import "."
 import "qrc:///style/"
 
 FocusScope {
@@ -58,6 +59,7 @@ FocusScope {
     property alias scrollBarActive: scrollBar.active
 
     visible: false
+    enabled: visible
 
     function open() {
         listView.currentModel = root.model
@@ -70,12 +72,14 @@ FocusScope {
         focus = false
     }
 
-    Keys.onPressed: {
+    Keys.onPressed: (event) => {
         if (KeyHelper.matchCancel(event)) {
             close()
             event.accepted = true
         }
     }
+
+    Accessible.role: Accessible.PopupMenu
 
     readonly property ColorContext colorContext: ColorContext {
         id: theme
@@ -132,7 +136,7 @@ FocusScope {
             anchors.topMargin: root.topPadding
             anchors.bottomMargin: root.bottomPadding
 
-            ScrollBar.vertical: ScrollBar { id: scrollBar; active: true }
+            ScrollBar.vertical: ScrollBar { id: scrollBar }
 
             focus: true
 
@@ -173,7 +177,7 @@ FocusScope {
                 listView.currentModel = _model
             }
 
-            Keys.onPressed: {
+            Keys.onPressed: (event) => {
                 if (root.isRight ? KeyHelper.matchLeft(event)
                                  : KeyHelper.matchRight(event)) {
                     goBack()
@@ -195,15 +199,20 @@ FocusScope {
             delegate: T.AbstractButton {
                 id: button
 
-                implicitWidth: Math.max(background ? background.implicitWidth : 0,
-                                        (contentItem ? contentItem.implicitWidth : 0) + leftPadding + rightPadding)
-                implicitHeight: Math.max(background ? background.implicitHeight : 0,
-                                         (contentItem ? contentItem.implicitHeight : 0) + topPadding + bottomPadding)
+                required property var modelData
+
+                implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                                        implicitContentWidth + leftPadding + rightPadding)
+                implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                                         implicitContentHeight + topPadding + bottomPadding)
+
                 baselineOffset: contentItem ? contentItem.y + contentItem.baselineOffset : 0
 
                 readonly property bool yieldsAnotherModel: (!!modelData.model)
 
                 enabled: modelData.enabled
+
+                text: modelData.text
 
                 width: listView.width
 
@@ -225,13 +234,15 @@ FocusScope {
 
                 onClicked: trigger(true)
 
-                Keys.onPressed: {
+                Keys.onPressed: (event) => {
                     if (root.isRight ? KeyHelper.matchRight(event)
                                      : KeyHelper.matchLeft(event)) {
                         trigger(false)
                         event.accepted = true
                     }
                 }
+
+                Accessible.onPressAction: trigger(true)
 
                 contentItem: RowLayout {
                     id: rowLayout
@@ -274,6 +285,7 @@ FocusScope {
                                 horizontalAlignment: Text.AlignHCenter
                                 text: "✓"
                                 color: theme.fg.primary
+                                Accessible.ignored: true
                             }
                         }
 
@@ -296,6 +308,9 @@ FocusScope {
                         font.weight: Font.Normal
                         text: modelData.text
                         color: theme.fg.primary
+
+                        //name is reported at the button level
+                        Accessible.ignored: true
                     }
 
                     ListLabel {
@@ -310,6 +325,8 @@ FocusScope {
                                                                                                   : ""
 
                         color: theme.fg.primary
+
+                        Accessible.ignored: true
                     }
                 }
             }

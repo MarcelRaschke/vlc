@@ -56,7 +56,7 @@ static int Open(vout_display_t *vd,
                 video_format_t *fmt, vlc_video_context *context);
 static void Close(vout_display_t *vd);
 
-static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture,
+static void PictureRender (vout_display_t *vd, picture_t *pic, const vlc_render_subpicture *subpicture,
                            vlc_tick_t date);
 static void PictureDisplay (vout_display_t *vd, picture_t *pic);
 static int Control (vout_display_t *vd, int query);
@@ -294,7 +294,8 @@ static void Close(vout_display_t *vd)
  * vout display callbacks
  *****************************************************************************/
 
-static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture,
+static void PictureRender (vout_display_t *vd, picture_t *pic,
+                           const vlc_render_subpicture *subpicture,
                            vlc_tick_t date)
 {
     VLC_UNUSED(date);
@@ -332,6 +333,8 @@ static void UpdatePlace (vout_display_t *vd, const vout_display_cfg_t *cfg)
     vout_display_place_t place;
     /* We never receive resize from the core, so provide the size ourselves */
     vout_display_PlacePicture(&place, vd->source, &cfg->display);
+    /* Reverse vertical alignment as the GL tex are Y inverted */
+    place.y = cfg->display.height - (place.y + place.height);
     sys->place = place;
 }
 
@@ -349,19 +352,13 @@ static int Control (vout_display_t *vd, int query)
             case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
                 return VLC_SUCCESS;
 
-            case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
-            case VOUT_DISPLAY_CHANGE_ZOOM:
             case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
             case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
+            case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
             {
                 @synchronized(sys->glView) {
                     vout_display_cfg_t cfg;
                     cfg = *vd->cfg;
-                    /* Reverse vertical alignment as the GL tex are Y inverted */
-                    if (cfg.display.align.vertical == VLC_VIDEO_ALIGN_TOP)
-                        cfg.display.align.vertical = VLC_VIDEO_ALIGN_BOTTOM;
-                    else if (cfg.display.align.vertical == VLC_VIDEO_ALIGN_BOTTOM)
-                        cfg.display.align.vertical = VLC_VIDEO_ALIGN_TOP;
                     cfg.display.width = sys->cfg.display.width;
                     cfg.display.height = sys->cfg.display.height;
                     sys->cfg = cfg;
@@ -476,8 +473,8 @@ static void OpenglSwap (vlc_gl_t *gl)
     GLint params[] = { 1 };
     CGLSetParameter ([[self openGLContext] CGLContextObj], kCGLCPSwapInterval, params);
 
-    [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidChangeScreenParametersNotification
-                                                      object:[NSApplication sharedApplication]
+    [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification
+                                                      object:NSApplication.sharedApplication
                                                        queue:nil
                                                   usingBlock:^(NSNotification *notification) {
                                                       [self performSelectorOnMainThread:@selector(reshape)
@@ -491,7 +488,7 @@ static void OpenglSwap (vlc_gl_t *gl)
 
 - (void)dealloc
 {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
     [super dealloc];
 }
 
@@ -564,7 +561,7 @@ static void OpenglSwap (vlc_gl_t *gl)
 
     vout_display_opengl_Viewport(sys->vgl, sys->place.x, sys->place.y,
                                  sys->place.width, sys->place.height);
-    vout_display_opengl_SetOutputSize(sys->vgl, sys->place.width, sys->place.height);
+    vout_display_opengl_SetOutputSize(sys->vgl, sys->cfg.display.width, sys->cfg.display.height);
 
     if (sys->has_first_frame)
         vout_display_opengl_Display (sys->vgl);
@@ -582,7 +579,6 @@ static void OpenglSwap (vlc_gl_t *gl)
 
     /* on HiDPI displays, the point bounds don't equal the actual pixel based bounds */
     NSRect bounds = [self convertRectToBacking:[self bounds]];
-    vout_display_place_t place;
 
     @synchronized(self) {
         if (vd == NULL) return;

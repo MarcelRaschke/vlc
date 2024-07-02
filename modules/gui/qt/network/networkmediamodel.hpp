@@ -24,19 +24,19 @@
 #endif
 
 #include <QAbstractListModel>
+#include <QUrl>
 
-#include <vlc_media_library.h>
 #include <vlc_media_source.h>
-#include <vlc_threads.h>
 #include <vlc_cxx_helpers.hpp>
 
-#include "mediatreelistener.hpp"
-#include <maininterface/mainctx.hpp>
-
-#include <QSemaphore>
-#include <QDateTime>
+#include "util/shared_input_item.hpp"
+#include "util/base_model.hpp"
 
 #include <memory>
+
+Q_MOC_INCLUDE( "maininterface/mainctx.hpp" )
+
+class MainCtx;
 
 using MediaSourcePtr = vlc_shared_data_ptr_type(vlc_media_source_t,
                                 vlc_media_source_Hold, vlc_media_source_Release);
@@ -44,10 +44,6 @@ using MediaSourcePtr = vlc_shared_data_ptr_type(vlc_media_source_t,
 using MediaTreePtr = vlc_shared_data_ptr_type(vlc_media_tree_t,
                                               vlc_media_tree_Hold,
                                               vlc_media_tree_Release);
-
-using InputItemPtr = vlc_shared_data_ptr_type(input_item_t,
-                                              input_item_Hold,
-                                              input_item_Release);
 
 class NetworkTreeItem
 {
@@ -79,7 +75,7 @@ public:
     }
 
     MediaTreePtr tree;
-    InputItemPtr media;
+    SharedInputItem media;
 };
 
 class PathNode
@@ -104,9 +100,8 @@ private:
     const QString m_display;
 };
 
-Q_DECLARE_METATYPE(PathNode)
-
-class NetworkMediaModel : public QAbstractListModel
+class NetworkMediaModelPrivate;
+class NetworkMediaModel : public BaseModel
 {
     Q_OBJECT
 
@@ -122,6 +117,9 @@ public:
         NETWORK_ARTWORK,
         NETWORK_FILE_SIZE,
         NETWORK_FILE_MODIFIED,
+        NETWORK_MEDIA,
+        NETWORK_MEDIA_PROGRESS,
+        NETWORK_MEDIA_DURATION,
     };
 
     enum ItemType{
@@ -146,15 +144,12 @@ public:
     Q_PROPERTY(ItemType type READ getType NOTIFY typeChanged)
     Q_PROPERTY(bool indexed READ isIndexed WRITE setIndexed NOTIFY isIndexedChanged)
     Q_PROPERTY(bool canBeIndexed READ canBeIndexed NOTIFY canBeIndexedChanged)
-    Q_PROPERTY(bool parsingPending READ getParsingPending NOTIFY parsingPendingChanged)
-    Q_PROPERTY(int count READ getCount NOTIFY countChanged)
 
     explicit NetworkMediaModel(QObject* parent = nullptr);
     ~NetworkMediaModel() override;
 
     QVariant data(const QModelIndex& index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
-    int rowCount(const QModelIndex& parent = {}) const override;
 
     Qt::ItemFlags flags( const QModelIndex& idx ) const override;
     bool setData( const QModelIndex& idx,const QVariant& value, int role ) override;
@@ -172,10 +167,6 @@ public:
     inline ItemType getType() const { return m_type; }
     inline bool isIndexed() const { return m_indexed; }
     inline bool canBeIndexed() const { return m_canBeIndexed; }
-    inline bool getParsingPending() const { return m_parsingPending; }
-    int getCount() const;
-
-    Q_INVOKABLE QMap<QString, QVariant> getDataAt(int idx);
 
     Q_INVOKABLE bool insertIntoPlaylist( const QModelIndexList& itemIdList, ssize_t playlistIndex );
     Q_INVOKABLE bool addToPlaylist( int index );
@@ -193,8 +184,6 @@ signals:
     void typeChanged();
     void isIndexedChanged();
     void canBeIndexedChanged();
-    void parsingPendingChanged(bool);
-    void countChanged();
 
     void ctxChanged();
     void treeChanged();
@@ -203,57 +192,19 @@ signals:
     void pathChanged();
 
 private:
-    struct Item
-    {
-        QString name;
-        QUrl mainMrl;
-        std::vector<QUrl> mrls;
-        QString protocol;
-        bool indexed;
-        ItemType type;
-        bool canBeIndexed;
-        NetworkTreeItem tree;
-        QUrl artworkUrl;
-        qint64 fileSize;
-        QDateTime fileModified;
-    };
-
-    bool initializeMediaSources();
-
-    void refreshMediaList(MediaTreePtr tree, std::vector<InputItemPtr> children , bool clear);
-
-    bool canBeIndexed(const QUrl& url , ItemType itemType );
-
-private:
-    struct ListenerCb : public MediaTreeListener::MediaTreeListenerCb {
-        ListenerCb(NetworkMediaModel *model) : model(model) {}
-
-        void onItemCleared( MediaTreePtr tree, input_item_node_t* node ) override;
-        void onItemAdded( MediaTreePtr tree, input_item_node_t* parent, input_item_node_t *const children[], size_t count ) override;
-        void onItemRemoved( MediaTreePtr tree, input_item_node_t * node, input_item_node_t *const children[], size_t count ) override;
-        void onItemPreparseEnded( MediaTreePtr tree, input_item_node_t* node, enum input_item_preparse_status status ) override;
-
-        NetworkMediaModel *model;
-    };
-
     //properties of the current node
     QString m_name;
     QUrl m_url;
     ItemType m_type = ItemType::TYPE_UNKNOWN;
     bool m_indexed = false;
     bool m_canBeIndexed  = false;
-    bool m_parsingPending = false;
-    QSemaphore m_preparseSem;
 
-    std::vector<Item> m_items;
     MainCtx* m_ctx = nullptr;
-    MediaLib* m_mediaLib;
-    bool m_hasTree = false;
     NetworkTreeItem m_treeItem;
-    std::unique_ptr<MediaTreeListener> m_listener;
     QVariantList m_path;
-};
 
-Q_DECLARE_METATYPE(NetworkTreeItem)
+    struct ListenerCb;
+    Q_DECLARE_PRIVATE(NetworkMediaModel);
+};
 
 #endif // MLNETWORKMEDIAMODEL_HPP

@@ -17,6 +17,8 @@
  *****************************************************************************/
 
 #include "mlalbumtrackmodel.hpp"
+#include "util/vlctick.hpp"
+#include "mlhelper.hpp"
 
 QHash<QByteArray, vlc_ml_sorting_criteria_t> MLAlbumTrackModel::M_names_to_criteria = {
     {"id", VLC_ML_SORTING_DEFAULT},
@@ -43,14 +45,19 @@ QVariant MLAlbumTrackModel::itemRoleData(MLItem *item, const int role) const
     // Tracks
     case TRACK_ID:
         return QVariant::fromValue( ml_track->getId() );
-    case TRACK_TITLE :
+    case TRACK_TITLE:
         return QVariant::fromValue( ml_track->getTitle() );
-    case TRACK_COVER :
+    case TRACK_COVER:
         return QVariant::fromValue( ml_track->getCover() );
-    case TRACK_NUMBER :
+    case TRACK_NUMBER:
         return QVariant::fromValue( ml_track->getTrackNumber() );
     case TRACK_DISC_NUMBER:
         return QVariant::fromValue( ml_track->getDiscNumber() );
+    case TRACK_IS_LOCAL:
+    {
+        QUrl trackUrl(ml_track->getMRL());
+        return QVariant::fromValue( trackUrl.isLocalFile() );
+    }
     case TRACK_DURATION :
         return QVariant::fromValue( ml_track->getDuration() );
     case TRACK_ALBUM:
@@ -76,6 +83,7 @@ QHash<int, QByteArray> MLAlbumTrackModel::roleNames() const
         { TRACK_COVER, "cover" },
         { TRACK_NUMBER, "track_number" },
         { TRACK_DISC_NUMBER, "disc_number" },
+        { TRACK_IS_LOCAL, "isLocal" },
         { TRACK_DURATION, "duration" },
         { TRACK_ALBUM, "album_title"},
         { TRACK_ARTIST, "main_artist"},
@@ -149,34 +157,28 @@ void MLAlbumTrackModel::onVlcMlEvent(const MLEvent &event)
     MLBaseModel::onVlcMlEvent( event );
 }
 
-std::unique_ptr<MLBaseModel::BaseLoader>
-MLAlbumTrackModel::createLoader() const
+std::unique_ptr<MLListCacheLoader>
+MLAlbumTrackModel::createMLLoader() const
 {
-    return std::make_unique<Loader>(*this);
+    return std::make_unique<MLListCacheLoader>(m_mediaLib, std::make_shared<MLAlbumTrackModel::Loader>(*this));
 }
 
-size_t MLAlbumTrackModel::Loader::count(vlc_medialibrary_t* ml) const
+size_t MLAlbumTrackModel::Loader::count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const
 {
-    MLQueryParams params = getParams();
-    auto queryParams = params.toCQueryParams();
-
     if ( m_parent.id <= 0 )
-        return vlc_ml_count_audio_media(ml, &queryParams);
-    return vlc_ml_count_media_of(ml, &queryParams, m_parent.type, m_parent.id );
+        return vlc_ml_count_audio_media(ml, queryParams);
+    return vlc_ml_count_media_of(ml, queryParams, m_parent.type, m_parent.id );
 }
 
 std::vector<std::unique_ptr<MLItem>>
-MLAlbumTrackModel::Loader::load(vlc_medialibrary_t* ml, size_t index, size_t count) const
+MLAlbumTrackModel::Loader::load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const
 {
-    MLQueryParams params = getParams(index, count);
-    auto queryParams = params.toCQueryParams();
-
     ml_unique_ptr<vlc_ml_media_list_t> media_list;
 
     if ( m_parent.id <= 0 )
-        media_list.reset( vlc_ml_list_audio_media(ml, &queryParams) );
+        media_list.reset( vlc_ml_list_audio_media(ml, queryParams) );
     else
-        media_list.reset( vlc_ml_list_media_of(ml, &queryParams, m_parent.type, m_parent.id ) );
+        media_list.reset( vlc_ml_list_media_of(ml, queryParams, m_parent.type, m_parent.id ) );
     if ( media_list == nullptr )
         return {};
     std::vector<std::unique_ptr<MLItem>> res;
@@ -195,3 +197,8 @@ MLAlbumTrackModel::Loader::loadItemById(vlc_medialibrary_t* ml, MLItemId itemId)
     return std::make_unique<MLAlbumTrack>(ml, media.get());
 }
 
+/* Q_INVOKABLE */ QUrl MLAlbumTrackModel::getParentURL(const QModelIndex &index)
+{
+    MLAlbumTrack *ml_track = static_cast<MLAlbumTrack *>(item(index.row()));
+    return getParentURLFromMLItem(ml_track);
+}

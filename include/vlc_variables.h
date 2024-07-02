@@ -115,6 +115,38 @@ enum vlc_var_atomic_op {
 };
 
 /**
+ * VLC value structure
+ */
+typedef union
+{
+    int64_t         i_int;
+    bool            b_bool;
+    float           f_float;
+    char *          psz_string;
+    void *          p_address;
+    struct { int32_t x; int32_t y; } coords;
+
+} vlc_value_t;
+
+/*****************************************************************************
+ * Variable callbacks: called when the value is modified
+ *****************************************************************************/
+typedef int ( * vlc_callback_t ) ( vlc_object_t *,      /* variable's object */
+                                   char const *,            /* variable name */
+                                   vlc_value_t,                 /* old value */
+                                   vlc_value_t,                 /* new value */
+                                   void * );                /* callback data */
+
+/*****************************************************************************
+ * List callbacks: called when elements are added/removed from the list
+ *****************************************************************************/
+typedef int ( * vlc_list_callback_t ) ( vlc_object_t *,      /* variable's object */
+                                        char const *,            /* variable name */
+                                        int,                  /* VLC_VAR_* action */
+                                        vlc_value_t *,      /* new/deleted value  */
+                                        void *);                 /* callback data */
+
+/**
  * Creates a VLC object variable.
  *
  * This function creates a named variable within a VLC object.

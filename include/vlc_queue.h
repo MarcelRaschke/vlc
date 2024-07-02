@@ -31,6 +31,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <vlc_common.h>
+#include <vlc_threads.h>
 
 /**
  * Opaque type for queue entry.
@@ -131,10 +132,11 @@ static inline void vlc_queue_Wait(vlc_queue_t *q)
  * @warning It is assumed that the caller already holds the queue lock;
  * otherwise the behaviour is undefined.
  *
+ * @param q A queue locked with ::vlc_queue_Lock
  * @param entry NULL-terminated list of entries to queue
  *              (if NULL, this function has no effects)
  */
-VLC_API void vlc_queue_EnqueueUnlocked(vlc_queue_t *, void *entry);
+VLC_API void vlc_queue_EnqueueUnlocked(vlc_queue_t *q, void *entry);
 
 /**
  * Dequeues the oldest entry (without locking).
@@ -186,9 +188,10 @@ VLC_USED static inline bool vlc_queue_IsEmpty(const vlc_queue_t *q)
  * This function enqueues an entry, or rather a linked-list of entries, in a
  * thread-safe queue.
  *
+ * @param q A queue initialized with ::vlc_queue_Init
  * @param entry list of entries (if NULL, this function has no effects)
  */
-VLC_API void vlc_queue_Enqueue(vlc_queue_t *, void *entry);
+VLC_API void vlc_queue_Enqueue(vlc_queue_t *q, void *entry);
 
 /**
  * Dequeues the oldest entry.

@@ -46,6 +46,35 @@ int webvtt_OpenEncoder( vlc_object_t *p_this )
     return VLC_SUCCESS;
 }
 
+static void bo_add_escaped( bo_t *box, size_t len, const char *psz )
+{
+    if( likely(strcspn(psz, "&<>") >= len) )
+    {
+        bo_add_mem( box, len, psz );
+    }
+    else
+    {
+        for( size_t i=0; i<len; i++ )
+        {
+            switch(*psz)
+            {
+            case '&':
+                bo_add_mem( box, 6, "&#x26;" );
+                break;
+            case '<':
+                bo_add_mem( box, 6, "&#x3c;" );
+                break;
+            case '>': /* escapes forbidden --> sequence */
+                bo_add_mem( box, 6, "&#x3e;" );
+                break;
+            default:
+                bo_add_8( box, *psz );
+                break;
+            }
+            psz++;
+        }
+    }
+}
 
 static void WriteText( const char *psz, bo_t *box, char *c_last )
 {
@@ -56,9 +85,9 @@ static void WriteText( const char *psz, bo_t *box, char *c_last )
         const char *p = strchr( psz, '\n' );
         if( p )
         {
-            bo_add_mem( box, p - psz, psz );
-            if( *c_last == '\n' )
-                bo_add_8( box, '!' ); /* Add space */
+            bo_add_escaped( box, p - psz, psz );
+            if( (*c_last == '\n' || *c_last == '\0') && *psz == '\n' )
+                bo_add_mem( box, 8, "&#x2028;" ); /* Add space for empty line */
             bo_add_8( box, '\n' );
             *c_last = '\n';
             psz = p + 1;
@@ -66,7 +95,7 @@ static void WriteText( const char *psz, bo_t *box, char *c_last )
         else
         {
             size_t len = strlen(psz);
-            bo_add_mem( box, len, psz );
+            bo_add_escaped( box, len, psz );
             *c_last = (len > 0) ? psz[len - 1] : '\0';
             break;
         }
@@ -84,10 +113,10 @@ static block_t *Encode( encoder_t *p_enc, subpicture_t *p_spu )
     if( !bo_init( &box, 8 ) )
         return NULL;
 
-    for( subpicture_region_t *p_region = p_spu->p_region;
-                              p_region; p_region = p_region->p_next )
+    const subpicture_region_t *p_region;
+    vlc_spu_regions_foreach_const(p_region, &p_spu->regions)
     {
-        if( p_region->fmt.i_chroma != VLC_CODEC_TEXT ||
+        if(!subpicture_region_IsText( p_region )||
             p_region->p_text == NULL ||
             p_region->p_text->psz_text == NULL )
             continue;
@@ -159,7 +188,7 @@ static block_t *Encode( encoder_t *p_enc, subpicture_t *p_spu )
 
         /* Settings */
 
-        if( (p_region->i_text_align & (SUBPICTURE_ALIGN_LEFT|SUBPICTURE_ALIGN_RIGHT)) ||
+        if( (p_region->text_flags & (SUBPICTURE_ALIGN_LEFT|SUBPICTURE_ALIGN_RIGHT)) ||
                 (p_region->i_align & SUBPICTURE_ALIGN_TOP) )
         {
             size_t i_start = bo_size( &box );
@@ -167,9 +196,9 @@ static block_t *Encode( encoder_t *p_enc, subpicture_t *p_spu )
             bo_add_32be( &box, 0 );
             bo_add_fourcc( &box, "sttg" );
 
-            if( p_region->i_text_align & SUBPICTURE_ALIGN_LEFT )
+            if( p_region->text_flags & SUBPICTURE_ALIGN_LEFT )
                 bo_add_mem( &box, 10, "align:left" );
-            else if( p_region->i_text_align & SUBPICTURE_ALIGN_RIGHT )
+            else if( p_region->text_flags & SUBPICTURE_ALIGN_RIGHT )
                 bo_add_mem( &box, 11, "align:right" );
 
             if( p_region->i_align & SUBPICTURE_ALIGN_TOP )
@@ -208,7 +237,7 @@ static block_t *Encode( encoder_t *p_enc, subpicture_t *p_spu )
     if( p_block )
     {
         p_block->i_pts = p_block->i_dts = p_spu->i_start;
-        if( p_spu->i_stop > p_spu->i_start )
+        if( p_spu->i_stop != VLC_TICK_INVALID && p_spu->i_stop > p_spu->i_start )
             p_block->i_length = p_spu->i_stop - p_spu->i_start;
     }
 

@@ -22,96 +22,134 @@
 
 #import "VLCLibraryCollectionViewMediaItemSupplementaryDetailView.h"
 
-#import "main/VLCMain.h"
-#import "library/VLCInputItem.h"
-#import "library/VLCLibraryController.h"
-#import "library/VLCLibraryDataTypes.h"
-#import "library/VLCLibraryModel.h"
-#import "library/VLCLibraryMenuController.h"
-#import "views/VLCImageView.h"
 #import "extensions/NSString+Helpers.h"
 #import "extensions/NSFont+VLCAdditions.h"
 #import "extensions/NSColor+VLCAdditions.h"
 #import "extensions/NSView+VLCAdditions.h"
 
+#import "main/VLCMain.h"
+
+#import "library/VLCInputItem.h"
+#import "library/VLCLibraryController.h"
+#import "library/VLCLibraryDataTypes.h"
+#import "library/VLCLibraryImageCache.h"
+#import "library/VLCLibraryModel.h"
+#import "library/VLCLibraryMenuController.h"
+#import "library/VLCLibraryRepresentedItem.h"
+#import "library/VLCLibraryWindow.h"
+
+#import "views/VLCImageView.h"
+
 NSString *const VLCLibraryCollectionViewMediaItemSupplementaryDetailViewIdentifier = @"VLCLibraryCollectionViewMediaItemSupplementaryDetailViewIdentifier";
 NSCollectionViewSupplementaryElementKind const VLCLibraryCollectionViewMediaItemSupplementaryDetailViewKind = @"VLCLibraryCollectionViewMediaItemSupplementaryDetailViewIdentifier";
-
-@interface VLCLibraryCollectionViewMediaItemSupplementaryDetailView ()
-{
-    VLCLibraryController *_libraryController;
-}
-
-@end
 
 @implementation VLCLibraryCollectionViewMediaItemSupplementaryDetailView
 
 - (void)awakeFromNib
 {
-    _mediaItemTitleTextField.font = [NSFont VLCLibrarySupplementaryDetailViewTitleFont];
-    _mediaItemDetailTextField.font = [NSFont VLCLibrarySupplementaryDetailViewSubtitleFont];
-    _mediaItemDetailTextField.textColor = [NSColor VLCAccentColor];
+    _mediaItemTitleTextField.font = NSFont.VLCLibrarySubsectionHeaderFont;
+    _mediaItemPrimaryDetailButton.font = NSFont.VLCLibrarySubsectionSubheaderFont;
+    _mediaItemSecondaryDetailButton.font = NSFont.VLCLibrarySubsectionSubheaderFont;
+
+    if (@available(macOS 10.14, *)) {
+        _mediaItemPrimaryDetailButton.contentTintColor = NSColor.VLCAccentColor;
+        _mediaItemSecondaryDetailButton.contentTintColor = NSColor.secondaryLabelColor;
+    }
 
     if(@available(macOS 10.12.2, *)) {
-        _playMediaItemButton.bezelColor = [NSColor VLCAccentColor];
+        _playMediaItemButton.bezelColor = NSColor.VLCAccentColor;
     }
 }
 
-- (void)setRepresentedMediaItem:(VLCMediaLibraryMediaItem *)representedMediaItem
+- (NSString *)formattedYearAndDurationString
 {
-    _representedMediaItem = representedMediaItem;
-    [self updateRepresentation];
-}
+    if (self.representedItem == nil) {
+        return @"";
+    }
 
-- (NSString*)formattedYearAndDurationString
-{
-    if (_representedMediaItem.year > 0) {
-        return [NSString stringWithFormat:@"%u · %@", _representedMediaItem.year, _representedMediaItem.durationString];
-    } else if (_representedMediaItem.files.count > 0) {
-        VLCMediaLibraryFile *firstFile = _representedMediaItem.files.firstObject;
-        time_t fileLastModTime = firstFile.lastModificationDate;
-        
+    const VLCMediaLibraryMediaItem * const actualItem = self.representedItem.item;
+
+    if (actualItem.year > 0) {
+        return [NSString stringWithFormat:@"%u · %@", actualItem.year, actualItem.durationString];
+    } else if (actualItem.files.count > 0) {
+        VLCMediaLibraryFile * const firstFile = actualItem.files.firstObject;
+        const time_t fileLastModTime = firstFile.lastModificationDate;
+
         if (fileLastModTime > 0) {
-            NSDate *lastModDate = [NSDate dateWithTimeIntervalSince1970:fileLastModTime];
-            NSDateComponents *components = [[NSCalendar currentCalendar] components:NSCalendarUnitYear fromDate:lastModDate];
-            return [NSString stringWithFormat:@"%ld · %@", components.year, _representedMediaItem.durationString];
+            NSDate * const lastModDate = [NSDate dateWithTimeIntervalSince1970:fileLastModTime];
+            NSDateComponents * const components = [[NSCalendar currentCalendar] components:NSCalendarUnitYear fromDate:lastModDate];
+            return [NSString stringWithFormat:@"%ld · %@", components.year, actualItem.durationString];
         }
     }
-    
-    return _representedMediaItem.durationString;
+
+    return actualItem.durationString;
 }
 
 - (void)updateRepresentation
 {
-    if (_representedMediaItem == nil) {
-        NSAssert(1, @"no media item assigned for collection view item", nil);
-        return;
-    }
+    NSAssert(self.representedItem, @"no represented item assigned for collection view item", nil);
+    VLCMediaLibraryMediaItem * const actualItem = self.representedItem.item;
+    NSAssert(actualItem != nil, @"represented item is not a media item", nil);
 
-    _mediaItemTitleTextField.stringValue = _representedMediaItem.displayString;
-    _mediaItemDetailTextField.stringValue = _representedMediaItem.detailString;
+    _mediaItemTitleTextField.stringValue = actualItem.displayString;
+    _mediaItemPrimaryDetailButton.title = actualItem.primaryDetailString;
+    _mediaItemSecondaryDetailButton.title = actualItem.secondaryDetailString;
     _mediaItemYearAndDurationTextField.stringValue = [self formattedYearAndDurationString];
-    _mediaItemFileNameTextField.stringValue = _representedMediaItem.inputItem.name;
-    _mediaItemPathTextField.stringValue = _representedMediaItem.inputItem.decodedMRL;
-    _mediaItemArtworkImageView.image = _representedMediaItem.smallArtworkImage;
+    _mediaItemFileNameTextField.stringValue = actualItem.inputItem.name;
+    _mediaItemPathTextField.stringValue = actualItem.inputItem.decodedMRL;
+
+    const BOOL primaryActionableDetail = actualItem.primaryActionableDetail;
+    const BOOL secondaryActionableDetail = actualItem.secondaryActionableDetail;
+    self.mediaItemPrimaryDetailButton.enabled = primaryActionableDetail;
+    self.mediaItemSecondaryDetailButton.enabled = secondaryActionableDetail;
+    if (@available(macOS 10.14, *)) {
+        NSColor * const primaryDetailButtonColor = 
+            primaryActionableDetail ? NSColor.VLCAccentColor : NSColor.labelColor;
+        NSColor * const secondaryDetailButtonColor = 
+            secondaryActionableDetail ? NSColor.VLCAccentColor : NSColor.labelColor;
+        self.mediaItemPrimaryDetailButton.contentTintColor = primaryDetailButtonColor;
+        self.mediaItemSecondaryDetailButton.contentTintColor = secondaryDetailButtonColor;
+    }
+    self.mediaItemPrimaryDetailButton.action = @selector(primaryDetailAction:);
+    self.mediaItemSecondaryDetailButton.action = @selector(secondaryDetailAction:);
+
+    [VLCLibraryImageCache thumbnailForLibraryItem:actualItem withCompletion:^(NSImage * const thumbnail) {
+        self->_mediaItemArtworkImageView.image = thumbnail;
+    }];
 }
 
 - (IBAction)playAction:(id)sender
 {
-    if (!_libraryController) {
-        _libraryController = [[VLCMain sharedInstance] libraryController];
-    }
-
-    [_libraryController appendItemToPlaylist:_representedMediaItem playImmediately:YES];
+    [self.representedItem play];
 }
 
 - (IBAction)enqueueAction:(id)sender
 {
-    if (!_libraryController) {
-        _libraryController = [[VLCMain sharedInstance] libraryController];
+    [self.representedItem queue];
+}
+
+- (IBAction)primaryDetailAction:(id)sender
+{
+    VLCMediaLibraryMediaItem * const actualItem = self.representedItem.item;
+    if (actualItem == nil || !actualItem.primaryActionableDetail) {
+        return;
     }
 
-    [_libraryController appendItemToPlaylist:_representedMediaItem playImmediately:NO];
+    VLCLibraryWindow * const libraryWindow = VLCMain.sharedInstance.libraryWindow;
+    const id<VLCMediaLibraryItemProtocol> libraryItem = actualItem.primaryActionableDetailLibraryItem;
+    [libraryWindow presentLibraryItem:libraryItem];
+}
+
+- (IBAction)secondaryDetailAction:(id)sender
+{
+    VLCMediaLibraryMediaItem * const actualItem = self.representedItem.item;
+    if (actualItem == nil || !actualItem.secondaryActionableDetail) {
+        return;
+    }
+
+    VLCLibraryWindow * const libraryWindow = VLCMain.sharedInstance.libraryWindow;
+    const id<VLCMediaLibraryItemProtocol> libraryItem = actualItem.secondaryActionableDetailLibraryItem;
+    [libraryWindow presentLibraryItem:libraryItem];
 }
 
 @end

@@ -223,7 +223,8 @@ static int video_update_format_decoder( decoder_t *p_dec, vlc_video_context *vct
         id->downstream_id =
             id->pf_transcode_downstream_add( p_owner->p_stream,
                                              id->p_decoder->fmt_in,
-                                             transcode_encoder_format_out( id->encoder ) );
+                                             transcode_encoder_format_out( id->encoder ),
+                                             id->es_id );
     msg_Info( p_dec, "video format update succeed" );
 
 end:
@@ -282,7 +283,6 @@ int transcode_video_init( sout_stream_t *p_stream, const es_format_t *p_fmt,
              "creating video transcoding from fcc=`%4.4s' to fcc=`%4.4s'",
              (char*)&p_fmt->i_codec, (char*)&id->p_enccfg->i_codec );
 
-    vlc_picture_chain_Init( &id->fifo.pic );
     id->output_fifo = block_FifoNew();
     if( id->output_fifo == NULL )
         return VLC_ENOMEM;
@@ -394,6 +394,16 @@ static int transcode_video_filters_init( sout_stream_t *p_stream,
     return VLC_SUCCESS;
 }
 
+void transcode_video_flush( sout_stream_id_sys_t *id )
+{
+    if ( id->p_f_chain != NULL )
+        filter_chain_VideoFlush( id->p_f_chain );
+    if ( id->p_uf_chain != NULL )
+        filter_chain_VideoFlush( id->p_uf_chain );
+    if ( id->p_final_conv_static != NULL )
+        filter_chain_VideoFlush( id->p_final_conv_static );
+}
+
 void transcode_video_clean( sout_stream_id_sys_t *id )
 {
     /* Close encoder, but only if one was opened. */
@@ -455,10 +465,11 @@ static picture_t * RenderSubpictures( sout_stream_id_sys_t *id, picture_t *p_pic
         fmt.i_x_offset       = 0;
         fmt.i_y_offset       = 0;
     }
+    fmt.i_sar_den = fmt.i_sar_num = 1;
 
-    subpicture_t *p_subpic = spu_Render( id->p_spu, NULL, &fmt,
-                                         &outfmt, vlc_tick_now(), p_pic->date,
-                                         false, false );
+    vlc_render_subpicture *p_subpic = spu_Render( id->p_spu, NULL, &fmt,
+                                         &outfmt, false, NULL, vlc_tick_now(), p_pic->date,
+                                         false );
 
     /* Overlay subpicture */
     if( p_subpic )
@@ -479,7 +490,7 @@ static picture_t * RenderSubpictures( sout_stream_id_sys_t *id, picture_t *p_pic
             id->p_spu_blender = filter_NewBlend( VLC_OBJECT( id->p_spu ), &fmt );
         if( likely( id->p_spu_blender ) )
             picture_BlendSubpicture( p_pic, id->p_spu_blender, p_subpic );
-        subpicture_Delete( p_subpic );
+        vlc_render_subpicture_Delete( p_subpic );
     }
     video_format_Clean( &fmt );
     video_format_Clean( &outfmt );
@@ -566,11 +577,11 @@ int transcode_video_process( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
     vlc_fifo_Lock( id->output_fifo );
     if( unlikely( !id->b_error && in == NULL ) && transcode_encoder_opened( id->encoder ) )
     {
-        msg_Dbg( p_stream, "Flushing thread and waiting that");
+        msg_Dbg( p_stream, "Draining thread and waiting for that");
         if( transcode_encoder_drain( id->encoder, out ) == VLC_SUCCESS )
-            msg_Dbg( p_stream, "Flushing done");
+            msg_Dbg( p_stream, "Draining done");
         else
-            msg_Warn( p_stream, "Flushing failed");
+            msg_Warn( p_stream, "Draining failed");
     }
     bool has_error = id->b_error;
     if( !has_error )

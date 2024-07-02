@@ -29,6 +29,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_codec.h>
 #include <vlc_meta.h>
@@ -534,7 +535,7 @@ static void ParseDaalaComments( decoder_t *p_dec )
             /* TODO:  Since psz_value can contain NULLs see if there is an
              * instance where we need to preserve the full length of this string */
             if( p_dec->p_description )
-                vlc_meta_AddExtra( p_dec->p_description, psz_name, psz_value );
+                vlc_meta_SetExtra( p_dec->p_description, psz_name, psz_value );
         }
         free( psz_comment );
     }
@@ -601,13 +602,12 @@ static int OpenEncoder( vlc_object_t *p_this )
         return VLC_ENOMEM;
     p_enc->p_sys = p_sys;
 
-    p_enc->fmt_in.i_codec = VLC_CODEC_I420;
     p_enc->fmt_out.i_codec = VLC_CODEC_DAALA;
 
     config_ChainParse( p_enc, ENC_CFG_PREFIX, ppsz_enc_options, p_enc->p_cfg );
 
     char *psz_tmp = var_GetString( p_enc, ENC_CFG_PREFIX "chroma-fmt" );
-    uint32_t i_codec;
+    vlc_fourcc_t i_codec;
     if( !psz_tmp ) {
         free(p_sys);
         return VLC_ENOMEM;

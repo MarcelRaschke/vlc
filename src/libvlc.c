@@ -36,11 +36,11 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_preparser.h>
 #include "../lib/libvlc_internal.h"
 
 #include "modules/modules.h"
 #include "config/configuration.h"
-#include "preparser/preparser.h"
 #include "media_source/media_source.h"
 
 #include <stdio.h>                                              /* sprintf() */
@@ -63,6 +63,7 @@
 #include <vlc_modules.h>
 #include <vlc_media_library.h>
 #include <vlc_thumbnailer.h>
+#include <vlc_tracer.h>
 
 #include "libvlc.h"
 
@@ -180,7 +181,10 @@ int libvlc_InternalInit( libvlc_int_t *p_libvlc, int i_argc,
     }
 
     vlc_LogInit(p_libvlc);
-    vlc_tracer_Init(p_libvlc);
+
+    char *tracer_name = var_InheritString(p_libvlc, "tracer");
+    priv->tracer = vlc_tracer_Create(VLC_OBJECT(p_libvlc), tracer_name);
+    free(tracer_name);
 
     /*
      * Support for gettext
@@ -230,7 +234,7 @@ int libvlc_InternalInit( libvlc_int_t *p_libvlc, int i_argc,
     /*
      * Meta data handling
      */
-    priv->parser = input_preparser_New(VLC_OBJECT(p_libvlc));
+    priv->parser = vlc_preparser_New(VLC_OBJECT(p_libvlc));
     if( !priv->parser )
         goto error;
 
@@ -343,7 +347,7 @@ void libvlc_InternalCleanup( libvlc_int_t *p_libvlc )
     libvlc_priv_t *priv = libvlc_priv (p_libvlc);
 
     if (priv->parser != NULL)
-        input_preparser_Deactivate(priv->parser);
+        vlc_preparser_Deactivate(priv->parser);
 
     /* Ask the interfaces to stop and destroy them */
     msg_Dbg( p_libvlc, "removing all interfaces" );
@@ -351,9 +355,6 @@ void libvlc_InternalCleanup( libvlc_int_t *p_libvlc )
 
     if ( priv->p_thumbnailer )
         vlc_thumbnailer_Release( priv->p_thumbnailer );
-
-    libvlc_InternalDialogClean( p_libvlc );
-    libvlc_InternalKeystoreClean( p_libvlc );
 
 #ifdef ENABLE_VLM
     /* Destroy VLM if created in libvlc_InternalInit */
@@ -376,7 +377,7 @@ void libvlc_InternalCleanup( libvlc_int_t *p_libvlc )
 #endif
 
     if (priv->parser != NULL)
-        input_preparser_Delete(priv->parser);
+        vlc_preparser_Delete(priv->parser);
 
     if (priv->main_playlist)
         vlc_playlist_Delete(priv->main_playlist);
@@ -387,6 +388,8 @@ void libvlc_InternalCleanup( libvlc_int_t *p_libvlc )
     if( priv->media_source_provider )
         vlc_media_source_provider_Delete( priv->media_source_provider );
 
+    libvlc_InternalDialogClean( p_libvlc );
+    libvlc_InternalKeystoreClean( p_libvlc );
     libvlc_InternalActionsClean( p_libvlc );
 
     /* Save the configuration */
@@ -394,7 +397,8 @@ void libvlc_InternalCleanup( libvlc_int_t *p_libvlc )
         config_AutoSaveConfigFile( p_libvlc );
 
     vlc_LogDestroy(p_libvlc->obj.logger);
-    vlc_tracer_Destroy(p_libvlc);
+    if (priv->tracer != NULL)
+        vlc_tracer_Destroy(priv->tracer);
     /* Free module bank. It is refcounted, so we call this each time  */
     module_EndBank (true);
 #if defined(_WIN32) || defined(__OS2__)
@@ -452,7 +456,7 @@ static void GetFilenames( libvlc_int_t *p_vlc, unsigned n,
 
 int vlc_MetadataRequest(libvlc_int_t *libvlc, input_item_t *item,
                         input_item_meta_request_option_t i_options,
-                        const input_preparser_callbacks_t *cbs,
+                        const struct vlc_metadata_cbs *cbs,
                         void *cbs_userdata,
                         int timeout, void *id)
 {
@@ -461,7 +465,7 @@ int vlc_MetadataRequest(libvlc_int_t *libvlc, input_item_t *item,
     if (unlikely(priv->parser == NULL))
         return VLC_ENOMEM;
 
-    return input_preparser_Push( priv->parser, item, i_options, cbs,
+    return vlc_preparser_Push( priv->parser, item, i_options, cbs,
                                  cbs_userdata, timeout, id );
 }
 
@@ -472,12 +476,13 @@ int vlc_MetadataRequest(libvlc_int_t *libvlc, input_item_t *item,
  */
 int libvlc_MetadataRequest(libvlc_int_t *libvlc, input_item_t *item,
                            input_item_meta_request_option_t i_options,
-                           const input_preparser_callbacks_t *cbs,
+                           const struct vlc_metadata_cbs *cbs,
                            void *cbs_userdata,
                            int timeout, void *id)
 {
     libvlc_priv_t *priv = libvlc_priv(libvlc);
-    assert(i_options & META_REQUEST_OPTION_SCOPE_ANY);
+    assert(i_options & META_REQUEST_OPTION_SCOPE_ANY ||
+           i_options & META_REQUEST_OPTION_FETCH_ANY);
 
     if (unlikely(priv->parser == NULL))
         return VLC_ENOMEM;
@@ -488,26 +493,6 @@ int libvlc_MetadataRequest(libvlc_int_t *libvlc, input_item_t *item,
     vlc_mutex_unlock( &item->lock );
 
     return vlc_MetadataRequest(libvlc, item, i_options, cbs, cbs_userdata, timeout, id);
-}
-
-/**
- * Requests retrieving/downloading art for an input item.
- * The retrieval is performed asynchronously.
- */
-int libvlc_ArtRequest(libvlc_int_t *libvlc, input_item_t *item,
-                      input_item_meta_request_option_t i_options,
-                      const input_fetcher_callbacks_t *cbs,
-                      void *cbs_userdata)
-{
-    libvlc_priv_t *priv = libvlc_priv(libvlc);
-    assert(i_options & META_REQUEST_OPTION_FETCH_ANY);
-
-    if (unlikely(priv->parser == NULL))
-        return VLC_ENOMEM;
-
-    input_preparser_fetcher_Push(priv->parser, item, i_options,
-                                 cbs, cbs_userdata);
-    return VLC_SUCCESS;
 }
 
 /**
@@ -523,5 +508,5 @@ void libvlc_MetadataCancel(libvlc_int_t *libvlc, void *id)
     if (unlikely(priv->parser == NULL))
         return;
 
-    input_preparser_Cancel(priv->parser, id);
+    vlc_preparser_Cancel(priv->parser, id);
 }

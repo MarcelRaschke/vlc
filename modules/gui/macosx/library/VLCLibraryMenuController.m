@@ -27,10 +27,11 @@
 
 #import "library/VLCInputItem.h"
 #import "library/VLCLibraryController.h"
-#import "library/VLCLibraryDataTypes.h"
-#import "library/VLCLibraryInformationPanel.h"
+#import "library/VLCLibraryRepresentedItem.h"
 
 #import "main/VLCMain.h"
+
+#import "panels/VLCInformationWindowController.h"
 
 #import "playlist/VLCPlaylistController.h"
 
@@ -39,7 +40,7 @@
 
 @interface VLCLibraryMenuController ()
 {
-    VLCLibraryInformationPanel *_informationPanel;
+    VLCInformationWindowController *_informationWindowController;
 
     NSHashTable<NSMenuItem*> *_mediaItemRequiringMenuItems;
     NSHashTable<NSMenuItem*> *_inputItemRequiringMenuItems;
@@ -80,7 +81,7 @@
 
     _libraryMenu = [[NSMenu alloc] initWithTitle:@""];
     [_libraryMenu addMenuItemsFromArray:@[playItem, appendItem, revealItem, deleteItem, informationItem, [NSMenuItem separatorItem], addItem]];
-    
+
     _mediaItemRequiringMenuItems = [NSHashTable weakObjectsHashTable];
     [_mediaItemRequiringMenuItems addObject:playItem];
     [_mediaItemRequiringMenuItems addObject:appendItem];
@@ -107,16 +108,23 @@
 
 - (void)updateMenuItems
 {
-    if (_representedItem != nil) {
+    if (self.representedItems != nil && self.representedItems.count > 0) {
         [self menuItems:_inputItemRequiringMenuItems setHidden:YES];
         [self menuItems:_localInputItemRequiringMenuItems setHidden:YES];
         [self menuItems:_mediaItemRequiringMenuItems setHidden:NO];
-    } else if (_representedInputItem != nil) {
+    } else if (_representedInputItems != nil && self.representedInputItems.count > 0) {
         [self menuItems:_mediaItemRequiringMenuItems setHidden:YES];
         [self menuItems:_inputItemRequiringMenuItems setHidden:NO];
-        
-        [self menuItems:_localInputItemRequiringMenuItems setHidden:_representedInputItem.isStream];
-    }
+
+        BOOL anyStream = NO;
+        for (VLCInputItem * const inputItem in self.representedInputItems) {
+            if (inputItem.isStream) {
+                anyStream = YES;
+                break;
+            }
+        }
+        [self menuItems:_localInputItemRequiringMenuItems setHidden:anyStream];
+   }
 }
 
 - (void)popupMenuWithEvent:(NSEvent *)theEvent forView:(NSView *)theView
@@ -125,54 +133,51 @@
 }
 
 #pragma mark - actions
-- (void)addToPlaylist:(BOOL)playImmediately
-{
-    if (_representedItem != nil) {
-        [self addMediaLibraryItemToPlaylist:_representedItem
-                            playImmediately:playImmediately];
-    } else if (_representedInputItem != nil) {
-        [self addInputItemToPlaylist:_representedInputItem
-                     playImmediately:playImmediately];
-    }
-}
-
-- (void)addMediaLibraryItemToPlaylist:(id<VLCMediaLibraryItemProtocol>)mediaLibraryItem
-                      playImmediately:(BOOL)playImmediately
-{
-    NSParameterAssert(mediaLibraryItem);
-
-    // We want to add all the tracks to the playlist but only play the first one immediately,
-    // otherwise we will skip straight to the last track of the last album from the artist
-    __block BOOL beginPlayImmediately = playImmediately;
-
-    [mediaLibraryItem iterateMediaItemsWithBlock:^(VLCMediaLibraryMediaItem* childMediaItem) {
-        [VLCMain.sharedInstance.libraryController appendItemToPlaylist:childMediaItem
-                                                       playImmediately:beginPlayImmediately];
-
-        if(beginPlayImmediately) {
-            beginPlayImmediately = NO;
-        }
-    }];
-}
 
 - (void)addInputItemToPlaylist:(VLCInputItem*)inputItem
                playImmediately:(BOOL)playImmediately
 {
     NSParameterAssert(inputItem);
-    [VLCMain.sharedInstance.playlistController addInputItem:_representedInputItem.vlcInputItem
+    [VLCMain.sharedInstance.playlistController addInputItem:_representedInputItems.firstObject.vlcInputItem
                                                  atPosition:-1
                                               startPlayback:playImmediately];
-
 }
 
 - (void)play:(id)sender
 {
-    [self addToPlaylist:YES];
+    if (self.representedItems != nil && self.representedItems.count > 0) {
+        [self.representedItems.firstObject play];
+
+        if (self.representedItems.count > 1) {
+            for (NSUInteger i = 1; i < self.representedItems.count; i++) {
+                [self.representedItems[i] queue];
+            }
+        }
+
+    } else if (self.representedInputItems != nil && self.representedInputItems.count > 0) {
+        [self addInputItemToPlaylist:self.representedInputItems.firstObject
+                     playImmediately:YES];
+
+        if (self.representedInputItems.count > 1) {
+            for (NSUInteger i = 1; i < self.representedInputItems.count; i++) {
+                [self addInputItemToPlaylist:self.representedInputItems[i]
+                             playImmediately:NO];
+            }
+        }
+    }
 }
 
 - (void)appendToPlaylist:(id)sender
 {
-    [self addToPlaylist:NO];
+    if (self.representedItems != nil && self.representedItems.count > 0) {
+        for (VLCLibraryRepresentedItem * const item in self.representedItems) {
+            [item queue];
+        }
+    } else if (self.representedInputItems != nil && self.representedInputItems.count > 0) {
+        for (VLCInputItem * const inputItem in self.representedInputItems) {
+            [self addInputItemToPlaylist:inputItem playImmediately:NO];
+        }
+    }
 }
 
 - (void)addMedia:(id)sender
@@ -185,7 +190,7 @@
     NSModalResponse modalResponse = [openPanel runModal];
 
     if (modalResponse == NSModalResponseOK) {
-        VLCLibraryController *libraryController = [[VLCMain sharedInstance] libraryController];
+        VLCLibraryController *libraryController = VLCMain.sharedInstance.libraryController;
         for (NSURL *url in [openPanel URLs]) {
             [libraryController addFolderWithFileURL:url];
         }
@@ -194,44 +199,57 @@
 
 - (void)revealInFinder:(id)sender
 {
-    if (_representedItem != nil) {
-        [_representedItem revealInFinder];
-    } else if (_representedInputItem != nil) {
-        [_representedInputItem revealInFinder];
+    if (self.representedItems != nil && self.representedItems.count > 0) {
+        [self.representedItems.firstObject revealInFinder];
+    } else if (self.representedInputItems != nil && self.representedInputItems.count > 0) {
+        [self.representedInputItems.firstObject revealInFinder];
     }
 }
 
 - (void)moveToTrash:(id)sender
 {
-    if (_representedItem != nil) {
-        [_representedItem moveToTrash];
-    } else if (_representedInputItem != nil) {
-        [_representedInputItem moveToTrash];
+    if (self.representedItems != nil && self.representedItems.count > 0) {
+        for (VLCLibraryRepresentedItem * const item in self.representedItems) {
+            [item moveToTrash];
+        }
+    } else if (self.representedInputItems != nil && self.representedInputItems.count > 0) {
+        for (VLCInputItem * const inputItem in self.representedInputItems) {
+            [inputItem moveToTrash];
+        }
     }
 }
 
 - (void)showInformation:(id)sender
 {
-    if (!_informationPanel) {
-        _informationPanel = [[VLCLibraryInformationPanel alloc] initWithWindowNibName:@"VLCLibraryInformationPanel"];
+    if (!_informationWindowController) {
+        _informationWindowController = [[VLCInformationWindowController alloc] init];
     }
 
-    [_informationPanel setRepresentedItem:_representedItem];
-    [_informationPanel showWindow:self];
-    
+    const id<VLCMediaLibraryItemProtocol> actualItem = self.representedItems.firstObject.item;
+    if (actualItem != nil) {
+        if ([actualItem isKindOfClass:VLCAbstractMediaLibraryAudioGroup.class]) {
+            [_informationWindowController setRepresentedMediaLibraryAudioGroup:(VLCAbstractMediaLibraryAudioGroup *)actualItem];
+        } else {
+            [_informationWindowController setRepresentedInputItem:actualItem.firstMediaItem.inputItem];
+        }
+    } else if (self.representedInputItems != nil && self.representedInputItems.count > 0) {
+        _informationWindowController.representedInputItem = self.representedInputItems.firstObject;
+    }
+
+    [_informationWindowController toggleWindow:sender];
 }
 
-- (void)setRepresentedItem:(id<VLCMediaLibraryItemProtocol>)item
+- (void)setRepresentedItems:(NSArray<VLCLibraryRepresentedItem *> *)items
 {
-    _representedItem = item;
-    _representedInputItem = nil;
+    _representedItems = items;
+    _representedInputItems = nil;
     [self updateMenuItems];
 }
 
-- (void)setRepresentedInputItem:(VLCInputItem *)representedInputItem
+- (void)setRepresentedInputItem:(NSArray<VLCInputItem *> *)representedInputItems
 {
-    _representedInputItem = representedInputItem;
-    _representedItem = nil;
+    _representedInputItems = representedInputItems;
+    _representedItems = nil;
     [self updateMenuItems];
 }
 

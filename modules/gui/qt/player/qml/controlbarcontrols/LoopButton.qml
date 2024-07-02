@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 
@@ -23,12 +23,12 @@ import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 
 
-Widgets.IconControlButton {
+Widgets.IconToolButton {
     id: repeatBtn
-    checked: mainPlaylistController.repeatMode !== PlaylistControllerModel.PLAYBACK_REPEAT_NONE
-    iconText: (mainPlaylistController.repeatMode === PlaylistControllerModel.PLAYBACK_REPEAT_CURRENT)
+    checked: MainPlaylistController.repeatMode !== PlaylistController.PLAYBACK_REPEAT_NONE
+    text: (MainPlaylistController.repeatMode === PlaylistController.PLAYBACK_REPEAT_CURRENT)
           ? VLCIcons.repeat_one
           : VLCIcons.repeat_all
-    onClicked: mainPlaylistController.toggleRepeatMode()
-    text: I18n.qtr("Repeat")
+    onClicked: MainPlaylistController.toggleRepeatMode()
+    description: qsTr("Repeat")
 }

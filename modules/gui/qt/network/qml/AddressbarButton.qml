@@ -16,8 +16,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as T
+import QtQuick
+import QtQuick.Templates as T
 
 import org.videolan.vlc 0.1
 import "qrc:///style/"
@@ -37,10 +37,11 @@ T.AbstractButton {
 
     // Settings
 
-    implicitWidth: Math.max(background.implicitWidth,
-            (contentItem ? contentItem.implicitWidth : 0) + leftPadding + rightPadding)
-    implicitHeight: Math.max(background.implicitHeight,
-            (contentItem ? contentItem.implicitHeight : 0) + topPadding + bottomPadding)
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            implicitContentWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             implicitContentHeight + topPadding + bottomPadding)
+
     baselineOffset: contentItem ? contentItem.y + contentItem.baselineOffset : 0
 
 
@@ -64,12 +65,9 @@ T.AbstractButton {
 
 
     background: Widgets.AnimatedBackground {
-        active: visualFocus
-
-        animate: theme.initialized
-        backgroundColor: button.backgroundColor
-        foregroundColor: button.foregroundColor
-        activeBorderColor: theme.visualFocus
+        enabled: theme.initialized
+        color: button.backgroundColor
+        border.color: visualFocus ? theme.visualFocus : "transparent"
     }
 
     contentItem: contentLoader.item
@@ -94,6 +92,13 @@ T.AbstractButton {
             color: button.foregroundColor
 
             font.pixelSize: button.font.pixelSize
+
+            Behavior on color {
+                enabled: theme.initialized
+                ColorAnimation {
+                    duration: VLCStyle.duration_long
+                }
+            }
         }
     }
 

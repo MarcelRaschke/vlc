@@ -1,8 +1,9 @@
+#include "../../maininterface/mainctx.hpp"
+
 #include <QQuickWindow>
 #include <QSGImageNode>
 
 #include "csdthemeimage.hpp"
-#include <maininterface/mainctx.hpp>
 
 
 CSDThemeImage::CSDThemeImage(QQuickItem *parent)
@@ -29,7 +30,7 @@ void CSDThemeImage::updateContent()
 
 QSGNode* CSDThemeImage::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 {
-    QSGImageNode *imageNode = nullptr;;
+    QSGImageNode *imageNode = nullptr;
     auto w = window();
     if (!m_theme || m_bannerHeight <= 0)
     {

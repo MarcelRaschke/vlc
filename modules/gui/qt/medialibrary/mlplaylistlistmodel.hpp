@@ -30,13 +30,6 @@ class MLPlaylistListModel : public MLBaseModel
 {
     Q_OBJECT
 
-    Q_PROPERTY(QSize coverSize READ coverSize WRITE setCoverSize NOTIFY coverSizeChanged FINAL)
-
-    Q_PROPERTY(QString coverDefault READ coverDefault WRITE setCoverDefault
-               NOTIFY coverDefaultChanged FINAL)
-
-    Q_PROPERTY(QString coverPrefix READ coverPrefix WRITE setCoverPrefix NOTIFY coverPrefixChanged FINAL)
-
 public:
     enum Roles
     {
@@ -47,17 +40,41 @@ public:
         PLAYLIST_COUNT
     };
 
+    enum PlaylistType {
+        PLAYLIST_TYPE_ALL,
+        PLAYLIST_TYPE_AUDIO,
+        PLAYLIST_TYPE_VIDEO,
+    };
+    Q_ENUM(PlaylistType)
+
+public:
+
+    Q_PROPERTY(QSize coverSize READ coverSize WRITE setCoverSize NOTIFY coverSizeChanged FINAL)
+
+    Q_PROPERTY(QString coverDefault READ coverDefault WRITE setCoverDefault
+                   NOTIFY coverDefaultChanged FINAL)
+
+    Q_PROPERTY(QString coverPrefix READ coverPrefix WRITE setCoverPrefix NOTIFY coverPrefixChanged FINAL)
+
+    Q_PROPERTY(PlaylistType playlistType READ playlistType WRITE setPlaylistType NOTIFY playlistTypeChanged FINAL)
+
+    Q_PROPERTY(bool transactionPending READ transactionPending NOTIFY transactionPendingChanged FINAL)
+
 public:
     explicit MLPlaylistListModel(QObject * parent = nullptr);
 
 public: // Interface
     Q_INVOKABLE void create(const QString & name, const QVariantList& initialItems);
 
-    Q_INVOKABLE bool append(const MLItemId & playlistId, const QVariantList & ids);
+    Q_INVOKABLE void append(const MLItemId & playlistId, const QVariantList & ids);
 
     Q_INVOKABLE bool deletePlaylists(const QVariantList & ids);
 
-    MLItemId getItemId(int index) const;
+    Q_INVOKABLE bool showDialogRename(const QModelIndex & index);
+
+    Q_INVOKABLE MLItemId getItemId(int index) const;
+
+    bool transactionPending() const { return m_transactionPending; };
 
 public: // QAbstractItemModel implementation
     QHash<int, QByteArray> roleNames() const override;
@@ -71,12 +88,14 @@ protected: // MLBaseModel implementation
 
     vlc_ml_sorting_criteria_t roleToCriteria(int role) const override;
 
-    std::unique_ptr<MLBaseModel::BaseLoader> createLoader() const override;
+    std::unique_ptr<MLListCacheLoader> createMLLoader() const override;
 
 private: // Functions
     QString getCover(MLPlaylist * playlist) const;
 
     void endTransaction();
+
+    void setTransactionPending(bool);
 
 private: // MLBaseModel implementation
     void onVlcMlEvent(const MLEvent & event) override;
@@ -85,6 +104,8 @@ signals:
     void coverSizeChanged   ();
     void coverDefaultChanged();
     void coverPrefixChanged ();
+    void playlistTypeChanged();
+    void transactionPendingChanged(bool);
 
 public: // Properties
     QSize coverSize() const;
@@ -96,24 +117,30 @@ public: // Properties
     QString coverPrefix() const;
     void    setCoverPrefix(const QString & prefix);
 
+    PlaylistType playlistType() const;
+    void setPlaylistType(PlaylistType type);
+
 private: // Variables
     QSize   m_coverSize;
     QString m_coverDefault;
     QString m_coverPrefix;
+    PlaylistType m_playlistType = PLAYLIST_TYPE_ALL;
 
     bool m_transactionPending = false;
     bool m_resetAfterTransaction = false;
 
 private:
-    struct Loader : public MLBaseModel::BaseLoader
+    struct Loader : public MLListCacheLoader::MLOp
     {
-        Loader(const MLPlaylistListModel & model);
+        Loader(const MLPlaylistListModel & model, PlaylistType playlistType);
 
-        size_t count(vlc_medialibrary_t* ml) const override;
+        size_t count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const override;
 
-        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, size_t index, size_t count) const override;
+        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const override;
 
         std::unique_ptr<MLItem> loadItemById(vlc_medialibrary_t* ml, MLItemId itemId) const override;
+
+        PlaylistType m_playlistType;
     };
 };
 

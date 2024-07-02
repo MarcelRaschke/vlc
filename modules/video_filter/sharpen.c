@@ -39,6 +39,7 @@
 #include <assert.h>
 #include <stdatomic.h>
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
@@ -98,10 +99,11 @@ static int Create( filter_t *p_filter )
 {
     const vlc_fourcc_t fourcc = p_filter->fmt_in.video.i_chroma;
     const vlc_chroma_description_t *p_chroma = vlc_fourcc_GetChromaDescription( fourcc );
-    if( !p_chroma || p_chroma->plane_count != 3 ||
+    assert( p_chroma != NULL );
+    if( p_chroma->plane_count != 3 ||
         (p_chroma->pixel_size != 1 &&
-         p_filter->fmt_in.video.i_chroma != VLC_CODEC_I420_10L &&
-         p_filter->fmt_in.video.i_chroma != VLC_CODEC_I420_10B)) {
+         fourcc != VLC_CODEC_I420_10L &&
+         fourcc != VLC_CODEC_I420_10B)) {
         msg_Dbg( p_filter, "Unsupported chroma (%4.4s)", (char*)&fourcc );
         return VLC_EGENERIC;
     }

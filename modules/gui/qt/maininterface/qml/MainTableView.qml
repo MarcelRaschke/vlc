@@ -16,7 +16,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
+import QtQuick
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
@@ -26,5 +26,5 @@ Widgets.KeyNavigableTableView {
 
     displayMarginEnd: g_mainDisplay.displayMargin
 
-    enableEndFade: (g_mainDisplay.hasMiniPlayer === false)
+    fadingEdge.enableEndFade: (g_mainDisplay.hasMiniPlayer === false)
 }

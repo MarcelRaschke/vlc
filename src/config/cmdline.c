@@ -158,7 +158,7 @@ void config_CmdLineEarlyScan( libvlc_int_t *p_this, int argc, const char *argv[]
  *
  * @param p_this object to write command line options as variables to
  * @param i_argc number of command line arguments
- * @param ppsz_args command line arguments [IN/OUT]
+ * @param ppsz_argv command line arguments [IN/OUT]
  * @param pindex index of the first non-option argument [OUT]
  * @return 0 on success, -1 on error.
  */
@@ -336,6 +336,8 @@ int config_LoadCmdLine( libvlc_int_t *p_this, int i_argc,
                         var_Create( p_this, psz_name, VLC_VAR_BOOL );
                         var_SetBool( p_this, psz_name, !flag );
                         break;
+                    default:
+                        vlc_assert_unreachable();
                 }
                 continue;
             }
@@ -372,6 +374,8 @@ int config_LoadCmdLine( libvlc_int_t *p_this, int i_argc,
                     var_Create( p_this, name, VLC_VAR_BOOL );
                     var_SetBool( p_this, name, true );
                     break;
+                default:
+                    vlc_assert_unreachable();
             }
 
             continue;
@@ -406,7 +410,7 @@ int config_LoadCmdLine( libvlc_int_t *p_this, int i_argc,
             /* suggestion matching */
             if( !state.opt )
             {
-                float jw_filter = 0.8, best_metric = jw_filter, metric;
+                float jw_filter = 0.8f, best_metric = jw_filter, metric;
                 const char *best = NULL;
                 const char *jw_a = ppsz_argv[state.ind-1] + 2;
                 for (size_t i = 0; i < (size_t)i_opts; i++) {

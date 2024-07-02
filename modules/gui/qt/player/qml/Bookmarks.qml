@@ -15,8 +15,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
+import QtQuick
+import QtQuick.Controls
 
 import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
@@ -97,10 +97,12 @@ Item {
             ml: MediaLib
         }
 
-        Widgets.IconToolButton {
+        Widgets.RoundButton {
             id: bookmarkButton
 
             size: control.barHeight
+
+            backgroundColor: bookmarkButton.colorContext.fg.primary
 
             x: control.width * model.position - width/2
             focusPolicy: Qt.NoFocus
@@ -113,11 +115,6 @@ Item {
                     control.bookmarkPosition = x + width/2
                 }
                 control.bookmarkHovered = bookmarkButton.hovered
-            }
-
-            background: Rectangle {
-                radius: parent.width * 0.5
-                color: bookmarkButton.colorContext.fg.primary
             }
         }
     }

@@ -16,10 +16,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
+import QtQuick.Layouts
 
 import org.videolan.vlc 0.1
 
@@ -42,6 +42,8 @@ T.Button {
     property color color: theme.fg.primary
     property color colorFocus: theme.visualFocus
 
+    //set to true when user animates the background manually
+    property bool extBackgroundAnimation: false
 
     // Aliases
     property alias iconRotation: icon.rotation
@@ -56,15 +58,18 @@ T.Button {
 
     padding: 0
 
-    text: model.displayText
-
     font.pixelSize: VLCStyle.fontSize_normal
 
     // Keys
 
     Keys.priority: Keys.AfterItem
 
-    Keys.onPressed: Navigation.defaultKeyAction(event)
+    Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
+
+
+    // Accessible
+
+    Accessible.onPressAction: control.clicked()
 
     // Childs
 
@@ -85,12 +90,10 @@ T.Button {
         height: control.height
         width: control.width
 
-        active: control.visualFocus
-        animate: theme.initialized
+        enabled: theme.initialized && !control.extBackgroundAnimation
 
-        backgroundColor: theme.bg.primary
-        foregroundColor: control.color
-        activeBorderColor: control.colorFocus
+        color: theme.bg.primary
+        border.color: control.visualFocus ? control.colorFocus : "transparent"
     }
 
     contentItem: Item {
@@ -145,6 +148,9 @@ T.Button {
 
             Widgets.ListLabel {
                 text: control.text
+
+                //button text is already exposed
+                Accessible.ignored: true
 
                 color: theme.fg.primary
             }

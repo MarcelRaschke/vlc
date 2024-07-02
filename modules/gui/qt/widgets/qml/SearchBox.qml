@@ -15,9 +15,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 
 import org.videolan.vlc 0.1
 
@@ -30,10 +30,19 @@ FocusScope {
     implicitWidth: content.implicitWidth
     implicitHeight: content.implicitHeight
 
+    property real maxSearchFieldWidth: Number.MAX_VALUE
     property alias buttonWidth: iconButton.implicitWidth
     property alias searchPattern: textField.text
 
     property bool _widthOverridden: false
+
+    // public functions
+
+    function expandAndFocus() {
+        expandedState.state = "expanded"
+        textField.forceActiveFocus(Qt.ShortcutFocusReason)
+    }
+
     onWidthChanged: {
         // Proper way of this would be checking if width is bound to implicitWidth
         if (width === implicitWidth)
@@ -42,34 +51,51 @@ FocusScope {
             _widthOverridden = true
     }
 
-    states: State {
-        name: "expanded"
+    StateGroup {
+        id: expandedState
 
-        PropertyChanges {
-            target: textField
+        state: ""
 
-            focus: true
-            // Take care if SearchBox was set a specific width:
-            width: (root._widthOverridden ? (content.width - iconButton.width) : textField.implicitWidth)
-        }
+        states: [
+            State {
+                name: "expanded"
 
-        PropertyChanges {
-            target: iconButton
+                PropertyChanges {
+                    target: textField
+                    // Take care if SearchBox was set a specific width:
+                    width: Math.min(root.maxSearchFieldWidth,
+                                    (root._widthOverridden ? (content.width - iconButton.width) : textField.implicitWidth))
+                }
 
-            highlighted: true
-        }
-    }
+                PropertyChanges {
+                    target: iconButton
+                    checked: true
+                }
+            },
+            State {
+                name: ""
 
-    transitions: Transition {
-        from: ""; to: "expanded"
-        reversible: true
+                PropertyChanges {
+                    target: textField
+                    text: ""
+                }
 
-        SequentialAnimation {
+                PropertyChanges {
+                    target: iconButton
+                    focus: true
+                    checked: false
+                }
+            }
+        ]
+
+        transitions: Transition {
+            from: ""; to: "expanded"
+            reversible: true
+
             NumberAnimation { property: "width"; easing.type: Easing.InOutSine; duration: VLCStyle.duration_long; }
-            PropertyAction { property: "highlighted" }
-            PropertyAction { property: "focus" }
         }
     }
+
     readonly property ColorContext colorContext: ColorContext {
         id: theme
     }
@@ -86,19 +112,21 @@ FocusScope {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
 
-            size: VLCStyle.icon_banner
+            font.pixelSize: VLCStyle.icon_banner
 
-            iconText: VLCIcons.search
-            text: I18n.qtr("Filter")
+            text: VLCIcons.search
+            description: qsTr("Filter")
 
-            focus: root.state === ""
+            focus: true
 
             Navigation.parentItem: root
             Navigation.leftItem: textField
 
             onClicked: {
-                textField.clear()
-                root.state = (root.state === "") ? "expanded" : ""
+                if (expandedState.state == "")
+                    expandAndFocus()
+                else
+                    expandedState.state = ""
             }
         }
 
@@ -121,11 +149,16 @@ FocusScope {
 
             selectByMouse: true
 
-            placeholderText: I18n.qtr("filter")
+            placeholderText: qsTr("filter")
 
             Navigation.parentItem: root
             Navigation.rightItem: clearButton.visible ? clearButton : iconButton
-            Navigation.cancelAction: function() { root.state = "" }
+            Navigation.cancelAction: function() {
+                expandedState.state = ""
+                iconButton.focusReason = Qt.ShortcutFocusReason
+            }
+
+            Accessible.searchEdit: true
 
             //ideally we should use Keys.onShortcutOverride but it doesn't
             //work with TextField before 5.13 see QTBUG-68711
@@ -138,7 +171,7 @@ FocusScope {
 
             Keys.priority: Keys.AfterItem
 
-            Keys.onPressed: {
+            Keys.onPressed: (event) => {
                 _keyPressed = true
 
                 //we don't want Navigation.cancelAction to match Backspace
@@ -148,7 +181,7 @@ FocusScope {
                 Navigation.defaultKeyAction(event)
             }
 
-            Keys.onReleased: {
+            Keys.onReleased: (event) => {
                 if (_keyPressed === false)
                     return
 
@@ -168,8 +201,10 @@ FocusScope {
                 anchors.right: parent.right
                 anchors.rightMargin: VLCStyle.margin_xxsmall
 
-                size: VLCStyle.icon_banner
-                iconText: VLCIcons.close
+                font.pixelSize: VLCStyle.icon_banner
+                text: VLCIcons.close
+
+                description: qsTr("Clear")
 
                 visible: (textField.text.length > 0)
 

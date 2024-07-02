@@ -90,6 +90,11 @@ vlc_module_begin ()
     set_callbacks(InitVideoDec, EndVideoDec)
 
     add_submodule()
+    add_shortcut("ffmpeghw")
+    set_capability("video decoder", 10001)
+    set_callbacks(InitVideoHwDec, EndVideoDec)
+
+    add_submodule()
     add_shortcut("ffmpeg")
     set_capability("audio decoder", 70)
     set_callbacks(InitAudioDec, EndAudioDec)
@@ -121,7 +126,7 @@ vlc_module_begin ()
     add_integer( "avcodec-debug", 0, DEBUG_TEXT, DEBUG_LONGTEXT )
     add_string( "avcodec-codec", NULL, CODEC_TEXT, CODEC_LONGTEXT )
     add_obsolete_string( "avcodec-hw" ) /* removed since 4.0.0 */
-    add_integer( "avcodec-threads", 0, THREADS_TEXT, THREADS_LONGTEXT );
+    add_integer( "avcodec-threads", 0, THREADS_TEXT, THREADS_LONGTEXT )
     add_string( "avcodec-options", NULL, AV_OPTIONS_TEXT, AV_OPTIONS_LONGTEXT )
 
 
@@ -132,6 +137,11 @@ vlc_module_begin ()
     set_section( N_("Encoding") , NULL )
     set_description( N_("FFmpeg video encoder") )
     set_capability( "video encoder", 100 )
+    set_callback( InitVideoEnc )
+
+    add_submodule()
+    set_description( N_("FFmpeg video encoder") )
+    set_capability( "image encoder", 100 )
     set_callback( InitVideoEnc )
 
     add_submodule()
@@ -220,8 +230,7 @@ AVCodecContext *ffmpeg_AllocContext( decoder_t *p_dec,
     const AVCodec *p_codec = NULL;
 
     /* *** determine codec type *** */
-    if( !GetFfmpegCodec( p_dec->fmt_in->i_cat, p_dec->fmt_in->i_codec,
-                         &i_codec_id, &psz_namecodec ) ||
+    if( !GetFfmpegCodec( p_dec->fmt_in, &i_codec_id, &psz_namecodec ) ||
          i_codec_id == AV_CODEC_ID_RAWVIDEO )
          return NULL;
 

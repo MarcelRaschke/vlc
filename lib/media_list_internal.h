@@ -24,14 +24,11 @@
 #ifndef _LIBVLC_MEDIA_LIST_INTERNAL_H
 #define _LIBVLC_MEDIA_LIST_INTERNAL_H 1
 
-#ifdef HAVE_CONFIG_H
-# include "config.h"
-#endif
-
 #include <vlc/vlc.h>
 #include <vlc/libvlc_media.h>
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 
 struct libvlc_media_list_t
 {

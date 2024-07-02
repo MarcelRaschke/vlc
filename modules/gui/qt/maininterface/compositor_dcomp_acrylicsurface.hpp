@@ -24,22 +24,15 @@
 #include <QAbstractNativeEventFilter>
 #include <QBasicTimer>
 
-#include <windows.h>
+#include "mainctx.hpp"
 
-// Win 8.1 for IDCompositionDevice3/IDCompositionVisual2
-# if !defined(_WIN32_WINNT) || (_WIN32_WINNT < 0x0603) // _WIN32_WINNT_WINBLUE
-#  undef _WIN32_WINNT
-#  define _WIN32_WINNT 0x0603
-# endif
-
-#define D3D11_NO_HELPERS  // avoid tons of warnings
-#include <dcomp.h>
-#include <d3d11.h>
 #include <wrl.h>
 #include <dwmapi.h>
 
 #include "compositor_dcomp_error.hpp"
-#include "mainctx.hpp"
+
+class IDCompositionVisual2;
+class IDCompositionDevice3;
 
 // Windows Private APIs, taken from https://blog.adeltax.com/dwm-thumbnails-but-with-idcompositionvisual/
 
@@ -150,9 +143,6 @@ typedef BOOL(WINAPI* GetWindowCompositionAttribute)(
     OUT WINDOWCOMPOSITIONATTRIBDATA* pAttrData
 );
 
-//Signature for DCompositionCreateDevice
-typedef HRESULT (WINAPI* DCompositionCreateDeviceFun)(IDXGIDevice *dxgiDevice, REFIID iid, void** dcompositionDevice);
-
 namespace vlc
 {
 
@@ -171,19 +161,17 @@ class CompositorDCompositionAcrylicSurface
     Q_OBJECT
 
 public:
-    CompositorDCompositionAcrylicSurface(qt_intf_t * intf, CompositorDirectComposition *compositor, MainCtx *mainctx, ID3D11Device *device, QObject *parent = nullptr);
+    CompositorDCompositionAcrylicSurface(qt_intf_t * intf, CompositorDirectComposition *compositor, MainCtx *mainctx, class IDCompositionDevice *device, QObject *parent = nullptr);
 
     ~CompositorDCompositionAcrylicSurface();
 
 protected:
-    bool nativeEventFilter(const QByteArray &eventType, void *message, long *result) override;
-
-    void timerEvent(QTimerEvent *event) override;
+    bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 
 private:
-    bool init(ID3D11Device *device);
+    bool init();
     bool loadFunctions();
-    bool createDevice(Microsoft::WRL::ComPtr<ID3D11Device> device);
+    bool initializeEffects();
     bool createDesktopVisual();
     bool createBackHostVisual();
 
@@ -192,7 +180,6 @@ private:
     void sync();
     void updateVisual();
     void commitChanges();
-    void requestReset();
 
     void setActive(bool newActive);
 
@@ -221,15 +208,14 @@ private:
     Microsoft::WRL::ComPtr<IDCompositionVisual2> m_rootVisual;
     Microsoft::WRL::ComPtr<IDCompositionVisual2> m_backHostVisual;
     Microsoft::WRL::ComPtr<IDCompositionVisual2> m_desktopVisual;
-    Microsoft::WRL::ComPtr<IDCompositionRectangleClip> m_rootClip;
-    Microsoft::WRL::ComPtr<IDCompositionTranslateTransform> m_translateTransform;
-    Microsoft::WRL::ComPtr<IDCompositionSaturationEffect> m_saturationEffect;
-    Microsoft::WRL::ComPtr<IDCompositionGaussianBlurEffect> m_gaussianBlur;
+    Microsoft::WRL::ComPtr<class IDCompositionRectangleClip> m_rootClip;
+    Microsoft::WRL::ComPtr<class IDCompositionTranslateTransform> m_translateTransform;
+    Microsoft::WRL::ComPtr<class IDCompositionSaturationEffect> m_saturationEffect;
+    Microsoft::WRL::ComPtr<class IDCompositionGaussianBlurEffect> m_gaussianBlur;
 
     qt_intf_t *m_intf = nullptr;
     CompositorDirectComposition *m_compositor = nullptr;
     MainCtx *m_mainCtx = nullptr;
-    QBasicTimer m_resetTimer;
     bool m_resetPending = false;
     bool m_active = false;
     bool m_transparencyEnabled = false;

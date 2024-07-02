@@ -45,6 +45,7 @@
 #include <limits.h>
 
 #include "transcode.h"
+#include "../lib/libvlc_internal.h"
 
 static const char dec_dev_arg[] = "--dec-dev=" MODULE_STRING;
 
@@ -125,10 +126,8 @@ static int OpenDecoder(vlc_object_t *obj)
     return VLC_SUCCESS;
 }
 
-static int OpenFilter(vlc_object_t *obj)
+static int OpenFilter(filter_t *filter)
 {
-    filter_t *filter = (filter_t *)obj;
-
     static const struct vlc_filter_operations ops = {
         .filter_video = NULL,
         .close = NULL,
@@ -145,11 +144,9 @@ static picture_t *ConverterFilter(filter_t *filter, picture_t *input)
     return input;
 }
 
-static int OpenConverter(vlc_object_t *obj)
+static int OpenConverter(filter_t *filter)
 {
-    filter_t *filter = (filter_t *)obj;
-
-    msg_Dbg(obj, "converter chroma %4.4s -> %4.4s size %ux%u -> %ux%u",
+    msg_Dbg(filter, "converter chroma %4.4s -> %4.4s size %ux%u -> %ux%u",
             (const char *)&filter->fmt_in.i_codec,
             (const char *)&filter->fmt_out.i_codec,
             filter->fmt_in.video.i_width, filter->fmt_in.video.i_height,
@@ -224,8 +221,10 @@ static int ErrorCheckerSend(sout_stream_t *stream, void *id, vlc_frame_t *f)
     return VLC_SUCCESS;
 }
 
-static void* ErrorCheckerAdd(sout_stream_t *stream, const es_format_t *fmt)
-    { return sout_StreamIdAdd(stream->p_next, fmt); }
+static void *ErrorCheckerAdd(sout_stream_t *stream,
+                             const es_format_t *fmt,
+                             const char *es_id)
+    { return sout_StreamIdAdd(stream->p_next, fmt, es_id); }
 
 static void ErrorCheckerDel(sout_stream_t *stream, void *id)
     { sout_StreamIdDel(stream->p_next, id); };
@@ -255,9 +254,10 @@ static int OutputCheckerSend(sout_stream_t *stream, void *id, vlc_frame_t *f)
     return VLC_SUCCESS;
 }
 
-static void *OutputCheckerAdd(sout_stream_t *stream, const es_format_t *fmt)
+static void *OutputCheckerAdd(sout_stream_t *stream, const es_format_t *fmt,
+                              const char *es_id)
 {
-    (void)stream; (void)fmt;
+    (void)stream; (void)fmt; (void)es_id;
     return (void*)0x42;
 }
 
@@ -304,7 +304,7 @@ static void play_scenario(intf_thread_t *intf, struct transcode_scenario *scenar
     var_SetString(intf, "sout-transcode-vcodec", "test");
 
     vlc_player_t *player = vlc_player_New(&intf->obj,
-        VLC_PLAYER_LOCK_NORMAL, NULL, NULL);
+        VLC_PLAYER_LOCK_NORMAL);
     assert(player);
 
     static const struct vlc_player_cbs player_cbs = {
@@ -374,16 +374,13 @@ vlc_module_begin()
         add_shortcut("output_checker")
 
     add_submodule()
-        set_callback(OpenDecoderDevice)
-        set_capability("decoder device", 0)
+        set_callback_dec_device(OpenDecoderDevice, 0)
 
     add_submodule()
-        set_callback(OpenFilter)
-        set_capability("video filter", 0)
+        set_callback_video_filter(OpenFilter)
 
     add_submodule()
-        set_callback(OpenConverter)
-        set_capability("video converter", INT_MAX)
+        set_callback_video_converter(OpenConverter, INT_MAX)
 
     add_submodule()
         set_callback(OpenEncoder)
@@ -403,6 +400,10 @@ VLC_EXPORT const vlc_plugin_cb vlc_static_modules[] = {
 int main( int argc, char **argv )
 {
     (void)argc; (void)argv;
+#ifndef ENABLE_SOUT
+    (void) libvlc_InternalPlay;
+    return 77;
+#endif
     test_init();
 
     const char * const args[] = {
@@ -412,8 +413,8 @@ int main( int argc, char **argv )
 
     libvlc_instance_t *vlc = libvlc_new(ARRAY_SIZE(args), args);
 
-    libvlc_add_intf(vlc, MODULE_STRING);
-    libvlc_playlist_play(vlc);
+    libvlc_InternalAddIntf(vlc->p_libvlc_int, MODULE_STRING);
+    libvlc_InternalPlay(vlc->p_libvlc_int);
 
     libvlc_release(vlc);
     assert(transcode_scenarios_count == current_scenario);

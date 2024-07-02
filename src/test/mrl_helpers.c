@@ -28,6 +28,7 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include "../input/mrl_helpers.h"
 
 #define MAX_RESULT 10
@@ -70,40 +71,38 @@ int main (void)
 {
     for (size_t i = 0; i < ARRAY_SIZE(testcase); ++i)
     {
-        vlc_array_t out;
-        const char *extra = NULL;
-        int ret = mrl_FragmentSplit(&out, &extra, testcase[i].payload);
+        struct mrl_info mrli;
+        mrl_info_Init(&mrli);
+        int ret = mrl_FragmentSplit(&mrli, testcase[i].payload);
         if (testcase[i].success)
         {
             assert(ret == VLC_SUCCESS);
-            if (extra != NULL)
-                assert(strcmp(extra, testcase[i].extra) == 0);
+            if (mrli.extra != NULL)
+                assert(strcmp(mrli.extra, testcase[i].extra) == 0);
             else
                 assert(testcase[i].extra == NULL);
 
             const char *p = testcase[i].payload + 2;
             for (size_t j = 0; testcase[i].results[j] != NULL; ++j)
             {
-                assert(j < vlc_array_count(&out) && j < MAX_RESULT);
-                char *res = vlc_array_item_at_index(&out, j);
+                assert(j < vlc_array_count(&mrli.identifiers) && j < MAX_RESULT);
+                const char *res = vlc_array_item_at_index(&mrli.identifiers, j);
 
                 assert(strcmp(testcase[i].results[j], res) == 0);
 
-                char *res_escaped = NULL;
-                ret = mrl_EscapeFragmentIdentifier(&res_escaped, res);
-                assert(ret == VLC_SUCCESS && res_escaped != NULL);
+                char *res_escaped = mrl_EscapeFragmentIdentifier(res);
+                assert(res_escaped != NULL);
                 assert(strncmp(p, res_escaped, strlen(res_escaped)) == 0);
                 p += strlen(res_escaped) + 2;
 
                 free(res_escaped);
-                free(res);
             }
-            vlc_array_clear(&out);
         }
         else
         {
             assert(ret != VLC_SUCCESS);
         }
+        mrl_info_Clean(&mrli);
     }
     return 0;
 }

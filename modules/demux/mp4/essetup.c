@@ -24,11 +24,14 @@
 # include "config.h"
 #endif
 
+#include <stdbit.h>
+
 #include "mp4.h"
 #include "avci.h"
 #include "../xiph.h"
 #include "../../packetizer/iso_color_tables.h"
 #include "mpeg4.h"
+#include "qt_palette.h"
 
 #include <vlc_demux.h>
 #include <vlc_aout.h>
@@ -129,14 +132,13 @@ static void SetupESDS( demux_t *p_demux, const mp4_track_t *p_track,
                    p_fmt );
 
     if( p_fmt->i_codec == VLC_CODEC_SPU &&
-            p_fmt->i_extra >= 16 * 4 )
+            p_fmt->i_extra >= sizeof(p_fmt->subs.spu.palette) )
     {
-        for( int i = 0; i < 16; i++ )
+        for (size_t i = 0; i < ARRAY_SIZE(p_fmt->subs.spu.palette); i++)
         {
-            p_fmt->subs.spu.palette[1 + i] =
-                    GetDWBE((char*)p_fmt->p_extra + i * 4);
+            p_fmt->subs.spu.palette[i] = GetDWBE((char*)p_fmt->p_extra + i * 4);
         }
-        p_fmt->subs.spu.palette[0] = SPU_PALETTE_DEFINED;
+        p_fmt->subs.spu.b_palette = true;
     }
 }
 
@@ -291,7 +293,6 @@ int SetupVideoES( demux_t *p_demux, const mp4_track_t *p_track, const MP4_Box_t 
 
     p_fmt->video.i_width = p_vide->i_width;
     p_fmt->video.i_height = p_vide->i_height;
-    p_fmt->video.i_bits_per_pixel = p_vide->i_depth;
 
     /* fall on display size */
     if( p_fmt->video.i_width <= 0 )
@@ -427,20 +428,14 @@ int SetupVideoES( demux_t *p_demux, const mp4_track_t *p_track, const MP4_Box_t 
             break;
         case VLC_FOURCC('A','B','G','R'):
             p_fmt->i_codec = VLC_CODEC_ARGB;
-            p_fmt->video.i_rmask = 0x0000FF;
-            p_fmt->video.i_gmask = 0x00FF00;
-            p_fmt->video.i_bmask = 0xFF0000;
             break;
         case VLC_FOURCC('2','4','B','G'):
-            p_fmt->i_codec = VLC_CODEC_RGB24;
-            p_fmt->video.i_rmask = 0x0000FF;
-            p_fmt->video.i_gmask = 0x00FF00;
-            p_fmt->video.i_bmask = 0xFF0000;
+            p_fmt->i_codec = VLC_CODEC_BGR24;
             break;
         case VLC_FOURCC('r','a','w',' '):
             switch( p_vide->i_depth ) {
                 case 16:
-                    p_fmt->i_codec = VLC_CODEC_RGB15;
+                    p_fmt->i_codec = VLC_CODEC_RGB555BE;
                     break;
                 case 24:
                     p_fmt->i_codec = VLC_CODEC_RGB24;
@@ -628,6 +623,19 @@ int SetupVideoES( demux_t *p_demux, const mp4_track_t *p_track, const MP4_Box_t 
             break;
         }
 
+        case VLC_FOURCC( 'v', 'v', 'c', '1' ):
+        {
+            MP4_Box_t *p_vvcC = MP4_BoxGet( p_sample, "vvcC" );
+            if( p_vvcC && p_vvcC->data.p_binary &&
+                p_vvcC->data.p_binary->i_blob > 4 )
+            {
+                CopyExtradata( ((uint8_t *)p_vvcC->data.p_binary->p_blob) + 4,
+                               p_vvcC->data.p_binary->i_blob - 4,
+                               p_fmt );
+            }
+            break;
+        }
+
         /* avc1: send avcC (h264 without annexe B, ie without start code)*/
         case VLC_FOURCC( 'a', 'v', 'c', '3' ):
         case VLC_FOURCC( 'a', 'v', 'c', '1' ):
@@ -723,7 +731,9 @@ int SetupVideoES( demux_t *p_demux, const mp4_track_t *p_track, const MP4_Box_t 
                 }
 
                 p_fmt->video.color_range = p_data->i_fullrange ? COLOR_RANGE_FULL : COLOR_RANGE_LIMITED;
-                p_fmt->video.i_bits_per_pixel = p_data->i_bit_depth;
+                if (p_fmt->i_profile == -1 && p_fmt->i_level == -1)
+                    // HACK: keep the bits per sample in i_level
+                    p_fmt->i_level = p_data->i_bit_depth;
 
                 CopyExtradata( p_data->p_codec_init_data,
                                p_data->i_codec_init_datasize,
@@ -735,9 +745,9 @@ int SetupVideoES( demux_t *p_demux, const mp4_track_t *p_track, const MP4_Box_t 
                 if( p_SmDm && BOXDATA(p_SmDm) )
                 {
                     memcpy( p_fmt->video.mastering.primaries,
-                            BOXDATA(p_SmDm)->primaries, sizeof(uint16_t) * 6 );
+                            BOXDATA(p_SmDm)->primaries, sizeof(p_fmt->video.mastering.primaries) );
                     memcpy( p_fmt->video.mastering.white_point,
-                            BOXDATA(p_SmDm)->white_point, sizeof(uint16_t) * 2 );
+                            BOXDATA(p_SmDm)->white_point, sizeof(p_fmt->video.mastering.white_point) );
                     p_fmt->video.mastering.max_luminance = BOXDATA(p_SmDm)->i_luminanceMax;
                     p_fmt->video.mastering.min_luminance = BOXDATA(p_SmDm)->i_luminanceMin;
                 }
@@ -767,7 +777,6 @@ int SetupVideoES( demux_t *p_demux, const mp4_track_t *p_track, const MP4_Box_t 
                 p_fmt->video.i_visible_width = p_fmt->video.i_width;
                 p_fmt->video.i_height = BOXDATA(p_strf)->bmiHeader.biHeight;
                 p_fmt->video.i_visible_height =p_fmt->video.i_height;
-                p_fmt->video.i_bits_per_pixel = BOXDATA(p_strf)->bmiHeader.biBitCount;
                 CopyExtradata( BOXDATA(p_strf)->p_extra,
                                BOXDATA(p_strf)->i_extra,
                                p_fmt );
@@ -798,11 +807,31 @@ int SetupVideoES( demux_t *p_demux, const mp4_track_t *p_track, const MP4_Box_t 
             break;
         }
 
+        case VLC_FOURCC('s','m','c',' '):
+        case VLC_FOURCC('8','B','P','S'):
+        {
+            if( p_sample->data.p_sample_vide->p_palette )
+            {
+                p_fmt->video.p_palette = malloc(sizeof(video_palette_t));
+                if( p_fmt->video.p_palette )
+                    *p_fmt->video.p_palette = *p_sample->data.p_sample_vide->p_palette;
+            }
+            else if(qt_palette_depth_has_default(p_sample->data.p_sample_vide->i_depth))
+            {
+                p_fmt->video.p_palette = qt_make_palette(p_sample->data.p_sample_vide->i_depth);
+            }
+            break;
+        }
+
         default:
             msg_Dbg( p_demux, "Unrecognized FourCC %4.4s", (char *)&i_sample_type );
             break;
     }
 
+    /* Codec like QTRLE will need to provide depth. */
+    if (p_fmt->i_profile == -1 && p_fmt->i_level == -1 &&
+        p_fmt->video.i_chroma == 0)
+        p_fmt->i_level = p_vide->i_depth;
     return 1;
 }
 
@@ -1206,7 +1235,7 @@ int SetupAudioES( demux_t *p_demux, const mp4_track_t *p_track,
              * as vlc can't enumerate channels for compressed content */
             if( i_bps )
             {
-                p_fmt->audio.i_channels = vlc_popcount(i_vlc_mapping);
+                p_fmt->audio.i_channels = stdc_count_ones(i_vlc_mapping);
                 p_fmt->audio.i_physical_channels = i_vlc_mapping;
             }
         }

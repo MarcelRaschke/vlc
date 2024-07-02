@@ -15,8 +15,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
+import QtQuick
+import QtQuick.Controls
 
 import org.videolan.vlc 0.1
 import "qrc:///style/"
@@ -31,14 +31,20 @@ Item {
     onXChanged: videoSurface.onSurfacePositionChanged()
     onYChanged: videoSurface.onSurfacePositionChanged()
 
+    objectName: "pip window"
+
     property real dragXMin: 0
     property real dragXMax: 0
     property real dragYMin: undefined
     property real dragYMax: undefined
 
+    Accessible.role: Accessible.Graphic
+    Accessible.focusable: false
+    Accessible.name: qsTr("video content")
+
     Connections {
         target: mouseArea.drag
-        onActiveChanged: {
+        function onActiveChanged() {
             root.anchors.left = undefined;
             root.anchors.right = undefined
             root.anchors.top = undefined
@@ -67,7 +73,8 @@ Item {
         z: 1
 
         hoverEnabled: true
-        onClicked: mainPlaylistController.togglePlayPause()
+        onClicked: MainPlaylistController.togglePlayPause()
+        onDoubleClicked: History.push(["player"])
 
         enabled: root.enabled
         visible: root.visible
@@ -79,7 +86,7 @@ Item {
         drag.maximumX: root.dragXMax
         drag.maximumY: root.dragYMax
 
-        onWheel: wheel.accept()
+        onWheel: wheel.accepted = true
 
         Rectangle {
             color: "#10000000"
@@ -90,12 +97,14 @@ Item {
                 anchors.centerIn: parent
 
                 font.pixelSize: VLCStyle.icon_large
+
+                description: qsTr("play/pause")
                 text: (Player.playingState !== Player.PLAYING_STATE_PAUSED
                        && Player.playingState !== Player.PLAYING_STATE_STOPPED)
-                      ? VLCIcons.pause
-                      : VLCIcons.play
+                      ? VLCIcons.pause_filled
+                      : VLCIcons.play_filled
 
-                onClicked: mainPlaylistController.togglePlayPause()
+                onClicked: MainPlaylistController.togglePlayPause()
             }
 
             Widgets.IconButton {
@@ -107,9 +116,10 @@ Item {
                 }
 
                 font.pixelSize: VLCStyle.icon_PIP
+                description: qsTr("close video")
                 text: VLCIcons.close
 
-                onClicked: mainPlaylistController.stop()
+                onClicked: MainPlaylistController.stop()
             }
 
 
@@ -122,6 +132,8 @@ Item {
                 }
 
                 font.pixelSize: VLCStyle.icon_PIP
+
+                description: qsTr("maximize player")
                 text: VLCIcons.fullscreen
 
                 onClicked: History.push(["player"])

@@ -27,6 +27,7 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stdbit.h>
 
 #include <vlc_common.h>
 #include <vlc_interface.h>
@@ -112,7 +113,7 @@ player_on_rate_changed(vlc_player_t *player, float new_rate, void *data)
 static void
 player_on_position_changed(vlc_player_t *player,
                            vlc_tick_t new_time, double new_pos, void *data)
-{ VLC_UNUSED(player); VLC_UNUSED(new_pos);
+{ VLC_UNUSED(player);
     struct player_cli *pc = data;
 
     if (pc->input_buffering)
@@ -122,7 +123,7 @@ player_on_position_changed(vlc_player_t *player,
         pc->input_buffering = false;
     }
 
-    long position = lroundf(new_pos * 100.f);
+    long position = lround(new_pos * 100.);
 
     if (pc->show_position && position != pc->position)
     {
@@ -153,6 +154,18 @@ static const struct vlc_player_aout_cbs player_aout_cbs =
     .on_volume_changed = player_aout_on_volume_changed,
 };
 
+static int ParseFloat(const char *str, float *out)
+{
+    char *end;
+    *out = strtof(str, &end);
+    if (*end != '\0' && *out == 0.f)
+        return -EINVAL; /* No valid data parsed. */
+    if (unlikely(!isfinite(*out)))
+        return -EINVAL; /* Invalid values in this context. */
+    return VLC_SUCCESS;
+}
+
+
 static int PlayerDoVoid(struct cli_client *cl, void *data,
                         void (*cb)(vlc_player_t *))
 {
@@ -180,8 +193,13 @@ static int PlayerDoFloat(struct cli_client *cl, const char *const *args,
             cli_printf(cl, "%f", getter(player));
             break;
         case 2:
-            setter(player, atof(args[1]));
+        {
+            float v;
+            ret = ParseFloat(args[1], &v);
+            if (ret == VLC_SUCCESS)
+                setter(player, v);
             break;
+        }
         default:
             ret = VLC_EGENERIC; /* EINVAL */
     }
@@ -583,7 +601,6 @@ static int Volume(struct cli_client *cl, const char *const *args, size_t count,
 {
     vlc_player_t *player = data;
 
-    vlc_player_Lock(player);
     if (count == 2)
     {
         /* NOTE: For unfortunate hysterical raisins, integer value above 1 are
@@ -599,15 +616,25 @@ static int Volume(struct cli_client *cl, const char *const *args, size_t count,
                        "AOUT_VOLUME_DEFAULT must be a power of two.");
 
         if (*end == '\0' && ul > 1 && ul <= AOUT_VOLUME_MAX)
-            volume = ldexpf(ul, -ctz(AOUT_VOLUME_DEFAULT));
+            volume = ldexpf(ul, -stdc_trailing_zeros((unsigned)AOUT_VOLUME_DEFAULT));
         else
-            volume = atof(args[1]);
+        {
+            const int result = ParseFloat(args[1], &volume);
+            if (result != VLC_SUCCESS)
+                return result;
+            if (volume < 0.f || volume > 2.f )
+                return -EINVAL;
+        }
 
+        vlc_player_Lock(player);
         vlc_player_aout_SetVolume(player, volume);
     }
     else
+    {
+        vlc_player_Lock(player);
         cli_printf(cl, STATUS_CHANGE "( audio volume: %f )",
                    vlc_player_aout_GetVolume(player));
+    }
     vlc_player_Unlock(player);
     return 0;
 }
@@ -619,14 +646,13 @@ static int VolumeMove(struct cli_client *cl, const char *const *args,
     const char *psz_cmd = args[0];
     const char *arg = count > 1 ? args[1] : "";
 
-    float volume;
     int i_nb_steps = atoi(arg);
 
     if( !strcmp(psz_cmd, "voldown") )
         i_nb_steps *= -1;
 
     vlc_player_Lock(player);
-    vlc_player_aout_IncrementVolume(player, i_nb_steps, &volume);
+    vlc_player_aout_IncrementVolume(player, i_nb_steps, NULL);
     vlc_player_Unlock(player);
     (void) cl;
     return 0;
@@ -656,7 +682,14 @@ static int VideoConfig(struct cli_client *cl, const char *const *args,
         /* set */
         if( !strcmp( psz_variable, "zoom" ) )
         {
-            float f_float = atof( arg );
+            float f_float;
+            const int r = ParseFloat( arg, &f_float );
+            if( r != VLC_SUCCESS )
+            {
+                vout_Release( p_vout );
+                return r;
+            }
+
             var_SetFloat( p_vout, psz_variable, f_float );
         }
         else
@@ -668,7 +701,7 @@ static int VideoConfig(struct cli_client *cl, const char *const *args,
         char *name;
         vlc_value_t *val;
         char **text;
-        float f_value = 0.;
+        float f_value = 0.f;
         char *psz_value = NULL;
         size_t count;
 
@@ -1029,7 +1062,7 @@ static const struct cli_handler cmds[] =
 
 void *RegisterPlayer(intf_thread_t *intf)
 {
-    vlc_playlist_t *playlist = vlc_intf_GetMainPlaylist(intf);;
+    vlc_playlist_t *playlist = vlc_intf_GetMainPlaylist(intf);
     vlc_player_t *player = vlc_playlist_GetPlayer(playlist);
     struct player_cli *pc = malloc(sizeof (*pc));
 
@@ -1037,7 +1070,7 @@ void *RegisterPlayer(intf_thread_t *intf)
         return NULL;
 
     pc->intf = intf;
-    pc->position = -1.;
+    pc->position = -1;
     pc->input_buffering = false;
     pc->show_position = var_InheritBool(intf, "rc-show-pos");
 
@@ -1069,7 +1102,7 @@ error:
 
 void DeregisterPlayer(intf_thread_t *intf, void *data)
 {
-    vlc_playlist_t *playlist = vlc_intf_GetMainPlaylist(intf);;
+    vlc_playlist_t *playlist = vlc_intf_GetMainPlaylist(intf);
     vlc_player_t *player = vlc_playlist_GetPlayer(playlist);
     struct player_cli *pc = data;
 

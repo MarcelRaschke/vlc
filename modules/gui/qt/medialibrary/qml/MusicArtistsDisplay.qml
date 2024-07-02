@@ -15,10 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick.Controls 2.4
-import QtQuick 2.11
-import QtQml.Models 2.2
-import QtQuick.Layouts 1.11
+import QtQuick.Controls
+import QtQuick
+import QtQml.Models
+import QtQuick.Layouts
 
 import org.videolan.medialib 0.1
 import org.videolan.vlc 0.1
@@ -32,47 +32,36 @@ import "qrc:///style/"
 Widgets.PageLoader {
     id: root
 
-    property MLModel model
-
     pageModel: [{
         name: "all",
+        default: true,
         component: allArtistsComponent
     }, {
         name: "albums",
         component: artistAlbumsComponent
     }]
 
-    loadDefaultView: function () {
-        History.update(["mc", "music", "artists", "all"])
-        loadPage("all")
-    }
-
-    onCurrentItemChanged: {
-        model = currentItem.model
-    }
-
-    function _updateArtistsAllHistory(currentIndex) {
-        History.update(["mc", "music", "artists", "all", { "initialIndex": currentIndex }])
-    }
-
-    function _updateArtistsAlbumsHistory(currentIndex, initialAlbumIndex) {
-        History.update(["mc","music", "artists", "albums", {
-            "initialIndex": currentIndex,
-            "initialAlbumIndex": initialAlbumIndex,
-        }])
-    }
 
     Component {
         id: allArtistsComponent
 
         MusicAllArtists {
-            onCurrentIndexChanged: _updateArtistsAllHistory(currentIndex)
+            id: artistsView
 
-            onRequestArtistAlbumView: {
-                History.push(["mc", "music", "artists", "albums",
-                              { initialIndex: currentIndex } ]);
+            header: Widgets.ViewHeader {
+                view: artistsView
 
-                stackView.currentItem.setCurrentItemFocus(reason);
+                text: qsTr("Artists")
+            }
+
+            searchPattern: MainCtx.search.pattern
+            sortOrder: MainCtx.sort.order
+            sortCriteria: MainCtx.sort.criteria
+
+            onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
+
+            onRequestArtistAlbumView: (reason) => {
+                History.push([...root.pagePrefix, "albums"], { initialIndex: currentIndex }, reason)
             }
         }
     }
@@ -81,11 +70,12 @@ Widgets.PageLoader {
         id: artistAlbumsComponent
 
         MusicArtistsAlbums {
+            searchPattern: MainCtx.search.pattern
+            sortOrder: MainCtx.sort.order
+            sortCriteria: MainCtx.sort.criteria
 
-            Navigation.parentItem: root
-
-            onCurrentIndexChanged: _updateArtistsAlbumsHistory(currentIndex, currentAlbumIndex)
-            onCurrentAlbumIndexChanged: _updateArtistsAlbumsHistory(currentIndex, currentAlbumIndex)
+            onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
+            onCurrentAlbumIndexChanged: History.viewProp.initialAlbumIndex = currentAlbumIndex
         }
     }
 }

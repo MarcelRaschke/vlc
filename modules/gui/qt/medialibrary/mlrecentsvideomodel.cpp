@@ -25,25 +25,11 @@ MLRecentsVideoModel::MLRecentsVideoModel(QObject * parent) : MLVideoModel(parent
 
 // Protected MLBaseModel implementation
 
-std::unique_ptr<MLBaseModel::BaseLoader>
-MLRecentsVideoModel::createLoader() const
+std::unique_ptr<MLListCacheLoader>
+MLRecentsVideoModel::createMLLoader() const
 /* override */
 {
-    return std::make_unique<Loader>(*this, m_numberOfItemsToShow);
-}
-
-// Private functions
-
-int MLRecentsVideoModel::getNumberOfItemsToShow()
-{
-    return m_numberOfItemsToShow;
-}
-
-void MLRecentsVideoModel::setNumberOfItemsToShow(int number)
-{
-    m_numberOfItemsToShow = number;
-
-    invalidateCache();
+    return std::make_unique<MLListCacheLoader>(m_mediaLib, std::make_shared<MLRecentsVideoModel::Loader>(*this));
 }
 
 // Private MLVideoModel reimplementation
@@ -64,53 +50,22 @@ void MLRecentsVideoModel::onVlcMlEvent(const MLEvent & event) /* override */
 
 // Loader
 
-MLRecentsVideoModel::Loader::Loader(const MLRecentsVideoModel & model, int numberOfItemsToShow)
-    : MLBaseModel::BaseLoader(model)
-    , m_numberOfItemsToShow(numberOfItemsToShow)
-{}
-
-size_t MLRecentsVideoModel::Loader::count(vlc_medialibrary_t* ml) const /* override */
+size_t MLRecentsVideoModel::Loader::count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const /* override */
 {
-    MLQueryParams params = getParams();
-
-    auto queryParams = params.toCQueryParams();
-
-    size_t realCount = vlc_ml_count_history_by_type(ml, &queryParams, VLC_ML_MEDIA_TYPE_VIDEO);
-
-    if (m_numberOfItemsToShow >= 0)
-    {
-        return std::min(realCount, static_cast<size_t> (m_numberOfItemsToShow));
-    }
-
-    return realCount;
+    return vlc_ml_count_video_history(ml, queryParams);
 }
 
 std::vector<std::unique_ptr<MLItem>>
-MLRecentsVideoModel::Loader::load(vlc_medialibrary_t* ml, size_t index, size_t count) const /* override */
+MLRecentsVideoModel::Loader::load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const /* override */
 {
-    MLQueryParams params = getParams(index, count);
-
-    auto queryParams = params.toCQueryParams();
-
-    std::vector<std::unique_ptr<MLItem>> res;
-
-    if (m_numberOfItemsToShow >= 0)
-    {
-        uint32_t count = static_cast<uint32_t> (m_numberOfItemsToShow);
-
-        if (queryParams.i_offset > count)
-            return res;
-
-        queryParams.i_nbResults = count - queryParams.i_offset;
-    }
-
-    ml_unique_ptr<vlc_ml_media_list_t> media_list
-    {
-        vlc_ml_list_history_by_type(ml, &queryParams, VLC_ML_MEDIA_TYPE_VIDEO)
+    ml_unique_ptr<vlc_ml_media_list_t> media_list {
+        vlc_ml_list_video_history(ml, queryParams)
     };
 
     if (media_list == nullptr)
         return {};
+
+    std::vector<std::unique_ptr<MLItem>> res;
 
     for (const vlc_ml_media_t & media : ml_range_iterate<vlc_ml_media_t>(media_list))
     {

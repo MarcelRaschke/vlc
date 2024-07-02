@@ -33,6 +33,8 @@
 #import "playlist/VLCPlayerController.h"
 #import "windows/video/VLCVideoOutputProvider.h"
 
+#import <vlc_configuration.h>
+
 #define getWidgetBoolValue(w)   ((vlc_value_t){ .b_bool = [w state] })
 #define getWidgetIntValue(w)    ((vlc_value_t){ .i_int = [w intValue] })
 #define getWidgetFloatValue(w)  ((vlc_value_t){ .f_float = [w floatValue] })
@@ -80,7 +82,7 @@ NSString *VLCVideoEffectsProfileNamesKey = @"VideoEffectProfileNames";
     self = [super initWithWindowNibName:@"VideoEffects"];
     if (self) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            NSNotificationCenter *notificationCenter = [NSNotificationCenter defaultCenter];
+            NSNotificationCenter *notificationCenter = NSNotificationCenter.defaultCenter;
             [notificationCenter addObserver:self
                                    selector:@selector(updateCocoaWindowLevel:)
                                        name:VLCWindowShouldUpdateLevel
@@ -128,7 +130,7 @@ NSString *VLCVideoEffectsProfileNamesKey = @"VideoEffectProfileNames";
 
     /* filter handling */
     NSString *tempString = B64DecNSStr([items firstObject]);
-    VLCPlayerController *playerController = [[[VLCMain sharedInstance] playlistController] playerController];
+    VLCPlayerController *playerController = VLCMain.sharedInstance.playlistController.playerController;
     vout_thread_t *vout = [playerController mainVideoOutputThread];
 
     /* enable the new filters */
@@ -217,7 +219,6 @@ NSString *VLCVideoEffectsProfileNamesKey = @"VideoEffectProfileNames";
     [_adjustHueLabel setStringValue:_NS("Hue")];
     [_adjustContrastLabel setStringValue:_NS("Contrast")];
     [_adjustBrightnessLabel setStringValue:_NS("Brightness")];
-    [_adjustBrightnessCheckbox setTitle:_NS("Brightness Threshold")];
     [_adjustSaturationLabel setStringValue:_NS("Saturation")];
     [_adjustGammaLabel setStringValue:_NS("Gamma")];
     [_adjustResetButton setTitle: _NS("Reset")];
@@ -346,7 +347,7 @@ NSString *VLCVideoEffectsProfileNamesKey = @"VideoEffectProfileNames";
 
 - (void)dealloc
 {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
 - (void)updateCocoaWindowLevel:(NSNotification *)aNotification
@@ -432,7 +433,7 @@ NSString *VLCVideoEffectsProfileNamesKey = @"VideoEffectProfileNames";
         return;
     }
 
-    VLCPlayerController *playerController = [[[VLCMain sharedInstance] playlistController] playerController];
+    VLCPlayerController *playerController = VLCMain.sharedInstance.playlistController.playerController;
     vout_thread_t *vout = [playerController mainVideoOutputThread];
     if (!vout)
         return;
@@ -491,7 +492,7 @@ NSString *VLCVideoEffectsProfileNamesKey = @"VideoEffectProfileNames";
 /// Sets widget values based on variables
 - (void)resetValues
 {
-    VLCPlayerController *playerController = [[[VLCMain sharedInstance] playlistController] playerController];
+    VLCPlayerController *playerController = VLCMain.sharedInstance.playlistController.playerController;
     vout_thread_t *vout = [playerController mainVideoOutputThread];
     if (!vout)
         return;
@@ -665,7 +666,7 @@ NSString *VLCVideoEffectsProfileNamesKey = @"VideoEffectProfileNames";
 
 - (NSString *)generateProfileString
 {
-    VLCPlayerController *playerController = [[[VLCMain sharedInstance] playlistController] playerController];
+    VLCPlayerController *playerController = VLCMain.sharedInstance.playlistController.playerController;
     vout_thread_t *vout = [playerController mainVideoOutputThread];
     if (!vout)
         return nil;
@@ -776,7 +777,7 @@ NSString *VLCVideoEffectsProfileNamesKey = @"VideoEffectProfileNames";
     if ([self.window isKeyWindow])
         [self.window orderOut:sender];
     else {
-        [self.window setLevel: [[[VLCMain sharedInstance] voutProvider] currentStatusWindowLevel]];
+        [self.window setLevel: VLCMain.sharedInstance.voutProvider.currentStatusWindowLevel];
         [self.window makeKeyAndOrderFront:sender];
     }
 }
@@ -926,7 +927,6 @@ NSString *VLCVideoEffectsProfileNamesKey = @"VideoEffectProfileNames";
 
         [VLCVideoFilterHelper setVideoFilter: "adjust" on: b_state];
         [_adjustBrightnessSlider setEnabled: b_state];
-        [_adjustBrightnessCheckbox setEnabled: NO];
         [_adjustBrightnessLabel setEnabled: b_state];
         [_adjustContrastSlider setEnabled: b_state];
         [_adjustContrastLabel setEnabled: b_state];
@@ -1027,7 +1027,7 @@ NSString *VLCVideoEffectsProfileNamesKey = @"VideoEffectProfileNames";
             [self setCropRightValue: [self cropLeftValue]];
     }
 
-    VLCPlayerController *playerController = [[[VLCMain sharedInstance] playlistController] playerController];
+    VLCPlayerController *playerController = VLCMain.sharedInstance.playlistController.playerController;
     vout_thread_t *p_vout = [playerController mainVideoOutputThread];
     if (p_vout) {
         var_SetInteger(p_vout, "crop-top", [_cropTopTextField intValue]);

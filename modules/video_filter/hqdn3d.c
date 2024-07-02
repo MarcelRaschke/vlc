@@ -29,6 +29,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
@@ -105,18 +106,18 @@ static int Open(filter_t *filter)
     const video_format_t *fmt_in  = &filter->fmt_in.video;
     const video_format_t *fmt_out = &filter->fmt_out.video;
     const vlc_fourcc_t fourcc_in  = fmt_in->i_chroma;
-    const vlc_fourcc_t fourcc_out = fmt_out->i_chroma;
     int wmax = 0;
 
-    const vlc_chroma_description_t *chroma =
-            vlc_fourcc_GetChromaDescription(fourcc_in);
-    if (!chroma || chroma->plane_count != 3 || chroma->pixel_size != 1) {
-        msg_Err(filter, "Unsupported chroma (%4.4s)", (char*)&fourcc_in);
+    if ( !video_format_IsSameChroma( fmt_in, fmt_out ) ) {
+        msg_Err(filter, "Input and output chromas don't match");
         return VLC_EGENERIC;
     }
 
-    if (fourcc_in != fourcc_out) {
-        msg_Err(filter, "Input and output chromas don't match");
+    const vlc_chroma_description_t *chroma =
+            vlc_fourcc_GetChromaDescription(fourcc_in);
+    assert( chroma != NULL );
+    if (chroma->plane_count != 3 || chroma->pixel_size != 1) {
+        msg_Err(filter, "Unsupported chroma (%4.4s)", (char*)&fourcc_in);
         return VLC_EGENERIC;
     }
 

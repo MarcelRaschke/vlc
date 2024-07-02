@@ -24,20 +24,21 @@
 
 #define INITGUID
 #define COBJMACROS
-#define CONST_VTABLE
-#define NONEWWAVE
 
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <assert.h>
 
 #include <vlc_common.h>
-#include <vlc_codecs.h>
 #include <vlc_aout.h>
 #include <vlc_plugin.h>
 
+#include <windows.h>
+#include <mmreg.h>
 #include <audioclient.h>
 #include "mmdevice.h"
+
+#include <vlc_codecs.h> // GUID_FMT/GUID_PRINT
 
 #define TIMING_REPORT_DELAY VLC_TICK_FROM_MS(1000)
 
@@ -124,6 +125,7 @@ typedef struct aout_stream_sys
     UINT64 written; /**< Frames written to the buffer */
     UINT32 frames; /**< Total buffer size (frames) */
     bool s24s32; /**< Output configured as S24N, but input as S32N */
+    vlc_tick_t first_pts;
 } aout_stream_sys_t;
 
 /*** VLC audio output callbacks ***/
@@ -156,7 +158,8 @@ static void TimingReport(aout_stream_t *s)
     }
 
     aout_stream_TimingReport(s, VLC_TICK_FROM_MSFTIME(qpcpos),
-                             vlc_tick_from_frac(pos, clock_freq));
+                             vlc_tick_from_frac(pos, clock_freq) +
+                             sys->first_pts);
 
     aout_stream_TriggerTimer(s, TimingReport,
                              vlc_tick_now() + TIMING_REPORT_DELAY);
@@ -229,6 +232,9 @@ static HRESULT Play(aout_stream_t *s, block_t *block, vlc_tick_t date)
         if (FAILED(hr))
             goto out;
     }
+
+    if (sys->first_pts == VLC_TICK_INVALID)
+        sys->first_pts = block->i_pts;
 
     if (sys->chans_to_reorder)
         aout_ChannelReorder(block->p_buffer, block->i_buffer,
@@ -353,6 +359,7 @@ static HRESULT Flush(aout_stream_t *s)
     else
         hr = S_OK;
 
+    sys->first_pts = VLC_TICK_INVALID;
     if (SUCCEEDED(hr))
     {
         msg_Dbg(s, "reset");
@@ -504,8 +511,8 @@ static void LogWaveFormat(struct vlc_logger *l, const WAVEFORMATEX *restrict wf)
 {
     vlc_debug(l, "nChannels %d", wf->nChannels);
     vlc_debug(l, "wBitsPerSample %d", wf->wBitsPerSample);
-    vlc_debug(l, "nAvgBytesPerSec %d", wf->nAvgBytesPerSec);
-    vlc_debug(l, "nSamplesPerSec %d", wf->nSamplesPerSec);
+    vlc_debug(l, "nAvgBytesPerSec %lu", wf->nAvgBytesPerSec);
+    vlc_debug(l, "nSamplesPerSec %lu", wf->nSamplesPerSec);
     vlc_debug(l, "nBlockAlign %d", wf->nBlockAlign);
     vlc_debug(l, "cbSize %d", wf->cbSize);
     vlc_debug(l, "wFormatTag 0x%04X", wf->wFormatTag);
@@ -925,6 +932,7 @@ static HRESULT Start(aout_stream_t *s, audio_sample_format_t *restrict pfmt,
     CoTaskMemFree(pwf_mix);
     *pfmt = fmt;
     sys->written = 0;
+    sys->first_pts = VLC_TICK_INVALID;
     s->sys = sys;
     s->play = Play;
     s->pause = Pause;

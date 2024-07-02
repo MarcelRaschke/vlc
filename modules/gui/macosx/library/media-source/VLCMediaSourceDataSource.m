@@ -41,6 +41,8 @@
 
 #import "views/VLCImageView.h"
 
+NSString * const VLCMediaSourceDataSourceNodeChanged = @"VLCMediaSourceDataSourceNodeChanged";
+
 @interface VLCMediaSourceDataSource()
 {
     VLCInputItem *_childRootInput;
@@ -131,13 +133,7 @@
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)row
 {
-    VLCLibraryTableCellView *cellView = [tableView makeViewWithIdentifier:@"VLCMediaSourceTableViewCellIdentifier" owner:self];
-
-    if (cellView == nil) {
-        cellView = [VLCLibraryTableCellView fromNibWithOwner:self];
-        cellView.identifier = @"VLCMediaSourceTableViewCellIdentifier";
-    }
-
+    VLCLibraryTableCellView * const cellView = [tableView makeViewWithIdentifier:VLCLibraryTableCellViewIdentifier owner:self];
     cellView.representedInputItem = [self mediaSourceInputItemAtRow:row];
     return cellView;
 }
@@ -208,9 +204,9 @@
         [self.displayedMediaSource preparseInputNodeWithinTree:node];
         self.nodeToDisplay = node;
 
-        [[VLCMain sharedInstance].libraryWindow.navigationStack appendCurrentLibraryState];
+        [VLCMain.sharedInstance.libraryWindow.navigationStack appendCurrentLibraryState];
     } else if (childRootInput.inputType == ITEM_TYPE_FILE && allowPlayback) {
-        [[[VLCMain sharedInstance] playlistController] addInputItem:childRootInput.vlcInputItem atPosition:-1 startPlayback:YES];
+        [VLCMain.sharedInstance.playlistController addInputItem:childRootInput.vlcInputItem atPosition:-1 startPlayback:YES];
     }
 }
 
@@ -223,6 +219,9 @@
     if(!_tableView.hidden) {
         [_tableView reloadData];
     }
+
+    [NSNotificationCenter.defaultCenter postNotificationName:VLCMediaSourceDataSourceNodeChanged
+                                                      object:self];
 }
 
 @end

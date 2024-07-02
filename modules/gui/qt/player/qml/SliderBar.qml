@@ -15,18 +15,20 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts 1.11
-import QtGraphicalEffects 1.0
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
+import QtQuick.Layouts
+import Qt5Compat.GraphicalEffects
 
 import org.videolan.vlc 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 import "qrc:///util/Helpers.js" as Helpers
+import "qrc:///util/" as Util
 
-Slider {
+T.ProgressBar {
     id: control
 
     readonly property real _hoveredScalingFactor: 1.8
@@ -40,12 +42,15 @@ Slider {
     readonly property real _scaledSeekPointsRadius: _seekPointsRadius * _hoveredScalingFactor
 
     property bool _currentChapterHovered: false
-    property real _tooltipPosition: timeTooltip.pos.x / sliderRectMouseArea.width
+    property real _tooltipPosition: timeTooltip.pos.x / width
 
     property color backgroundColor: theme.bg.primary
 
     Keys.onRightPressed: Player.jumpFwd()
     Keys.onLeftPressed: Player.jumpBwd()
+
+    Accessible.onIncreaseAction: Player.jumpFwd()
+    Accessible.onDecreaseAction: Player.jumpBwd()
 
     function showChapterMarks() {
         _isSeekPointsShown = true
@@ -58,12 +63,12 @@ Slider {
 
         enabled: control.enabled
         focused: control.visualFocus
-        hovered: control.hovered
+        hovered: hoverHandler.hovered
     }
 
     Timer {
         id: seekpointTimer
-        running: Player.hasChapters && !control.hovered && _isSeekPointsShown
+        running: Player.hasChapters && !hoverHandler.hovered && _isSeekPointsShown
         interval: 3000
         onTriggered: control._isSeekPointsShown = false
     }
@@ -74,36 +79,55 @@ Slider {
         //tooltip is a Popup, palette should be passed explicitly
         colorContext.palette: theme.palette
 
-        visible: control.hovered
+        visible: hoverHandler.hovered || control.visualFocus || dragHandler.active
 
-        text: Player.length.scale(pos.x / control.width).formatHMS() +
-              (Player.hasChapters ?
-                   " - " + Player.chapters.getNameAtPosition(control._tooltipPosition) : "")
+        text: {
+            let _text
 
-        pos: Qt.point(sliderRectMouseArea.mouseX, 0)
+            if (hoverHandler.hovered)
+                _text = Player.length.scale(pos.x / control.width).formatHMS()
+            else
+                _text = Player.time.formatHMS()
+
+            if (Player.hasChapters)
+                _text += " - " + Player.chapters.getNameAtPosition(control._tooltipPosition)
+
+            return _text
+        }
+
+        pos: Qt.point(hoverHandler.hovered ? Helpers.clamp(hoverHandler.point.position.x, 0, control.availableWidth)
+                                                        : (control.visualPosition * control.width), 0)
     }
 
-    Item {
+    Util.FSM {
         id: fsm
-
         signal playerUpdatePosition(real position)
         signal pressControl(real position, bool forcePrecise)
         signal releaseControl(real position, bool forcePrecise)
         signal moveControl(real position, bool forcePrecise)
+        signal inputChanged()
 
-        property var _state: fsmReleased
+        //each signal is associated to a key, when a signal is received,
+        //transitions of active state for the given key are evaluated
+        signalMap: ({
+            "playerUpdatePosition": fsm.playerUpdatePosition,
+            "pressControl": fsm.pressControl,
+            "releaseControl": fsm.releaseControl,
+            "moveControl": fsm.moveControl,
+            "inputChanged": fsm.inputChanged
+        })
 
-        function _changeState(state) {
-            _state.enabled = false
-            _state = state
-            _state.enabled = true
+        initialState: fsmReleased
+
+        function _setPositionFromValue(position) {
+            control.value = position
         }
 
         function _seekToPosition(position, threshold, forcePrecise) {
             position = Helpers.clamp(position, 0., 1.)
             control.value = position
             if (!forcePrecise) {
-                var chapter = Player.chapters.getClosestChapterFromPos(position, threshold)
+                const chapter = Player.chapters.getClosestChapterFromPos(position, threshold)
                 if (chapter !== -1) {
                     Player.chapters.selectChapter(chapter)
                     return
@@ -112,54 +136,132 @@ Slider {
             Player.position = position
         }
 
-        Item {
+        Util.FSMState {
             id: fsmReleased
-            enabled: true
 
-            Connections {
-                enabled: fsmReleased.enabled
-                target: fsm
-
-                onPlayerUpdatePosition: control.value = position
-
-                onPressControl: {
-                    control.forceActiveFocus()
-                    fsm._seekToPosition(position, VLCStyle.dp(4) / control.width, forcePrecise)
-                    fsm._changeState(fsmHeld)
+            transitions: ({
+                "playerUpdatePosition": {
+                    action: (position) => {
+                        control.value = position
+                    }
+                },
+                "pressControl": {
+                    action: (position, forcePrecise) => {
+                        control.forceActiveFocus()
+                        fsm._seekToPosition(position, VLCStyle.dp(4) / control.width, forcePrecise)
+                    },
+                    target: fsmHeld
                 }
-            }
+            })
         }
 
-        Item {
+        Util.FSMState  {
             id: fsmHeld
-            enabled: false
 
-            Connections {
-                enabled: fsmHeld.enabled
-                target: fsm
+            transitions: ({
+                "moveControl": {
+                    action: (position, forcePrecise) => {
+                        fsm._seekToPosition(position, VLCStyle.dp(2) / control.width, forcePrecise)
+                    }
+                },
+                "releaseControl": {
+                    target: fsmReleased
+                },
+                "inputChanged": {
+                    target: fsmHeldWrongInput
+                }
+            })
+        }
 
-                onMoveControl: fsm._seekToPosition(position, VLCStyle.dp(2) / control.width, forcePrecise)
+        Util.FSMState  {
+            id: fsmHeldWrongInput
 
-                onReleaseControl: fsm._changeState(fsmReleased)
+            function enter() {
+                fsm._setPositionFromValue(Player.position)
             }
+
+            transitions: ({
+                "playerUpdatePosition": {
+                    action: fsm._setPositionFromValue
+                },
+                "releaseControl": {
+                    target: fsmReleased
+                }
+            })
         }
     }
 
     Connections {
         target: Player
-        onPositionChanged: fsm.playerUpdatePosition(Player.position)
+        function onPositionChanged() {  fsm.playerUpdatePosition(Player.position) }
+        function onInputChanged() {  fsm.inputChanged() }
     }
 
-    Component.onCompleted:  {
-        fsm.playerUpdatePosition(Player.position)
-    }
+    Component.onCompleted: value = Player.position
 
     implicitHeight: control.barHeight
     height: implicitHeight
 
     padding: 0
 
-    stepSize: 0.01
+    //we use our own HoverHandler
+    hoverEnabled: false
+
+    HoverHandler {
+        id: hoverHandler
+
+        onHoveredChanged: () => {
+            if (hovered) {
+                if(Player.hasChapters)
+                    control._isSeekPointsShown = true
+            } else {
+                if(Player.hasChapters)
+                    seekpointTimer.restart()
+            }
+        }
+    }
+
+    contentItem: Item {
+        implicitHeight: control.implicitHeight
+        implicitWidth: control.implicitWidth
+
+        //placing the TapHandler directly in the Control doesn't work with 6.2
+        TapHandler {
+            acceptedButtons: Qt.LeftButton
+
+            //clicked but not dragged
+            onTapped: (point, button) => {
+                fsm.pressControl(point.position.x / control.width, point.modifiers === Qt.ShiftModifier)
+                fsm.releaseControl(point.position.x / control.width, point.modifiers === Qt.ShiftModifier)
+            }
+        }
+
+        DragHandler {
+            id: dragHandler
+            acceptedButtons: Qt.LeftButton
+
+            target: null
+            dragThreshold: 0
+
+            function moveControl() {
+                fsm.moveControl(dragHandler.centroid.position.x / control.width,
+                                dragHandler.centroid.modifiers === Qt.ShiftModifier)
+            }
+
+            onActiveChanged: {
+                if (active) {
+                    fsm.pressControl(centroid.position.x / control.width, centroid.modifiers === Qt.ShiftModifier)
+                } else {
+                    fsm.releaseControl( centroid.position.x / control.width, centroid.modifiers === Qt.ShiftModifier)
+                }
+            }
+
+            onCentroidChanged: {
+                // FIXME: Qt 6.5 use xAxis.onActiveValueChanged in the DragHandler
+                Qt.callLater(dragHandler.moveControl)
+            }
+        }
+    }
 
     background: Item {
         width: control.availableWidth
@@ -174,31 +276,6 @@ Slider {
             radius: implicitHeight
         }
 
-        MouseArea {
-            id: sliderRectMouseArea
-
-            width: control.availableWidth
-            height: control._scaledBarHeight
-            y: control._scaledY
-
-            hoverEnabled: true
-
-            onPressed: fsm.pressControl(mouse.x / control.width, mouse.modifiers === Qt.ShiftModifier)
-
-            onReleased: fsm.releaseControl(mouse.x / control.width, mouse.modifiers === Qt.ShiftModifier)
-
-            onPositionChanged: fsm.moveControl(mouse.x / control.width, mouse.modifiers === Qt.ShiftModifier)
-
-            onEntered: {
-                if(Player.hasChapters)
-                    control._isSeekPointsShown = true
-            }
-            onExited: {
-                if(Player.hasChapters)
-                    seekpointTimer.restart()
-            }
-        }
-
         Repeater {
             id: seekpointsRptr
 
@@ -211,8 +288,8 @@ Slider {
             Item {
                 Rectangle {
                     id: seekpointsRect
-                    readonly property real startPosition: model.startPosition === undefined ? 0.0 : model.startPosition
-                    readonly property real endPosition: model.endPosition === undefined ? 1.0 : model.endPosition
+                    readonly property real startPosition: model.startPosition ??  0.0
+                    readonly property real endPosition: model.endPosition ?? 1.0
 
                     readonly property int _currentChapter: {
                         if (control.visualPosition < seekpointsRect.startPosition)
@@ -226,8 +303,8 @@ Slider {
                             control._currentChapterHovered = _currentChapter === 0
                     }
 
-                    readonly property bool _hovered: control.hovered &&
-                                            (sliderRectMouseArea.mouseX > x && sliderRectMouseArea.mouseX < x+width)
+                    readonly property bool _hovered: hoverHandler.hovered &&
+                                            (hoverHandler.point.position.x > x && hoverHandler.point.position.x < x+width)
 
                     color: _currentChapter < 0 ? theme.fg.primary : control.backgroundColor
                     width: sliderRect.width * seekpointsRect.endPosition - x - control._seekPointsDistance
@@ -282,7 +359,7 @@ Slider {
                     }
                 ]
 
-                state: (seekpointsRect._hovered || (seekpointsRect._currentChapter === 0 && fsm._state == fsmHeld))
+                state: (seekpointsRect._hovered || (seekpointsRect._currentChapter === 0 && fsm._state === fsm.fsmHeld))
                        ? "visibleLarge"
                        : "visible"
             }
@@ -382,7 +459,7 @@ Slider {
         }
     }
 
-    handle: Rectangle {
+    Rectangle {
         id: sliderHandle
 
         property int _size: control.barHeight * 3
@@ -431,8 +508,8 @@ Slider {
             }
         ]
 
-        state: (control.hovered || control.activeFocus)
-               ? ((control._currentChapterHovered || (Player.hasChapters && fsm._state == fsmHeld)) ? "visibleLarge" : "visible")
+        state: (hoverHandler.hovered || control.visualFocus)
+               ? ((control._currentChapterHovered || (Player.hasChapters && fsm._state === fsm.fsmHeld)) ? "visibleLarge" : "visible")
                : "hidden"
     }
 }

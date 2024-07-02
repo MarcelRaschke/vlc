@@ -26,6 +26,7 @@
 
 #include <QWindow>
 #include <QObject>
+#include <QPointer>
 
 #include "qt.hpp"
 
@@ -59,7 +60,7 @@ protected slots:
 
 private:
     qt_intf_t *m_intf = nullptr;
-    QWindow* m_window = nullptr;
+    QPointer<QWindow> m_window;
 
     bool m_videoFullScreen = false;
     bool m_autoresize = false;
@@ -67,9 +68,7 @@ private:
     QRect   m_lastWinGeometry;
     QScreen* m_lastWinScreen = nullptr;
 
-#ifdef QT5_HAS_WAYLAND
     bool m_hasWayland = false;
-#endif
 };
 
 #endif // VIDEOWINDOWHANDLER_HPP

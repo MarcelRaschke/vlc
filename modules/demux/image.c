@@ -34,6 +34,7 @@
 #include <vlc_plugin.h>
 #include <vlc_demux.h>
 #include <vlc_image.h>
+#include <vlc_ancillary.h>
 #include "mxpeg_helper.h"
 
 /*****************************************************************************
@@ -83,7 +84,7 @@ vlc_module_begin()
         change_safe()
     add_bool("image-decode", true, DECODE_TEXT, DECODE_LONGTEXT)
         change_safe()
-    add_string("image-chroma", "", CHROMA_TEXT, CHROMA_LONGTEXT)
+    add_string("image-chroma", NULL, CHROMA_TEXT, CHROMA_LONGTEXT)
         change_safe()
     add_float("image-duration", 10, DURATION_TEXT, DURATION_LONGTEXT)
         change_safe()
@@ -408,7 +409,7 @@ static uint8_t FindJpegMarker(size_t *position, const uint8_t *data, size_t size
 static bool IsJfif(stream_t *s)
 {
     const uint8_t *header;
-    ssize_t peek = vlc_stream_Peek(s, &header, 256);
+    ssize_t peek = vlc_stream_Peek(s, &header, 4096);
     if(peek < 256)
         return false;
     size_t size = (size_t) peek;
@@ -416,6 +417,16 @@ static bool IsJfif(stream_t *s)
 
     if (FindJpegMarker(&position, header, size) != 0xd8)
         return false;
+    if (FindJpegMarker(&position, header, size) == 0xe2) // ICC Profile
+    {
+        size_t icc_size = GetWBE(&header[position]);
+        position += 2;
+        if (position + 12 > size)
+            return false;
+        if (memcmp(&header[position], "ICC_PROFILE\0", 12))
+            return false;
+        position += icc_size - 2;
+    }
     if (FindJpegMarker(&position, header, size) != 0xe0)
         return false;
     position += 2;  /* Skip size */

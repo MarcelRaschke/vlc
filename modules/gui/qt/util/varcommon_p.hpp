@@ -21,7 +21,6 @@
 #include <vlc_cxx_helpers.hpp>
 #include <vlc_vout.h>
 #include <vlc_aout.h>
-#include <vlc_interface.h>
 
 struct VLCObjectHolder
 {
@@ -71,7 +70,7 @@ public:
         : m_object(vout)
     { }
 
-    virtual vlc_object_t* get() const override
+    vlc_object_t* get() const override
     {
         if (!m_object)
             return nullptr;
@@ -102,7 +101,7 @@ public:
         : m_object(p_intf)
     { }
 
-    virtual vlc_object_t* get() const override
+    vlc_object_t* get() const override
     {
         if (!m_object)
             return nullptr;
@@ -131,7 +130,7 @@ public:
         : m_object(aout)
     { }
 
-    virtual vlc_object_t* get() const override
+    vlc_object_t* get() const override
     {
         if (!m_object)
             return nullptr;
@@ -163,7 +162,7 @@ public:
         : m_object(obj)
     { }
 
-    virtual vlc_object_t* get() const override {
+    vlc_object_t* get() const override {
         return m_object;
     }
 

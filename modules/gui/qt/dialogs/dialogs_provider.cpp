@@ -25,6 +25,8 @@
 # include "config.h"
 #endif
 
+#include <vlc_common.h>
+#include <vlc_interface.h>
 #include <vlc_intf_strings.h>
 
 #include "qt.hpp"
@@ -55,6 +57,8 @@
 #include "dialogs/errors/errors.hpp"
 #include "dialogs/playlists/playlists.hpp"
 #include "dialogs/firstrun/firstrunwizard.hpp"
+
+#include <vlc_url.h>
 
 #include <QEvent>
 #include <QApplication>
@@ -340,6 +344,16 @@ void DialogsProvider::mediaInfoDialog( void )
         dialog->hide();
 }
 
+void DialogsProvider::mediaInfoDialog( const SharedInputItem& inputItem )
+{
+    assert(inputItem.get());
+
+    MediaInfoDialog * const mid = new MediaInfoDialog( p_intf, inputItem );
+    mid->setWindowFlag( Qt::Dialog );
+    mid->setAttribute( Qt::WA_DeleteOnClose );
+    mid->showTab( MediaInfoDialog::META_PANEL );
+}
+
 void DialogsProvider::mediaInfoDialog( const PlaylistItem& pItem )
 {
     input_item_t *p_input = nullptr;
@@ -353,10 +367,59 @@ void DialogsProvider::mediaInfoDialog( const PlaylistItem& pItem )
 
     if( p_input )
     {
-        MediaInfoDialog * const mid = new MediaInfoDialog( p_intf, p_input );
-        mid->setWindowFlag( Qt::Dialog );
-        mid->setAttribute(Qt::WA_DeleteOnClose);
-        mid->showTab( MediaInfoDialog::META_PANEL );
+        mediaInfoDialog( SharedInputItem{ p_input } );
+    }
+}
+
+void DialogsProvider::mediaInfoDialog( const MLItemId& itemId )
+{
+    assert( p_intf );
+
+    vlc_medialibrary_t* const ml = vlc_ml_instance_get( p_intf );
+    assert( ml );
+
+    input_item_t * const inputItem = vlc_ml_get_input_item( ml, itemId.id );
+    assert( inputItem );
+
+    const SharedInputItem sharedInputItem { inputItem, false };
+    if ( input_item_IsPreparsed( inputItem ) )
+    {
+        mediaInfoDialog( sharedInputItem );
+    }
+    else
+    {
+        static const struct vlc_metadata_cbs cbs = {
+            // on_preparse_ended
+            []( input_item_t * const item, enum input_item_preparse_status status, void * const userData ) {
+                const auto dp = static_cast<DialogsProvider *>( userData );
+
+                if ( status == ITEM_PREPARSE_TIMEOUT || status == ITEM_PREPARSE_FAILED )
+                    qWarning( "Could not preparse input item %p. Status %i", item, status );
+
+                const SharedInputItem sharedInputItem{ item };
+
+                QMetaObject::invokeMethod( dp, [dp, sharedInputItem]() {
+                        dp->mediaInfoDialog( sharedInputItem );
+                    }, Qt::QueuedConnection );
+            },
+            // on_art_fetch_ended
+            NULL,
+            // on_subtree_added
+            NULL,
+            // on_attachments_added
+            NULL
+        };
+
+        const int result = libvlc_MetadataRequest( vlc_object_instance( p_intf ),
+                                                   inputItem,
+                                                   static_cast<input_item_meta_request_option_t>(META_REQUEST_OPTION_SCOPE_ANY | META_REQUEST_OPTION_SCOPE_FORCED),
+                                                   &cbs,
+                                                   this,
+                                                   0,
+                                                   NULL );
+        if( Q_UNLIKELY( result != VLC_SUCCESS ) )
+            msg_Warn( p_intf, "libvlc_MetadataRequest() failed for input item %p (%s, %s)",
+                      inputItem, inputItem->psz_name, inputItem->psz_uri );
     }
 }
 

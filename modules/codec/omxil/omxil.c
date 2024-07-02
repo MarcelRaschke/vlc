@@ -94,11 +94,13 @@ vlc_module_begin ()
     set_callbacks(OpenDecoder, CloseGeneric)
 #endif
 
+#ifdef ENABLE_SOUT
     add_submodule ()
     set_section( N_("Encoding") , NULL )
     set_description( N_("Video encoder (using OpenMAX IL)") )
     set_capability( "video encoder", 0 )
     set_callback( OpenEncoder )
+#endif
 vlc_module_end ()
 
 /*****************************************************************************
@@ -133,8 +135,8 @@ static OMX_ERRORTYPE ImplementationSpecificWorkarounds(decoder_t *p_dec,
         {
             /* I420 xvideo is slow on OMAP */
             def->format.video.eColorFormat = OMX_COLOR_FormatCbYCrY;
-            GetVlcChromaFormat( def->format.video.eColorFormat,
-                                &p_fmt->i_codec, 0 );
+            p_fmt->i_codec =
+                p_fmt->video.i_chroma = GetVlcChromaFormat( def->format.video.eColorFormat );
             GetVlcChromaSizes( p_fmt->i_codec,
                                def->format.video.nFrameWidth,
                                def->format.video.nFrameHeight,
@@ -211,11 +213,11 @@ static OMX_ERRORTYPE SetPortDefinition(decoder_t *p_dec, OmxPort *p_port,
                   def->format.video.nFrameHeight * 2;
             p_port->i_frame_size = def->nBufferSize;
 
-            if(!GetOmxVideoFormat(p_fmt->i_codec,
-                                  &def->format.video.eCompressionFormat, 0) )
+            def->format.video.eCompressionFormat = GetOmxVideoFormat(p_fmt);
+            if( def->format.video.eCompressionFormat == OMX_VIDEO_CodingUnused)
             {
-                if(!GetOmxChromaFormat(p_fmt->i_codec,
-                                       &def->format.video.eColorFormat, 0) )
+                def->format.video.eColorFormat = GetOmxChromaFormat(p_fmt->i_codec);
+                if( def->format.video.eColorFormat == OMX_COLOR_FormatUnused)
                 {
                     omx_error = OMX_ErrorNotImplemented;
                     CHECK_ERROR(omx_error, "codec %4.4s doesn't match any OMX format",
@@ -232,8 +234,8 @@ static OMX_ERRORTYPE SetPortDefinition(decoder_t *p_dec, OmxPort *p_port,
         }
         else
         {
-            if( !GetVlcChromaFormat( def->format.video.eColorFormat,
-                                     &p_fmt->i_codec, 0 ) )
+            p_fmt->i_codec = GetVlcChromaFormat( def->format.video.eColorFormat );
+            if( p_fmt->i_codec == 0 )
             {
                 omx_error = OMX_ErrorNotImplemented;
                 CHECK_ERROR(omx_error, "OMX color format %i not supported",
@@ -254,8 +256,8 @@ static OMX_ERRORTYPE SetPortDefinition(decoder_t *p_dec, OmxPort *p_port,
         p_port->i_frame_size = def->nBufferSize;
         if(def->eDir == OMX_DirInput)
         {
-            if(!GetOmxAudioFormat(p_fmt->i_codec,
-                                  &def->format.audio.eEncoding, 0) )
+            def->format.audio.eEncoding = GetOmxAudioFormat(p_fmt->i_codec );
+            if ( def->format.audio.eEncoding == OMX_AUDIO_CodingUnused )
             {
                 omx_error = OMX_ErrorNotImplemented;
                 CHECK_ERROR(omx_error, "codec %4.4s doesn't match any OMX format",
@@ -264,8 +266,8 @@ static OMX_ERRORTYPE SetPortDefinition(decoder_t *p_dec, OmxPort *p_port,
         }
         else
         {
-            if( !OmxToVlcAudioFormat(def->format.audio.eEncoding,
-                                   &p_fmt->i_codec, 0 ) )
+            p_fmt->i_codec = OmxToVlcAudioFormat(def->format.audio.eEncoding );
+            if( p_fmt->i_codec == 0 )
             {
                 omx_error = OMX_ErrorNotImplemented;
                 CHECK_ERROR(omx_error, "OMX audio encoding %i not supported",
@@ -542,11 +544,11 @@ static OMX_ERRORTYPE GetPortDefinition(decoder_t *p_dec, OmxPort *p_port,
             def->format.video.nStride = p_fmt->video.i_width;
         }
 
-        if(!GetVlcVideoFormat( def->format.video.eCompressionFormat,
-                               &p_fmt->i_codec, 0 ) )
+        p_fmt->i_codec = GetVlcVideoFormat( def->format.video.eCompressionFormat );
+        if( p_fmt->i_codec == 0 )
         {
-            if( !GetVlcChromaFormat( def->format.video.eColorFormat,
-                                     &p_fmt->i_codec, 0 ) )
+            p_fmt->i_codec = GetVlcChromaFormat( def->format.video.eColorFormat );
+            if( p_fmt->i_codec == 0 )
             {
                 omx_error = OMX_ErrorNotImplemented;
                 CHECK_ERROR(omx_error, "OMX color format %i not supported",
@@ -570,8 +572,8 @@ static OMX_ERRORTYPE GetPortDefinition(decoder_t *p_dec, OmxPort *p_port,
         break;
 
     case AUDIO_ES:
-        if( !OmxToVlcAudioFormat( def->format.audio.eEncoding,
-                                &p_fmt->i_codec, 0 ) )
+        p_fmt->i_codec = OmxToVlcAudioFormat( def->format.audio.eEncoding );
+        if( p_fmt->i_codec == 0 )
         {
             omx_error = OMX_ErrorNotImplemented;
             CHECK_ERROR(omx_error, "OMX audio format %i not supported",
@@ -732,8 +734,8 @@ static OMX_ERRORTYPE InitialiseComponent(decoder_t *p_dec,
     /* Set component role */
     OMX_INIT_STRUCTURE(role);
     strcpy((char*)role.cRole,
-           GetOmxRole(p_sys->b_enc ? p_dec->fmt_out.i_codec : p_dec->fmt_in->i_codec,
-                      p_dec->fmt_in->i_cat, p_sys->b_enc));
+           GetOmxRole(p_sys->b_enc ? &p_dec->fmt_out : p_dec->fmt_in,
+                      p_sys->b_enc));
 
     omx_error = OMX_SetParameter(omx_handle, OMX_IndexParamStandardComponentRole,
                                  &role);
@@ -878,7 +880,7 @@ static int OpenDecoder( vlc_object_t *p_this )
     decoder_t *p_dec = (decoder_t*)p_this;
     int status;
 
-    if( 0 || !GetOmxRole(p_dec->fmt_in->i_codec, p_dec->fmt_in->i_cat, false) )
+    if( 0 || !GetOmxRole(p_dec->fmt_in, false) )
         return VLC_EGENERIC;
 
     status = OpenGeneric( p_this, false );
@@ -895,6 +897,7 @@ static int OpenDecoder( vlc_object_t *p_this )
     return VLC_SUCCESS;
 }
 
+#ifdef ENABLE_SOUT
 static void CloseEncoder( encoder_t *p_enc )
 {
     CloseGeneric( VLC_OBJECT(p_enc) );
@@ -908,7 +911,7 @@ static int OpenEncoder( vlc_object_t *p_this )
     encoder_t *p_enc = (encoder_t*)p_this;
     int status;
 
-    if( !GetOmxRole(p_enc->fmt_out.i_codec, p_enc->fmt_in.i_cat, true) )
+    if( !GetOmxRole(&p_enc->fmt_out, true) )
         return VLC_EGENERIC;
 
     status = OpenGeneric( p_this, true );
@@ -923,6 +926,7 @@ static int OpenEncoder( vlc_object_t *p_this )
 
     return VLC_SUCCESS;
 }
+#endif
 
 /*****************************************************************************
  * OpenGeneric: Create the generic decoder/encoder instance
@@ -979,8 +983,7 @@ static int OpenGeneric( vlc_object_t *p_this, bool b_encode )
     /* Enumerate components and build a list of the one we want to try */
     p_sys->components =
         CreateComponentsList(p_this,
-             GetOmxRole(p_sys->b_enc ? p_dec->fmt_out.i_codec :
-                        p_dec->fmt_in->i_codec, p_dec->fmt_in->i_cat,
+             GetOmxRole(p_sys->b_enc ? &p_dec->fmt_out : p_dec->fmt_in,
                         p_sys->b_enc), p_sys->ppsz_components);
     if( !p_sys->components )
     {
@@ -1272,7 +1275,7 @@ static int DecodeVideoOutput( decoder_t *p_dec, OmxPort *p_port, picture_t **pp_
                                    p_pic, p_port->definition.format.video.nSliceHeight,
                                    p_port->i_frame_stride,
                                    p_header->pBuffer + p_header->nOffset,
-                                   p_port->i_frame_stride_chroma_div, NULL);
+                                   p_port->i_frame_stride_chroma_div);
             }
 
             if (p_pic)
@@ -1628,6 +1631,7 @@ error:
     return VLCDEC_SUCCESS;
 }
 
+#ifdef ENABLE_SOUT
 /*****************************************************************************
  * EncodeVideo: Called to encode one frame
  *****************************************************************************/
@@ -1725,6 +1729,7 @@ error:
     p_sys->b_error = true;
     return NULL;
 }
+#endif // !ENABLE_SOUT
 
 /*****************************************************************************
  * CloseGeneric: omxil decoder destruction

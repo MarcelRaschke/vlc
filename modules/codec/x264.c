@@ -30,6 +30,7 @@
 
 #define VLC_MODULE_LICENSE VLC_LICENSE_GPL_2_PLUS
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 #include <vlc_codec.h>
@@ -764,7 +765,6 @@ static int  Open ( vlc_object_t *p_this )
     int i_qmin = 0, i_qmax = 0;
     x264_nal_t *nal;
     int i, i_nal;
-    bool fullrange = false;
 
 #ifdef PLUGIN_X262
     if( p_enc->fmt_out.i_codec != VLC_CODEC_MP2V &&
@@ -794,8 +794,9 @@ static int  Open ( vlc_object_t *p_this )
     if( !p_sys )
         return VLC_ENOMEM;
 
-    fullrange = var_GetBool( p_enc, SOUT_CFG_PREFIX "fullrange" );
-    fullrange |= p_enc->fmt_in.video.color_range == COLOR_RANGE_FULL;
+    if (var_GetBool( p_enc, SOUT_CFG_PREFIX "fullrange" ))
+        p_enc->fmt_in.video.color_range = COLOR_RANGE_FULL;
+
     char *psz_profile = var_GetString( p_enc, SOUT_CFG_PREFIX "profile" );
 # ifdef PLUGIN_X264_10B
     const int mask = X264_CSP_HIGH_DEPTH;
@@ -807,17 +808,17 @@ static int  Open ( vlc_object_t *p_this )
 
         if( !strcmp( psz_profile, "high10" ) )
         {
-            p_enc->fmt_in.i_codec = mask ? VLC_CODEC_I420_10L : fullrange ? VLC_CODEC_J420 : VLC_CODEC_I420;
+            p_enc->fmt_in.video.i_chroma = mask ? VLC_CODEC_I420_10L : VLC_CODEC_I420;
             p_sys->i_colorspace = X264_CSP_I420 | mask;
         }
         else if( !strcmp( psz_profile, "high422" ) )
         {
-            p_enc->fmt_in.i_codec = mask ? VLC_CODEC_I422_10L : fullrange ? VLC_CODEC_J422 : VLC_CODEC_I422;
+            p_enc->fmt_in.video.i_chroma = mask ? VLC_CODEC_I422_10L : VLC_CODEC_I422;
             p_sys->i_colorspace = X264_CSP_I422 | mask;
         }
         else if( !strcmp( psz_profile, "high444" ) )
         {
-            p_enc->fmt_in.i_codec = mask ? VLC_CODEC_I444_10L : fullrange ? VLC_CODEC_J444 : VLC_CODEC_I444;
+            p_enc->fmt_in.video.i_chroma = mask ? VLC_CODEC_I444_10L : VLC_CODEC_I444;
             p_sys->i_colorspace = X264_CSP_I444 | mask;
         }
         else
@@ -827,7 +828,7 @@ static int  Open ( vlc_object_t *p_this )
             free( psz_profile );
             return VLC_EGENERIC;
 # else
-            p_enc->fmt_in.i_codec = fullrange ? VLC_CODEC_J420 : VLC_CODEC_I420;
+            p_enc->fmt_in.video.i_chroma = VLC_CODEC_I420;
             p_sys->i_colorspace = X264_CSP_I420;
 # endif
         }
@@ -839,10 +840,12 @@ static int  Open ( vlc_object_t *p_this )
         msg_Err( p_enc, "Only high-profiles and 10-bit are supported");
         return VLC_EGENERIC;
 # else
-        p_enc->fmt_in.i_codec = fullrange ? VLC_CODEC_J420 : VLC_CODEC_I420;
+        p_enc->fmt_in.video.i_chroma = VLC_CODEC_I420;
         p_sys->i_colorspace = X264_CSP_I420;
 # endif
     }
+
+    p_enc->fmt_in.i_codec = p_enc->fmt_in.video.i_chroma;
 
     p_sys->psz_stat_name = NULL;
     p_sys->i_sei_size = 0;
@@ -872,7 +875,7 @@ static int  Open ( vlc_object_t *p_this )
     p_sys->param.i_csp = p_sys->i_colorspace;
     p_sys->param.i_width  = p_enc->fmt_in.video.i_visible_width;
     p_sys->param.i_height = p_enc->fmt_in.video.i_visible_height;
-    p_sys->param.vui.b_fullrange = fullrange;
+    p_sys->param.vui.b_fullrange = p_enc->fmt_in.video.color_range == COLOR_RANGE_FULL;
 
     switch( p_enc->fmt_in.video.space )
     {
@@ -1433,7 +1436,7 @@ static void x264_log( void *data, int i_level, const char *psz, va_list args)
     }
 
     msg_GenericVa( p_enc, i_level, psz, args );
-};
+}
 
 /****************************************************************************
  * Encode:

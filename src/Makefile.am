@@ -7,13 +7,13 @@ AUTOMAKE_OPTIONS = subdir-objects
 NULL =
 EXTRA_DIST = \
 	vlc-plugin.pc.in \
-	libvlccore.sym \
 	revision.txt
 
 BUILT_SOURCES = $(nodist_pluginsinclude_HEADERS)
 CLEANFILES = $(BUILT_SOURCES)
 
 SUFFIXES = .pc.in .pc .rc.in .rc
+TEST_EXTENSIONS =
 
 ###############################################################################
 # Headers
@@ -21,7 +21,7 @@ SUFFIXES = .pc.in .pc .rc.in .rc
 
 pluginsincludedir = $(pkgincludedir)/plugins
 
-pluginsinclude_HEADERS = \
+pluginsinclude_HEADERS.h = \
 	../include/vlc_access.h \
 	../include/vlc_actions.h \
 	../include/vlc_addons.h \
@@ -42,7 +42,6 @@ pluginsinclude_HEADERS = \
 	../include/vlc_config_cat.h \
 	../include/vlc_configuration.h \
 	../include/vlc_cpu.h \
-	../include/vlc_cxx_helpers.hpp \
 	../include/vlc_clock.h \
 	../include/vlc_decoder.h \
 	../include/vlc_demux.h \
@@ -51,7 +50,6 @@ pluginsinclude_HEADERS = \
 	../include/vlc_epg.h \
 	../include/vlc_es.h \
 	../include/vlc_es_out.h \
-	../include/vlc_events.h \
 	../include/vlc_executor.h \
 	../include/vlc_filter.h \
 	../include/vlc_fingerprinter.h \
@@ -84,6 +82,7 @@ pluginsinclude_HEADERS = \
 	../include/vlc_objects.h \
 	../include/vlc_opengl.h \
 	../include/vlc_opengl_interop.h \
+	../include/vlc_opengl_filter.h \
 	../include/vlc_picture.h \
 	../include/vlc_picture_fifo.h \
 	../include/vlc_picture_pool.h \
@@ -91,7 +90,9 @@ pluginsinclude_HEADERS = \
 	../include/vlc_playlist.h \
 	../include/vlc_playlist_export.h \
 	../include/vlc_plugin.h \
+	../include/vlc_poll.h \
 	../include/vlc_probe.h \
+	../include/vlc_preparser.h \
 	../include/vlc_queue.h \
 	../include/vlc_rand.h \
 	../include/vlc_renderer_discovery.h \
@@ -123,6 +124,15 @@ pluginsinclude_HEADERS = \
 	../include/vlc_xlib.h \
 	../include/vlc_xml.h \
 	$(NULL)
+
+pluginsinclude_HEADERS.hpp = \
+	../include/vlc_cxx_helpers.hpp \
+	../include/vlc_list.hpp \
+	$(NULL)
+
+pluginsinclude_HEADERS = \
+	$(pluginsinclude_HEADERS.h) \
+	$(pluginsinclude_HEADERS.hpp)
 nodist_pluginsinclude_HEADERS = ../include/vlc_about.h
 
 noinst_HEADERS = \
@@ -213,8 +223,10 @@ libvlccore_la_SOURCES = \
 	version.c \
 	config/ansi_term.h \
 	config/configuration.h \
+	config/cat.c \
 	config/core.c \
 	config/chain.c \
+	config/dirs.c \
 	config/file.c \
 	config/help.c \
 	config/intf.c \
@@ -260,7 +272,6 @@ libvlccore_la_SOURCES = \
 	preparser/fetcher.c \
 	preparser/fetcher.h \
 	preparser/preparser.c \
-	preparser/preparser.h \
 	input/item.c \
 	input/access.c \
 	clock/clock_internal.c \
@@ -278,6 +289,7 @@ libvlccore_la_SOURCES = \
 	input/info.h \
 	input/meta.c \
 	input/attachment.c \
+	input/parse.c \
 	player/player.c \
 	player/player.h \
 	player/input.c \
@@ -306,6 +318,8 @@ libvlccore_la_SOURCES = \
 	input/resource.h \
 	input/resource.c \
 	input/services_discovery.c \
+	input/source.c \
+	input/source.h \
 	input/stats.c \
 	input/stream.c \
 	input/stream_fifo.c \
@@ -375,9 +389,11 @@ libvlccore_la_SOURCES = \
 	misc/mtime.c \
 	misc/frame.c \
 	misc/fifo.c \
+	misc/filesystem.c \
 	misc/fourcc.c \
 	misc/fourcc_list.h \
 	misc/es_format.c \
+	misc/extensions.c \
 	misc/picture.c \
 	misc/picture.h \
 	misc/picture_fifo.c \
@@ -389,11 +405,11 @@ libvlccore_la_SOURCES = \
 	misc/rcu.c \
 	misc/renderer_discovery.c \
 	misc/threads.c \
+	misc/threads.h \
 	misc/cpu.c \
 	misc/diffutil.c \
 	misc/epg.c \
 	misc/exit.c \
-	misc/events.c \
 	misc/image.c \
 	misc/messages.c \
 	misc/tracer.c \
@@ -455,13 +471,6 @@ endif
 
 if HAVE_EMSCRIPTEN
 libvlccore_la_SOURCES += \
-	posix/thread.c \
-	posix/getaddrinfo.c \
-	posix/error.c \
-	posix/dirs.c \
-	posix/filesystem.c \
-	posix/specific.c \
-	posix/timer.c \
 	emscripten/netconf.c \
 	emscripten/thread.c
 endif
@@ -517,10 +526,12 @@ libvlccore_la_SOURCES += \
 	posix/thread.c
 libvlccore_la_LIBADD += $(LIBEXECINFO)
 if !HAVE_DARWIN
+if !HAVE_EMSCRIPTEN
+libvlccore_la_SOURCES += posix/netconf.c
+endif
 libvlccore_la_SOURCES += \
 	posix/dirs.c \
 	posix/error.c \
-	posix/netconf.c \
 	posix/picture.c \
 	posix/spawn.c \
 	posix/specific.c
@@ -537,13 +548,11 @@ endif
 endif
 endif
 
-if ENABLE_SOUT
 libvlccore_la_SOURCES += \
 	stream_output/sap.c \
 	stream_output/stream_output.c stream_output/stream_output.h
 if ENABLE_VLM
 libvlccore_la_SOURCES += input/vlm.c input/vlm_event.c input/vlmshell.c
-endif
 endif
 
 if UPDATE_CHECK
@@ -560,9 +569,11 @@ libvlccore_la_LDFLAGS = \
 	-no-undefined \
 	-export-symbols $(srcdir)/libvlccore.sym \
 	-version-info 9:0:0
-libvlccore_la_DEPENDENCIES = libvlccore.sym
+libvlccore_la_SOURCES += libvlccore.sym
+EXTRA_libvlccore_la_DEPENDENCIES = libvlccore.sym
+
 if HAVE_WIN32
-libvlccore_la_DEPENDENCIES += libvlccore_win32_rc.$(OBJEXT)
+EXTRA_libvlccore_la_DEPENDENCIES += libvlccore_win32_rc.$(OBJEXT)
 libvlccore_la_LDFLAGS += -Wl,libvlccore_win32_rc.$(OBJEXT) -avoid-version -Wc,-static
 endif
 if HAVE_OS2
@@ -572,7 +583,6 @@ if HAVE_DBUS
 libvlccore_la_LIBADD += $(DBUS_LIBS)
 endif
 if HAVE_DARWIN
-$(libvlccore_la_OBJECTS): libvlccore_objc.la
 libvlccore_objc_la_OBJCFLAGS = $(AM_OBJCFLAGS) -fobjc-arc
 libvlccore_objc_la_LDFLAGS = -static
 libvlccore_la_LIBADD += libvlccore_objc.la
@@ -616,6 +626,7 @@ check_PROGRAMS = \
 	test_jaro_winkler \
 	test_list \
 	test_md5 \
+	test_objects_cxx \
 	test_picture_pool \
 	test_sort \
 	test_timer \
@@ -632,14 +643,13 @@ check_PROGRAMS = \
 	test_media_source \
 	test_extensions \
 	test_thread \
-	test_diffutil
+	test_diffutil \
+	test_cpp_list
 
 TESTS = $(check_PROGRAMS) check_symbols
 
 test_block_SOURCES = test/block_test.c
 test_block_LDADD = $(LDADD) $(LIBS_libvlccore)
-test_block_DEPENDENCIES =
-
 test_dictionary_SOURCES = test/dictionary.c
 test_executor_SOURCES = test/executor.c
 test_i18n_atof_SOURCES = test/i18n_atof.c
@@ -648,6 +658,7 @@ test_interrupt_LDADD = $(LDADD) $(LIBS_libvlccore)
 test_jaro_winkler_SOURCES = test/jaro_winkler.c config/jaro_winkler.c
 test_list_SOURCES = test/list.c
 test_md5_SOURCES = test/md5.c
+test_objects_cxx_SOURCES = misc/objects_cxx_test.cpp misc/objects.c
 test_picture_pool_SOURCES = test/picture_pool.c
 test_sort_SOURCES = test/sort.c
 test_timer_SOURCES = test/timer.c
@@ -682,8 +693,8 @@ test_media_source_SOURCES = media_source/test.c \
 	media_source/media_source.c \
 	media_source/media_tree.c
 test_thread_SOURCES = test/thread.c
+test_cpp_list_SOURCES = test/list_cpp.cpp
 
-AM_LDFLAGS = -no-install
 LDADD = libvlccore.la \
 	../compat/libcompat.la
 
@@ -721,6 +732,50 @@ stamp-revision:
 # Unit/regression test
 ###############################################################################
 
+checkheader_verbose = $(checkheader_verbose_$(V))
+checkheader_verbose_ = $(checkheader_verbose_$(AM_DEFAULT_VERBOSITY))
+checkheader_verbose__0 = $(checkheader_verbose_0)
+
+checkheaders.h   = $(pluginsinclude_HEADERS.h:../include/%=checkheader_%.check)
+checkheaders.hpp = $(pluginsinclude_HEADERS.hpp:../include/%=checkheader_%.check)
+checkheaders.all = $(checkheaders.h) $(checkheaders.hpp)
+
+$(checkheaders.all): checkheader_verbose_0 = @echo "  CHECK  $(@:checkheader_%.check=%)";
+$(checkheaders.all): skip_checkheader_verbose_0 = @echo "  CHECK  $(@:checkheader_%.check=%) (SKIPPED)";
+#$(checkheaders.hpp): checkheader_verbose_0 = @echo "  CHECK  $(@:checkheader_%_hpp=%.hpp)";
+#$(checkheaders.hpp): skip_checkheader_verbose_0 = @echo "  CHECK  $(@:checkheader_%_hpp=%.hpp) (SKIPPED)";
+
+nodist_check_SCRIPTS = $(checkheaders.all)
+MOSTLYCLEANFILES += \
+	$(checkheaders.h:%=%.c) $(checkheaders.h:%=%.lo) \
+	$(checkheaders.hpp:%=%.cpp) $(checkheaders.hpp:%=%.lo)
+
+checkheaders: $(checkheaders.all)
+checkheader_%.check:
+	$(checkheader_verbose) \
+	sourcefile="$@.$(CHECKHEADER_SOURCE_EXT)"; exec 3>$${sourcefile} && \
+	echo "#include <stdbool.h>" >&3 && \
+	echo "#include <vlc_common.h>" >&3 && \
+	echo "#include <$*>" >&3 && \
+	$(CHECKCOMPILE) $(CHECK_CFLAGS) -c $${sourcefile} -o $@.lo
+$(checkheaders.h): CHECKHEADER_SOURCE_EXT=c
+$(checkheaders.h): CHECKCOMPILE=$(LTCOMPILE)
+$(checkheaders.hpp): CHECKHEADER_SOURCE_EXT=cpp
+$(checkheaders.hpp): CHECKCOMPILE=$(LTCXXCOMPILE)
+
+# Some exceptions for headers depending on other libraries
+checkheader_vlc_gcrypt.h.check: CHECK_CFLAGS = "-Dgcry_check_version(x)="
+checkheader_vlc_xlib.h.check: CHECK_CFLAGS = $(X_CFLAGS)
+checkheader_vlc_list.hpp.check: CHECK_CFLAGS = "-Drestrict="
+
+SKIPPED_CHECKHEADERS =
+if !HAVE_X
+SKIPPED_CHECKHEADERS += vlc_xlib.h
+endif
+
+$(SKIPPED_CHECKHEADERS:%=checkheader_%.check): checkheader_verbose_0 = $(skip_checkheader_verbose_0)
+$(SKIPPED_CHECKHEADERS:%=checkheader_%.check): CHECKCOMPILE = exit 0;
+
 dist_check_SCRIPTS = check_headers check_symbols
 
 check-local:
@@ -734,6 +789,8 @@ check-local:
 		fi ; \
 	done
 	$(SHELL) $(srcdir)/check_headers $(pluginsinclude_HEADERS)
+
+include rust/Makefile.am
 
 FORCE:
 	@echo "Generated source cannot be phony. Go away." >&2

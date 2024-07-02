@@ -25,6 +25,14 @@
 #include <QQuickItem>
 #include "menus.hpp"
 #include "maininterface/mainctx.hpp"
+#include "util/list_selection_model.hpp"
+
+Q_MOC_INCLUDE("playlist/playlist_controller.hpp")
+Q_MOC_INCLUDE("playlist/playlist_model.hpp")
+Q_MOC_INCLUDE("network/networkdevicemodel.hpp")
+Q_MOC_INCLUDE("network/networkmediamodel.hpp")
+Q_MOC_INCLUDE("medialibrary/mlplaylistlistmodel.hpp")
+Q_MOC_INCLUDE("medialibrary/mlplaylistmodel.hpp")
 
 class MediaLib;
 class MLPlaylistListModel;
@@ -34,7 +42,7 @@ class NetworkMediaModel;
 class MainCtx;
 namespace vlc {
 namespace playlist {
-class PlaylistControllerModel;
+class PlaylistController;
 class PlaylistListModel;
 }
 }
@@ -66,6 +74,8 @@ class SortMenu : public QObject
 {
     Q_OBJECT
 
+    Q_PROPERTY(bool shown READ isShown NOTIFY shownChanged FINAL)
+
 public:
     using QObject::QObject;
 
@@ -73,14 +83,18 @@ public:
 
     Q_INVOKABLE void close();
 
+    bool isShown() const { return m_shown; };
+
 protected:
     virtual void onPopup(QMenu * menu);
 
 signals:
     void selected(int index);
+    void shownChanged();
 
 private:
     std::unique_ptr<QMenu> m_menu;
+    bool m_shown = false;
 };
 
 class SortMenuVideo : public SortMenu
@@ -101,17 +115,24 @@ class QmlGlobalMenu : public VLCMenuBar
 {
     Q_OBJECT
     SIMPLE_MENU_PROPERTY(MainCtx*, ctx, nullptr)
+
+    Q_PROPERTY(bool shown READ isShown NOTIFY shownChanged FINAL)
+
 public:
     explicit QmlGlobalMenu(QObject *parent = nullptr);
+
+    bool isShown() const { return m_shown; };
 
 signals:
     void aboutToShow();
     void aboutToHide();
+    void shownChanged();
 
 public slots:
     void popup( QPoint pos );
 private:
     std::unique_ptr<QMenu> m_menu;
+    bool m_shown = false;
 };
 
 //inherit VLCMenuBar so we can access menu creation functions
@@ -359,9 +380,13 @@ private:
 class PlaylistContextMenu : public QObject {
     Q_OBJECT
     SIMPLE_MENU_PROPERTY(vlc::playlist::PlaylistListModel*, model, nullptr)
-    SIMPLE_MENU_PROPERTY(vlc::playlist::PlaylistControllerModel*, controler, nullptr)
+    SIMPLE_MENU_PROPERTY(vlc::playlist::PlaylistController*, controler, nullptr)
+    SIMPLE_MENU_PROPERTY(ListSelectionModel*, selectionModel, nullptr)
 public:
     PlaylistContextMenu(QObject* parent = nullptr);
+
+signals:
+    void jumpToCurrentPlaying();
 
 public slots:
     void popup(int currentIndex, QPoint pos );

@@ -16,7 +16,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQml 2.11
+import QtQml
 
 import org.videolan.vlc 0.1
 
@@ -24,7 +24,7 @@ import org.videolan.vlc 0.1
 // @brief - a class that can be used to create native menus with support
 // to asyncronously retreive data from MLBaseModel like model
 
-VanillaObject {
+QtObject {
     id: root
 
     /**
@@ -35,7 +35,7 @@ VanillaObject {
 
         "action" - (function(dataList, options, indexes)) a function that will be called when action is selected
 
-        "visible" - (Boolean or function(options, indexes) -> Boolean) (optional) a boolean value or function which
+        "visible" - (Boolean or function(dataList,options, indexes) -> Boolean) (optional) a boolean value or function which
                     controls whether the action is shown in the menu following 'popup' call
 
        e.g see MLContextMenu.qml
@@ -50,39 +50,23 @@ VanillaObject {
 
     property var _indexes: []
 
-    property bool _pendingData: false
-
     property var _dataList: null
 
     property int _currentRequest: 0
 
-    property int _actionOnDataReceived: -1
-
     property var _effectiveActions: null
+
+    property point _popupPoint
 
 
     function popup(_indexes, point, _options) {
         root._options = _options
         root._indexes = _indexes
-        _actionOnDataReceived = -1
-        _pendingData = true
         _dataList = null
+        _popupPoint = point
 
-        var requestID = ++_currentRequest
+        const requestID = ++_currentRequest
         requestData(requestID, _indexes)
-
-        var textStrings = []
-        _effectiveActions = []
-        for (var i in actions) {
-            if (!actions[i].hasOwnProperty("visible")
-                    || (typeof actions[i].visible === "boolean" && actions[i].visible)
-                    || (typeof actions[i].visible === "function" && actions[i].visible(_options, _indexes))) {
-                _effectiveActions.push(actions[i])
-                textStrings.push(actions[i].text)
-            }
-        }
-
-        menu.popup(point, textStrings)
     }
 
     function setData(id, data) {
@@ -90,26 +74,34 @@ VanillaObject {
             return;
 
         _dataList = data
-        _pendingData = false
 
-        if (_actionOnDataReceived !== -1)
-           _executeAction(_actionOnDataReceived)
+        const textStrings = []
+        _effectiveActions = []
+        for (let i in actions) {
+            const action = actions[i]
+
+            if (!action.hasOwnProperty("visible")
+                    || (typeof action.visible === "boolean" && action.visible)
+                    || (typeof action.visible === "function" && action.visible(_dataList, _options, _indexes))) {
+                _effectiveActions.push(action)
+                textStrings.push(action.text)
+            }
+        }
+
+        menu.popup(_popupPoint, textStrings)
     }
 
     function _executeAction(index) {
-        var action = root._effectiveActions[index]
+        const action = root._effectiveActions[index]
         action.action(_dataList, _options, _indexes)
     }
 
 
-    StringListMenu {
+    readonly property StringListMenu _menu: StringListMenu {
         id: menu
 
-        onSelected: {
-            if (root._pendingData)
-                root._actionOnDataReceived = index
-            else
-                root._executeAction(index)
+        onSelected: (index, _) => {
+            root._executeAction(index)
         }
     }
 }

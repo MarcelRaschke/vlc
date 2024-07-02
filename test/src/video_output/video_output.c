@@ -43,6 +43,7 @@
 #include <limits.h>
 
 #include "video_output.h"
+#include "../lib/libvlc_internal.h"
 
 static const char dec_dev_arg[] = "--dec-dev=" MODULE_STRING;
 
@@ -115,10 +116,8 @@ static int OpenDecoder(vlc_object_t *obj)
     return VLC_SUCCESS;
 }
 
-static int OpenFilter(vlc_object_t *obj)
+static int OpenFilter(filter_t *filter)
 {
-    filter_t *filter = (filter_t *)obj;
-
     static const struct vlc_filter_operations ops = {
         .filter_video = NULL,
         .close = NULL,
@@ -135,11 +134,9 @@ static picture_t *ConverterFilter(filter_t *filter, picture_t *input)
     return input;
 }
 
-static int OpenConverter(vlc_object_t *obj)
+static int OpenConverter(filter_t *filter)
 {
-    filter_t *filter = (filter_t *)obj;
-
-    msg_Dbg(obj, "converter chroma %4.4s -> %4.4s size %ux%u -> %ux%u",
+    msg_Dbg(filter, "converter chroma %4.4s -> %4.4s size %ux%u -> %ux%u",
             (const char *)&filter->fmt_in.i_codec,
             (const char *)&filter->fmt_out.i_codec,
             filter->fmt_in.video.i_width, filter->fmt_in.video.i_height,
@@ -214,7 +211,7 @@ static void play_scenario(intf_thread_t *intf, struct vout_scenario *scenario)
     var_SetString(intf, "window", MODULE_STRING);
 
     vlc_player_t *player = vlc_player_New(&intf->obj,
-        VLC_PLAYER_LOCK_NORMAL, NULL, NULL);
+        VLC_PLAYER_LOCK_NORMAL);
     assert(player);
 
     vlc_player_Lock(player);
@@ -258,24 +255,20 @@ vlc_module_begin()
     set_capability("video decoder", INT_MAX)
 
     add_submodule()
-        set_callback(OpenDecoderDevice)
-        set_capability("decoder device", 0)
+        set_callback_dec_device(OpenDecoderDevice, 0)
 
     add_submodule()
-        set_callback(OpenFilter)
-        set_capability("video filter", 0)
+        set_callback_video_filter(OpenFilter)
 
     add_submodule()
-        set_callback(OpenConverter)
-        set_capability("video converter", INT_MAX)
+        set_callback_video_converter(OpenConverter, INT_MAX)
 
     add_submodule()
         set_callback(OpenWindow)
         set_capability("vout window", INT_MAX)
 
     add_submodule()
-        set_callback(OpenDisplay)
-        set_capability("vout display", 0)
+        set_callback_display(OpenDisplay, 0)
 
     /* Interface module to avoid casting libvlc_instance_t to object */
     add_submodule()
@@ -302,8 +295,9 @@ int main( int argc, char **argv )
 
     libvlc_instance_t *vlc = libvlc_new(ARRAY_SIZE(args), args);
 
-    libvlc_add_intf(vlc, MODULE_STRING);
-    libvlc_playlist_play(vlc);
+
+    libvlc_InternalAddIntf(vlc->p_libvlc_int, MODULE_STRING);
+    libvlc_InternalPlay(vlc->p_libvlc_int);
 
     libvlc_release(vlc);
     assert(vout_scenarios_count == current_scenario);

@@ -71,6 +71,12 @@ libsubtitle_plugin_la_SOURCES = demux/subtitle.c
 libsubtitle_plugin_la_LIBADD = $(LIBM)
 demux_LTLIBRARIES += libsubtitle_plugin.la
 
+subtitle_plugin_test_SOURCES = demux/subtitle.c
+subtitle_plugin_test_CPPFLAGS = $(AM_CPPFLAGS) -DENABLE_TEST
+subtitle_plugin_test_LDADD = $(LIBM)
+check_PROGRAMS += subtitle_plugin_test
+TESTS += subtitle_plugin_test
+
 libty_plugin_la_SOURCES = demux/ty.c codec/cc.h \
                           demux/mpeg/pes.h demux/mpeg/timestamps.h
 demux_LTLIBRARIES += libty_plugin.la
@@ -191,6 +197,7 @@ libmkv_plugin_la_SOURCES = \
 	demux/mkv/chapters.hpp demux/mkv/chapters.cpp \
 	demux/mkv/chapter_command.hpp demux/mkv/chapter_command.cpp \
 	demux/mkv/stream_io_callback.hpp demux/mkv/stream_io_callback.cpp \
+	demux/mkv/vlc_colors.c demux/mkv/vlc_colors.h \
 	demux/vobsub.h \
 	demux/mkv/mkv.hpp demux/mkv/mkv.cpp \
         demux/av1_unpack.h codec/webvtt/helpers.h \
@@ -214,6 +221,7 @@ libmp4_plugin_la_SOURCES = demux/mp4/mp4.c demux/mp4/mp4.h \
                            demux/mp4/languages.h \
                            demux/mp4/heif.c demux/mp4/heif.h \
                            demux/mp4/avci.h \
+                           demux/mp4/qt_palette.h \
                            demux/mp4/essetup.c \
                            demux/mp4/meta.c demux/mp4/meta.h \
                            demux/mp4/mpeg4.h \
@@ -281,8 +289,8 @@ libts_plugin_la_SOURCES = demux/mpeg/ts.c demux/mpeg/ts.h \
         codec/jpeg2000.h codec/scte18.h \
         codec/atsc_a65.c codec/atsc_a65.h \
 	codec/opus_header.c
-libts_plugin_la_CFLAGS = $(AM_CFLAGS) $(DVBPSI_CFLAGS)
-libts_plugin_la_LIBADD = $(DVBPSI_LIBS) $(SOCKET_LIBS)
+libts_plugin_la_CFLAGS = $(AM_CFLAGS) $(DVBPSI_CFLAGS) $(DVBCSA_CFLAGS)
+libts_plugin_la_LIBADD = $(DVBPSI_LIBS) $(SOCKET_LIBS) $(DVBCSA_LIBS)
 if HAVE_ARIBB24
 libts_plugin_la_CFLAGS += $(ARIBB24_CFLAGS)
 libts_plugin_la_LIBADD += $(ARIBB24_LIBS)
@@ -406,6 +414,8 @@ libvlc_adaptive_la_SOURCES = \
     demux/adaptive/xml/DOMHelper.h \
     demux/adaptive/xml/DOMParser.cpp \
     demux/adaptive/xml/DOMParser.h \
+    demux/adaptive/xml/Namespaces.cpp \
+    demux/adaptive/xml/Namespaces.hpp \
     demux/adaptive/xml/Node.cpp \
     demux/adaptive/xml/Node.h
 libvlc_adaptive_la_SOURCES += \
@@ -531,6 +541,7 @@ libnoseek_plugin_la_SOURCES = demux/filter/noseek.c
 demux_LTLIBRARIES += libnoseek_plugin.la
 
 libdemux_mock_plugin_la_SOURCES = demux/mock.c
+libdemux_mock_plugin_la_CPPFLAGS = $(AM_CPPFLAGS)
 libdemux_mock_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(demuxdir)'
 libdemux_mock_plugin_la_LIBADD = $(LIBM)
 noinst_LTLIBRARIES += libdemux_mock_plugin.la

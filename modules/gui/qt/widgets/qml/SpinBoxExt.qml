@@ -16,20 +16,17 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Controls 2.4
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
 
 import org.videolan.vlc 0.1
 
 import "qrc:///style/"
+import "qrc:///widgets/" as Widgets
 
-SpinBox {
+T.SpinBox {
     id: control
-    font.pixelSize: VLCStyle.fontSize_large
-
-    padding: 0
-    leftPadding: padding + (control.mirrored ? up.indicator.width : 0)
-    rightPadding: padding + (control.mirrored ? 0 : up.indicator.width)
 
     property color textColor: theme.fg.primary
     property color bgColor: theme.bg.primary
@@ -41,12 +38,30 @@ SpinBox {
         colorSet: ColorContext.SpinBox
 
         enabled: control.enabled
-        focused: control.visualFocus
+        focused: (control.visualFocus || textInput.activeFocus)
         hovered: control.hovered
     }
 
+    font.pixelSize: VLCStyle.fontSize_large
+
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                              contentItem.implicitWidth + 2 * padding +
+                              up.implicitIndicatorWidth +
+                              down.implicitIndicatorWidth)
+
+    implicitHeight: Math.max(implicitContentHeight + topPadding + bottomPadding,
+                           implicitBackgroundHeight,
+                           up.implicitIndicatorHeight,
+                           down.implicitIndicatorHeight)
+
+    padding: VLCStyle.margin_xxsmall
+    leftPadding: padding + (control.mirrored ? up.indicator.width : 0) + control.borderWidth
+    rightPadding: padding + (control.mirrored ? 0 : up.indicator.width) + control.borderWidth
+    topPadding: padding + control.borderWidth
+    bottomPadding: padding + control.borderWidth
+
     Keys.priority: Keys.AfterItem
-    Keys.onPressed: Navigation.defaultKeyAction(event)
+    Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
 
     //ideally we should use Keys.onShortcutOverride but it doesn't
     //work with TextField before 5.13 see QTBUG-68711
@@ -65,6 +80,8 @@ SpinBox {
     }
 
     contentItem: TextInput {
+        id: textInput
+
         // NOTE: This is required for InterfaceWindowHandler::applyKeyEvent.
         property bool visualFocus: control.activeFocus
 
@@ -85,33 +102,33 @@ SpinBox {
 
         Keys.priority: Keys.AfterItem
 
-        Keys.onPressed: Navigation.defaultKeyAction(event)
-        Keys.onReleased: Navigation.defaultKeyReleaseAction(event)
-
         Navigation.parentItem: control
-
     }
+
     up.indicator: Rectangle {
-        x: control.mirrored ? 0: parent.width - width
+        x: control.mirrored ? control.borderWidth : parent.width - width - control.borderWidth
         height: parent.height / 2
         implicitWidth: VLCStyle.dp(15, VLCStyle.scale)
         implicitHeight: VLCStyle.dp(10, VLCStyle.scale)
         anchors.top: parent.top
+        anchors.topMargin: control.borderWidth
 
-        color: downTheme.bg.primary
+        color: upTheme.bg.primary
 
         ColorContext {
             id: upTheme
             colorSet: ColorContext.ButtonStandard
 
             enabled: control.enabled
-            focused: control.up.visualFocus
             hovered: control.up.hovered
             pressed: control.up.pressed
+
+            // root control handles focused state
+            focused: false
         }
 
-        Text {
-            text: "\u2227" // ^ logical AND
+        Widgets.IconLabel {
+            text: VLCIcons.chevron_up
             font.pixelSize: control.font.pixelSize * 2
             color: upTheme.fg.primary
             font.bold: true
@@ -123,11 +140,12 @@ SpinBox {
     }
 
     down.indicator: Rectangle {
-        x: control.mirrored ? 0 : parent.width - width
+        x: control.mirrored ? control.borderWidth : parent.width - width - control.borderWidth
         height: parent.height / 2
         implicitWidth: VLCStyle.dp(15, VLCStyle.scale)
         implicitHeight: VLCStyle.dp(10, VLCStyle.scale)
         anchors.bottom: parent.bottom
+        anchors.bottomMargin: control.borderWidth
         color: downTheme.bg.primary
 
         ColorContext {
@@ -135,13 +153,15 @@ SpinBox {
             colorSet: ColorContext.ButtonStandard
 
             enabled: control.enabled
-            focused: control.down.visualFocus
             hovered: control.down.hovered
             pressed: control.down.pressed
+
+            // root control handles focused state
+            focused: false
         }
 
-        Text {
-            text: "\u2228" // ^ logical OR
+        Widgets.IconLabel {
+            text: VLCIcons.chevron_down
             font.pixelSize: control.font.pixelSize * 2
             color: downTheme.fg.primary
             font.bold: true

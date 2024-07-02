@@ -30,6 +30,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_demux.h>
 #include <vlc_stream.h>
 #include <vlc_meta.h>
@@ -53,20 +54,12 @@
 
 //#define AVFORMAT_DEBUG 1
 
-# define HAVE_AVUTIL_CODEC_ATTACHMENT 1
-
 #if LIBAVFORMAT_VERSION_CHECK(59, 0, 100)
 # define AVF_MAYBE_CONST const
 #else
 # define AVF_MAYBE_CONST
 #endif
 
-#if (LIBAVFORMAT_VERSION_INT < AV_VERSION_INT(57, 80, 100))
-static void avio_context_free(AVIOContext **io)
-{
-    av_freep(io);
-}
-#endif
 
 struct avformat_track_s
 {
@@ -471,7 +464,11 @@ int avformat_OpenDemux( vlc_object_t *p_this )
             es_format_Init( &es_fmt, AUDIO_ES, fcc );
             es_fmt.i_original_fourcc = CodecTagToFourcc( cp->codec_tag );
             es_fmt.i_bitrate = cp->bit_rate;
+#if LIBAVCODEC_VERSION_CHECK(59, 24, 100)
+            es_fmt.audio.i_channels = cp->ch_layout.nb_channels;
+#else
             es_fmt.audio.i_channels = cp->channels;
+#endif
             es_fmt.audio.i_rate = cp->sample_rate;
             es_fmt.audio.i_bitspersample = cp->bits_per_coded_sample;
             es_fmt.audio.i_blockalign = cp->block_align;
@@ -494,7 +491,8 @@ int avformat_OpenDemux( vlc_object_t *p_this )
             es_format_Init( &es_fmt, VIDEO_ES, fcc );
             es_fmt.i_original_fourcc = CodecTagToFourcc( cp->codec_tag );
 
-            es_fmt.video.i_bits_per_pixel = cp->bits_per_coded_sample;
+            // HACK: keep the bits per sample, will be lost if i_level is used.
+            es_fmt.i_level = cp->bits_per_coded_sample;
             /* Special case for raw video data */
             if( cp->codec_id == AV_CODEC_ID_RAWVIDEO )
             {
@@ -547,41 +545,7 @@ int avformat_OpenDemux( vlc_object_t *p_this )
                 cp->extradata != NULL &&
                 cp->extradata_size > 0 )
             {
-                char *psz_start;
-                char *psz_buf = malloc( cp->extradata_size + 1);
-                if( psz_buf != NULL )
-                {
-                    memcpy( psz_buf, cp->extradata , cp->extradata_size );
-                    psz_buf[cp->extradata_size] = '\0';
-
-                    psz_start = strstr( psz_buf, "size:" );
-                    if( psz_start &&
-                        vobsub_size_parse( psz_start,
-                                           &es_fmt.subs.spu.i_original_frame_width,
-                                           &es_fmt.subs.spu.i_original_frame_height ) == VLC_SUCCESS )
-                    {
-                        msg_Dbg( p_demux, "original frame size: %dx%d",
-                                 es_fmt.subs.spu.i_original_frame_width,
-                                 es_fmt.subs.spu.i_original_frame_height );
-                    }
-                    else
-                    {
-                        msg_Warn( p_demux, "reading original frame size failed" );
-                    }
-
-                    psz_start = strstr( psz_buf, "palette:" );
-                    if( psz_start &&
-                        vobsub_palette_parse( psz_start, &es_fmt.subs.spu.palette[1] ) == VLC_SUCCESS )
-                    {
-                        es_fmt.subs.spu.palette[0] = SPU_PALETTE_DEFINED;
-                        msg_Dbg( p_demux, "vobsub palette read" );
-                    }
-                    else
-                    {
-                        msg_Warn( p_demux, "reading original palette failed" );
-                    }
-                    free( psz_buf );
-                }
+                vobsub_extra_parse(p_this, &es_fmt.subs, cp->extradata, cp->extradata_size);
             }
             else if( cp->codec_id == AV_CODEC_ID_DVB_SUBTITLE &&
                      cp->extradata_size > 3 )
@@ -603,7 +567,6 @@ int avformat_OpenDemux( vlc_object_t *p_this )
         default:
             es_format_Init( &es_fmt, UNKNOWN_ES, 0 );
             es_fmt.i_original_fourcc = CodecTagToFourcc( cp->codec_tag );
-#ifdef HAVE_AVUTIL_CODEC_ATTACHMENT
             if( cp->codec_type == AVMEDIA_TYPE_ATTACHMENT )
             {
                 input_attachment_t *p_attachment;
@@ -625,7 +588,6 @@ int avformat_OpenDemux( vlc_object_t *p_this )
                 else msg_Warn( p_demux, "unsupported attachment type (%u) in avformat demux", cp->codec_id );
             }
             else
-#endif
             {
                 if( cp->codec_type == AVMEDIA_TYPE_DATA )
                     psz_type = "data";
@@ -642,10 +604,8 @@ int avformat_OpenDemux( vlc_object_t *p_this )
         if( s->disposition & AV_DISPOSITION_DEFAULT )
             es_fmt.i_priority = ES_PRIORITY_SELECTABLE_MIN + 1000;
 
-#ifdef HAVE_AVUTIL_CODEC_ATTACHMENT
-        if( cp->codec_type != AVMEDIA_TYPE_ATTACHMENT )
-#endif
-        if( cp->codec_type != AVMEDIA_TYPE_DATA )
+        if( cp->codec_type != AVMEDIA_TYPE_ATTACHMENT &&
+            cp->codec_type != AVMEDIA_TYPE_DATA )
         {
             const bool    b_ogg = !strcmp( p_sys->fmt->name, "ogg" );
             const uint8_t *p_extra = cp->extradata;
@@ -745,7 +705,7 @@ int avformat_OpenDemux( vlc_object_t *p_this )
             if( p_track->p_es && (s->disposition & AV_DISPOSITION_DEFAULT) )
                 es_out_Control( p_demux->out, ES_OUT_SET_ES_DEFAULT, p_track->p_es );
 
-            msg_Dbg( p_demux, "adding es: %s codec = %4.4s (%d)",
+            msg_Dbg( p_demux, "adding es: %s codec = %4.4s (0x%x)",
                      psz_type, (char*)&fcc, cp->codec_id  );
         }
         es_format_Clean( &es_fmt );

@@ -29,6 +29,8 @@ NS_ASSUME_NONNULL_BEGIN
 @class VLCInputNodePathControl;
 @class VLCMediaSource;
 
+extern NSString * const VLCMediaSourceDataSourceNodeChanged;
+
 @interface VLCMediaSourceDataSource : NSObject <NSCollectionViewDataSource,
                                                 NSCollectionViewDelegate,
                                                 NSCollectionViewDelegateFlowLayout,
@@ -40,7 +42,6 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readwrite, assign) NSCollectionView *collectionView;
 @property (readwrite, assign) NSTableView *tableView;
 @property (readwrite) VLCInputNodePathControl *pathControl;
-@property (readwrite) BOOL gridViewMode;
 
 - (void)setupViews;
 - (VLCInputItem*)mediaSourceInputItemAtRow:(NSInteger)tableViewRow;

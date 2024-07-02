@@ -82,7 +82,7 @@ picture_t *vlc_drm_dumb_alloc(struct vlc_logger *log, int fd,
     struct drm_mode_create_dumb creq = {
         .height = template.format.i_height,
         .width = template.format.i_width,
-        .bpp = (template.format.i_bits_per_pixel + 7) & ~7,
+        .bpp = (vlc_fourcc_GetChromaBPP(template.format.i_chroma) + 7) & ~7,
         .flags =  0,
     };
 
@@ -148,7 +148,7 @@ error:  drmDestroyDumb(fd, creq.handle);
 picture_t *vlc_drm_dumb_alloc_fb(struct vlc_logger *log, int fd,
                                  const video_format_t *restrict fmt)
 {
-    uint32_t pixfmt = vlc_drm_format(fmt);
+    uint32_t pixfmt = vlc_drm_fourcc(fmt->i_chroma);
     if (pixfmt == DRM_FORMAT_INVALID)
         return NULL;
 

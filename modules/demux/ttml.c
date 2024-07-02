@@ -51,6 +51,7 @@ typedef struct
     bool            b_first_time;
 
     tt_node_t         *p_rootnode;
+    tt_namespaces_t   namespaces;
 
     tt_timings_t    temporal_extent;
 
@@ -66,156 +67,6 @@ typedef struct
         size_t   i_current;
     } times;
 } demux_sys_t;
-
-static char *tt_genTiming( tt_time_t t )
-{
-    if( !tt_time_Valid( &t ) )
-        t.base = 0;
-    unsigned f = t.base % CLOCK_FREQ;
-    t.base /= CLOCK_FREQ;
-    unsigned h = t.base / 3600;
-    unsigned m = t.base % 3600 / 60;
-    unsigned s = t.base % 60;
-
-    int i_ret;
-    char *psz;
-    if( f )
-    {
-        const char *lz = "000000";
-        const char *psz_lz = &lz[6];
-        /* add leading zeroes */
-        for( unsigned i=10*f; i<CLOCK_FREQ; i *= 10 )
-            psz_lz--;
-        /* strip trailing zeroes */
-        for( ; f > 0 && (f % 10) == 0; f /= 10 );
-        i_ret = asprintf( &psz, "%02u:%02u:%02u.%s%u",
-                                 h, m, s, psz_lz, f );
-    }
-    else if( t.frames )
-    {
-        i_ret = asprintf( &psz, "%02u:%02u:%02u:%s%u",
-                                 h, m, s, t.frames < 10 ? "0" : "", t.frames );
-    }
-    else
-    {
-        i_ret = asprintf( &psz, "%02u:%02u:%02u",
-                                 h, m, s );
-    }
-
-    return i_ret < 0 ? NULL : psz;
-}
-
-static void tt_MemstreamPutEntities( struct vlc_memstream *p_stream, const char *psz )
-{
-    char *psz_entities = vlc_xml_encode( psz );
-    if( psz_entities )
-    {
-        vlc_memstream_puts( p_stream, psz_entities );
-        free( psz_entities );
-    }
-}
-
-static void tt_node_AttributesToText( struct vlc_memstream *p_stream, const tt_node_t* p_node )
-{
-    bool b_timed_node = false;
-    const vlc_dictionary_t* p_attr_dict = &p_node->attr_dict;
-    for( int i = 0; i < p_attr_dict->i_size; ++i )
-    {
-        for ( vlc_dictionary_entry_t* p_entry = p_attr_dict->p_entries[i];
-                                      p_entry != NULL; p_entry = p_entry->p_next )
-        {
-            const char *psz_value = NULL;
-
-            if( !strcmp(p_entry->psz_key, "begin") ||
-                !strcmp(p_entry->psz_key, "end") ||
-                !strcmp(p_entry->psz_key, "dur") )
-            {
-                b_timed_node = true;
-                /* will remove duration */
-                continue;
-            }
-            else if( !strcmp(p_entry->psz_key, "timeContainer") )
-            {
-                /* also remove sequential timings info (all abs now) */
-                continue;
-            }
-            else
-            {
-                psz_value = p_entry->p_value;
-            }
-
-            if( psz_value == NULL )
-                continue;
-
-            vlc_memstream_printf( p_stream, " %s=\"", p_entry->psz_key );
-            tt_MemstreamPutEntities( p_stream, psz_value );
-            vlc_memstream_putc( p_stream, '"' );
-        }
-    }
-
-    if( b_timed_node )
-    {
-        if( tt_time_Valid( &p_node->timings.begin ) )
-        {
-            char *psz = tt_genTiming( p_node->timings.begin );
-            vlc_memstream_printf( p_stream, " begin=\"%s\"", psz );
-            free( psz );
-        }
-
-        if( tt_time_Valid( &p_node->timings.end ) )
-        {
-            char *psz = tt_genTiming( p_node->timings.end );
-            vlc_memstream_printf( p_stream, " end=\"%s\"", psz );
-            free( psz );
-        }
-    }
-}
-
-static void tt_node_ToText( struct vlc_memstream *p_stream, const tt_basenode_t *p_basenode,
-                            const tt_time_t *playbacktime )
-{
-    if( p_basenode->i_type == TT_NODE_TYPE_ELEMENT )
-    {
-        const tt_node_t *p_node = (const tt_node_t *) p_basenode;
-
-        if( tt_time_Valid( playbacktime ) &&
-           !tt_timings_Contains( &p_node->timings, playbacktime ) )
-            return;
-
-        vlc_memstream_putc( p_stream, '<' );
-        tt_MemstreamPutEntities( p_stream, p_node->psz_node_name );
-
-        tt_node_AttributesToText( p_stream, p_node );
-
-        if( tt_node_HasChild( p_node ) )
-        {
-            vlc_memstream_putc( p_stream, '>' );
-
-#ifdef TTML_DEMUX_DEBUG
-            vlc_memstream_printf( p_stream, "<!-- starts %ld ends %ld -->",
-                                  tt_time_Convert( &p_node->timings.begin ),
-                                  tt_time_Convert( &p_node->timings.end ) );
-#endif
-
-            for( const tt_basenode_t *p_child = p_node->p_child;
-                                   p_child; p_child = p_child->p_next )
-            {
-                tt_node_ToText( p_stream, p_child, playbacktime );
-            }
-
-            vlc_memstream_puts( p_stream, "</" );
-            tt_MemstreamPutEntities( p_stream, p_node->psz_node_name );
-            vlc_memstream_putc( p_stream, '>' );
-        }
-        else
-            vlc_memstream_puts( p_stream, "/>" );
-    }
-    else
-    {
-        const tt_textnode_t *p_textnode = (const tt_textnode_t *) p_basenode;
-        tt_MemstreamPutEntities( p_stream, p_textnode->psz_text );
-    }
-}
 
 static int Control( demux_t* p_demux, int i_query, va_list args )
 {
@@ -307,11 +158,11 @@ static int Control( demux_t* p_demux, int i_query, va_list args )
 static int ReadTTML( demux_t* p_demux )
 {
     demux_sys_t* p_sys = p_demux->p_sys;
-    const char* psz_node_name;
+    const char* psz_node_name, *psz_node_namespace;
 
     do
     {
-        int i_type = xml_ReaderNextNode( p_sys->p_reader, &psz_node_name );
+        int i_type = xml_ReaderNextNodeNS( p_sys->p_reader, &psz_node_name, &psz_node_namespace );
         bool b_empty = xml_ReaderIsEmptyElement( p_sys->p_reader );
 
         if( i_type <= XML_READER_NONE )
@@ -323,21 +174,25 @@ static int ReadTTML( demux_t* p_demux )
                 break;
 
             case XML_READER_STARTELEM:
-                if( tt_node_NameCompare( psz_node_name, "tt" ) ||
+                if( strcmp( psz_node_namespace, TT_NS ) ||
+                    strcmp( tt_LocalName( psz_node_name ), "tt" ) ||
                     p_sys->p_rootnode != NULL )
                     return VLC_EGENERIC;
 
-                p_sys->p_rootnode = tt_node_New( p_sys->p_reader, NULL, psz_node_name );
+                p_sys->p_rootnode = tt_node_NewRead( p_sys->p_reader, &p_sys->namespaces, NULL,
+                                                     psz_node_name,
+                                                     psz_node_namespace );
                 if( b_empty )
                     break;
                 if( !p_sys->p_rootnode ||
-                    tt_nodes_Read( p_sys->p_reader, p_sys->p_rootnode ) != VLC_SUCCESS )
+                    tt_nodes_Read( p_sys->p_reader,
+                                  &p_sys->namespaces, p_sys->p_rootnode ) != VLC_SUCCESS )
                     return VLC_EGENERIC;
                 break;
 
             case XML_READER_ENDELEM:
                 if( !p_sys->p_rootnode ||
-                    tt_node_NameCompare( psz_node_name, p_sys->p_rootnode->psz_node_name ) )
+                    strcmp( psz_node_name, p_sys->p_rootnode->psz_node_name ) )
                     return VLC_EGENERIC;
                 break;
         }
@@ -377,7 +232,7 @@ static int Demux( demux_t* p_demux )
         tt_node_ToText( &stream, (tt_basenode_t *) p_sys->p_rootnode,
                         &p_sys->times.p_array[p_sys->times.i_current] );
 
-        if( vlc_memstream_close( &stream ) == VLC_SUCCESS )
+        if( vlc_memstream_close( &stream ) == 0 )
         {
             block_t* p_block = block_heap_Alloc( stream.ptr, stream.length );
             if( p_block )
@@ -491,6 +346,7 @@ int tt_OpenDemux( vlc_object_t* p_this )
     tt_time_Init( &p_sys->temporal_extent.end );
     tt_time_Init( &p_sys->temporal_extent.dur );
     p_sys->temporal_extent.begin.base = 0;
+    tt_namespaces_Init( &p_sys->namespaces );
 
     p_sys->p_xml = xml_Create( p_demux );
     if( !p_sys->p_xml )
@@ -523,7 +379,7 @@ int tt_OpenDemux( vlc_object_t* p_this )
 
         vlc_memstream_putc( &stream, '\0' );
 
-        if( vlc_memstream_close( &stream ) == VLC_SUCCESS )
+        if( vlc_memstream_close( &stream ) == 0 )
         {
             msg_Dbg( p_demux, "%s", stream.ptr );
             free( stream.ptr );
@@ -567,6 +423,8 @@ void tt_CloseDemux( vlc_object_t* p_this )
 
     if( p_sys->p_xml )
         xml_Delete( p_sys->p_xml );
+
+    tt_namespaces_Clean( &p_sys->namespaces );
 
     free( p_sys->times.p_array );
 

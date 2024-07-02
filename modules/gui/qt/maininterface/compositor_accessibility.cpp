@@ -20,7 +20,7 @@
 #include <QGuiApplication>
 #include <QQuickItem>
 
-#if !defined(QT_NO_ACCESSIBILITY) && defined(QT5_DECLARATIVE_PRIVATE)
+#if !defined(QT_NO_ACCESSIBILITY) && defined(QT_DECLARATIVE_PRIVATE)
 
 #include <QAccessibleObject>
 
@@ -29,11 +29,11 @@
 #include "compositor_accessibility.hpp"
 #include "compositor.hpp"
 
-#ifdef QT5_HAS_X11_COMPOSITOR
+#ifdef QT_HAS_X11_COMPOSITOR
 #  include "compositor_x11_renderwindow.hpp"
 #endif
 #ifdef HAVE_DCOMP_H
-#  include "compositor_dcomp_uisurface.hpp"
+#  include "compositor_dcomp.hpp"
 #endif
 
 namespace vlc {
@@ -74,6 +74,13 @@ public:
     {
     }
 
+    bool isValid() const override
+    {
+        if (m_window.isNull())
+            return false;
+        return QAccessibleObject::isValid();
+    }
+
     QAccessibleInterface* parent() const override
     {
         // we assume to be a top level window...
@@ -82,11 +89,12 @@ public:
 
     QList<QQuickItem *> rootItems() const
     {
+        if (m_window.isNull())
+            return {};
         if (QQuickItem *ci = m_window->contentItem())
             return accessibleUnignoredChildren(ci);
-        return QList<QQuickItem *>();
+        return {};
     }
-
 
     QAccessibleInterface* child(int index) const override
     {
@@ -166,7 +174,8 @@ public:
     }
 
 private:
-    QQuickWindow* m_window;
+    //use a QPointer here in case the underlying window get destroyed
+    QPointer<QQuickWindow> m_window;
 };
 
 
@@ -248,21 +257,11 @@ private:
 
 QAccessibleInterface* compositionAccessibleFactory(const QString &classname, QObject *object)
 {
-#ifdef QT5_HAS_X11_COMPOSITOR
+#ifdef QT_HAS_X11_COMPOSITOR
     if (classname == QLatin1String("vlc::CompositorX11RenderWindow"))
     {
 
         CompositorX11RenderWindow* renderWindow =  qobject_cast<CompositorX11RenderWindow *>(object);
-        assert(renderWindow);
-        return new QAccessibleRenderWindow(renderWindow, renderWindow);
-    }
-#endif
-
-#ifdef HAVE_DCOMP_H
-    if (classname == QLatin1String("vlc::DCompRenderWindow"))
-    {
-
-        DCompRenderWindow* renderWindow =  qobject_cast<DCompRenderWindow *>(object);
         assert(renderWindow);
         return new QAccessibleRenderWindow(renderWindow, renderWindow);
     }

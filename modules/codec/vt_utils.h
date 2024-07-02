@@ -77,6 +77,66 @@ CVPixelBufferPoolRef cvpxpool_create(const video_format_t *fmt, unsigned count);
  */
 CVPixelBufferRef cvpxpool_new_cvpx(CVPixelBufferPoolRef pool);
 
+/**
+ * @brief Get a kCVImageBufferYCbCrMatrix_X value corresponding 
+ * to a video_color_space_t
+ * 
+ * @param color_space a video format color space value
+ * @return a CFStringRef or NULL if there's no value match
+ */
+CFStringRef 
+cvpx_map_YCbCrMatrix_from_vcs(video_color_space_t color_space);
+
+/**
+ * @brief Get a kCVImageBufferColorPrimaries_X value corresponding 
+ * to a video_color_primaries_t
+ * 
+ * @param color_primaries a video format color primaries value
+ * @return a CFStringRef or NULL if there's no value match
+ */
+CFStringRef 
+cvpx_map_ColorPrimaries_from_vcp(video_color_primaries_t color_primaries);
+
+/**
+ * @brief Get a kCVImageBufferTransferFunction_X value corresponding 
+ * to a video_transfer_func_t
+ * 
+ * @param transfer_func a video format transfer func value
+ * @return a CFStringRef or NULL if there's no value match
+ */
+CFStringRef 
+cvpx_map_TransferFunction_from_vtf(video_transfer_func_t transfer_func);
+
+/**
+ * @brief Check if an image buffer has an attachment corresponding to the key 
+ * parameter
+ * 
+ * @param pixelBuffer the image buffer where attachment is searched
+ * @param key the attachment's key to search
+ * @return true if attachment is present
+ * @return false if key didn't match any attachment
+ */
+bool cvpx_has_attachment(CVPixelBufferRef pixelBuffer, CFStringRef key);
+
+/**
+ * @brief Try to map and attach kCVImageBufferYCbCrMatrixKey, 
+ * kCVImageBufferColorPrimariesKey, kCVImageBufferTransferFunctionKey and 
+ * kCVImageBufferGammaLevelKey if correspondance is found from a video_format_t.
+ * Attachments can be optionally kept if already present or overwritten
+ * 
+ * @param cvpx The image buffer where properties will be attached
+ * @param fmt The video format that contains the source color properties
+ */
+void cvpx_attach_mapped_color_properties(CVPixelBufferRef cvpx, 
+                                         const video_format_t *fmt);
+/**
+ * @brief Check if current system has at least one metal GPU device
+ * 
+ * @return true if there's at least one metal device available
+ * @return false if there's no metal device
+ */
+bool cvpx_system_has_metal_device();
+
 enum cvpx_video_context_type
 {
     CVPX_VIDEO_CONTEXT_DEFAULT,

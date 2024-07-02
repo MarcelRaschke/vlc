@@ -26,6 +26,7 @@
 
 #define VLC_MODULE_LICENSE VLC_LICENSE_GPL_2_PLUS
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_list.h>
 #include <vlc_plugin.h>
 #include <vlc_services_discovery.h>
@@ -170,7 +171,7 @@ static int AddDevice( services_discovery_t *p_sd,
         psz_name = GetDeviceName( p_device );
         if ( !psz_name )
             return VLC_ENOMEM;
-        msg_Info( p_sd, "Found device: %s", psz_name );
+        msg_Dbg( p_sd, "Found device: %s", psz_name );
 
         /* The device takes ownership of the name */
         mtp_device_t *mtp_device = DeviceNew( psz_name );
@@ -211,7 +212,7 @@ static int AddDevice( services_discovery_t *p_sd,
     }
     else
     {
-        msg_Info( p_sd, "The device seems to be mounted, unmount it first" );
+        msg_Dbg( p_sd, "The device seems to be mounted, unmount it first" );
         return VLC_EGENERIC;
     }
 }
@@ -263,7 +264,7 @@ UpdateDevices( services_discovery_t *p_sd,
         if ( idx == -1 )
         {
             /* Not found */
-            msg_Info( p_sd, "Device disconnected" );
+            msg_Dbg( p_sd, "Device disconnected" );
             CloseDevice( p_sd, device );
         }
     }

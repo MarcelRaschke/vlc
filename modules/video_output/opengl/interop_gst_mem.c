@@ -54,7 +54,7 @@ struct priv
     struct
     {
         EGLDisplay display;
-        EGLDisplay (*getCurrentDisplay)();
+        EGLDisplay (*getCurrentDisplay)(void);
         const char *(*queryString)(EGLDisplay, EGLint);
         EGLImage (*createImageKHR)(EGLDisplay, EGLContext, EGLenum target, EGLClientBuffer buffer,
                 const EGLint *attrib_list);
@@ -167,9 +167,8 @@ Close(struct vlc_gl_interop *interop)
 }
 
 static int
-Open(vlc_object_t *obj)
+Open(struct vlc_gl_interop *interop)
 {
-    struct vlc_gl_interop *interop = (void *) obj;
     struct priv *priv = NULL;
 
     if (interop->vctx == NULL)
@@ -248,7 +247,7 @@ Open(vlc_object_t *obj)
     video_format_TransformBy(&interop->fmt_out, TRANSFORM_VFLIP);
 
     interop->tex_target = GL_TEXTURE_EXTERNAL_OES;
-    interop->fmt_out.i_chroma = VLC_CODEC_RGB32;
+    interop->fmt_out.i_chroma = VLC_CODEC_RGBA;
     interop->fmt_out.space = COLOR_SPACE_UNDEF;
 
     static const struct vlc_gl_interop_ops ops = {

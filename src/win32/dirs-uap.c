@@ -32,6 +32,8 @@
 #define UNICODE
 #endif
 #include <vlc_common.h>
+#include <vlc_configuration.h>
+#include "../config/configuration.h"
 
 #include <vlc_charset.h>
 
@@ -318,7 +320,7 @@ static inline char *config_GetCacheDir(void)
 }
 #endif // HAVE___X_ABI_CWINDOWS_CSTORAGE_CIAPPLICATIONDATA2
 
-char *config_GetUserDir (vlc_userdir_t type)
+char *platform_GetUserDir (vlc_userdir_t type)
 {
     switch (type)
     {
@@ -336,6 +338,7 @@ char *config_GetUserDir (vlc_userdir_t type)
             return config_GetCacheDir ();
         case VLC_MUSIC_DIR:
             return config_GetShellDir (VLC_MUSIC_DIR);
+        case VLC_SNAPSHOTS_DIR: // FIXME GetFolderForUserAsync / UserDataPath
         case VLC_PICTURES_DIR:
             return config_GetShellDir (VLC_PICTURES_DIR);
         case VLC_VIDEOS_DIR:

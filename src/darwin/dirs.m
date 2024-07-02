@@ -28,8 +28,10 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_charset.h>
 #include "../libvlc.h"
+#include "../config/configuration.h"
 
 #include <libgen.h>
 #include <dlfcn.h>
@@ -197,7 +199,7 @@ static char *getAppDependentDir(vlc_userdir_t type)
     return strdup(result.UTF8String);
 }
 
-char *config_GetUserDir (vlc_userdir_t type)
+char *platform_GetUserDir (vlc_userdir_t type)
 {
     const char *psz_path;
     switch (type) {
@@ -219,6 +221,7 @@ char *config_GetUserDir (vlc_userdir_t type)
         case VLC_MUSIC_DIR:
             psz_path = "%s/Music";
             break;
+        case VLC_SNAPSHOTS_DIR:
         case VLC_PICTURES_DIR:
             psz_path = "%s/Pictures";
             break;

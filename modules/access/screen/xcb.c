@@ -519,7 +519,7 @@ static es_out_id_t *InitES (demux_t *demux, uint_fast16_t width,
 {
     demux_sys_t *p_sys = demux->p_sys;
     const xcb_setup_t *setup = xcb_get_setup (p_sys->conn);
-    uint32_t chroma = 0;
+    vlc_fourcc_t chroma = 0;
 
     for (const xcb_format_t *fmt = xcb_setup_pixmap_formats (setup),
              *end = fmt + xcb_setup_pixmap_formats_length (setup);
@@ -535,21 +535,21 @@ static es_out_id_t *InitES (demux_t *demux, uint_fast16_t width,
                 break;
             case 24:
                 if (fmt->bits_per_pixel == 32)
-                    chroma = VLC_CODEC_RGB32;
+                    chroma = VLC_CODEC_XRGB;
                 else if (fmt->bits_per_pixel == 24)
                     chroma = VLC_CODEC_RGB24;
                 break;
             case 16:
                 if (fmt->bits_per_pixel == 16)
-                    chroma = VLC_CODEC_RGB16;
+                    chroma = VLC_CODEC_RGB565;
                 break;
             case 15:
                 if (fmt->bits_per_pixel == 16)
-                    chroma = VLC_CODEC_RGB15;
+                    chroma = VLC_CODEC_RGB555;
                 break;
             case 8: /* XXX: screw grey scale! */
                 if (fmt->bits_per_pixel == 8)
-                    chroma = VLC_CODEC_RGB8;
+                    chroma = VLC_CODEC_RGB233;
                 break;
         }
         if (chroma != 0)
@@ -568,13 +568,9 @@ static es_out_id_t *InitES (demux_t *demux, uint_fast16_t width,
     es_format_t fmt;
 
     es_format_Init (&fmt, VIDEO_ES, chroma);
-    fmt.video.i_chroma = chroma;
-    fmt.video.i_bits_per_pixel = *bpp;
-    fmt.video.i_sar_num = fmt.video.i_sar_den = 1;
+    video_format_Setup(&fmt.video, chroma, width, height, width, height, 1, 1);
     fmt.video.i_frame_rate = 1000 * p_sys->rate;
     fmt.video.i_frame_rate_base = 1000;
-    fmt.video.i_visible_width = fmt.video.i_width = width;
-    fmt.video.i_visible_height = fmt.video.i_height = height;
 
     return es_out_Add (demux->out, &fmt);
 }

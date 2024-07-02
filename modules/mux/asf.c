@@ -32,6 +32,8 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 #include <vlc_block.h>
@@ -371,6 +373,7 @@ static int AddStream( sout_mux_t *p_mux, sout_input_t *p_input )
                     i_blockalign = 1;
                     i_extra = 12;
                     break;
+                case VLC_CODEC_MP2:
                 case VLC_CODEC_MPGA:
                     tk->psz_name = "MPEG Audio Layer 1/2";
                     tk->i_tag = WAVE_FORMAT_MPEG;
@@ -982,7 +985,7 @@ static block_t *asf_header_create( sout_mux_t *p_mux, bool b_broadcast )
     /* metadata object (part of header extension) */
     if( i_cm_size )
     {
-        unsigned int i_dst_num, i_dst_den;
+        unsigned int i_dst_num = 0, i_dst_den = 0;
 
         asf_track_t *tk = NULL;
         for( size_t i = 0; i < vlc_array_count( &p_sys->tracks ); i++ )

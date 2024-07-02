@@ -32,6 +32,7 @@
 #include <vlc_plugin.h>
 
 #include "nvdec_fmt.h"
+#include "nvdec_priv.h"
 
 #include "../../video_output/opengl/interop.h"
 
@@ -39,17 +40,6 @@
 #ifndef __GLEW_H__
 #  include <GL/glext.h>
 #endif
-
-static int Open(vlc_object_t *);
-static void Close(vlc_object_t *);
-
-vlc_module_begin ()
-    set_description("NVDEC OpenGL surface converter")
-    set_capability("glinterop", 2)
-    set_callbacks(Open, Close)
-    set_subcategory(SUBCAT_VIDEO_VOUT)
-    add_shortcut("nvdec")
-vlc_module_end ()
 
 typedef struct {
     vlc_decoder_device *device;
@@ -148,16 +138,14 @@ error:
     return result;
 }
 
-static void Close(vlc_object_t *obj)
+static void tc_nvdec_gl_close(struct vlc_gl_interop *interop)
 {
-    struct vlc_gl_interop *interop = (void *)obj;
     converter_sys_t *p_sys = interop->priv;
     vlc_decoder_device_Release(p_sys->device);
 }
 
-static int Open(vlc_object_t *obj)
+static int Open(struct vlc_gl_interop *interop)
 {
-    struct vlc_gl_interop *interop = (void *) obj;
     if (!is_nvdec_opaque(interop->fmt_in.i_chroma))
         return VLC_EGENERIC;
 
@@ -213,17 +201,7 @@ static int Open(vlc_object_t *obj)
         }
     }
 
-    vlc_fourcc_t render_chroma;
-    switch (interop->fmt_in.i_chroma)
-    {
-        case VLC_CODEC_NVDEC_OPAQUE_10B: render_chroma = VLC_CODEC_P010; break;
-        case VLC_CODEC_NVDEC_OPAQUE_16B: render_chroma = VLC_CODEC_P016; break;
-        case VLC_CODEC_NVDEC_OPAQUE_444:     render_chroma = VLC_CODEC_I444; break;
-        case VLC_CODEC_NVDEC_OPAQUE_444_16B: render_chroma = VLC_CODEC_I444_16L; break;
-        case VLC_CODEC_NVDEC_OPAQUE:
-        default:                         render_chroma = VLC_CODEC_NV12; break;
-    }
-
+    vlc_fourcc_t render_chroma = NVDECToVlcChroma(interop->fmt_in.i_chroma);
     switch (render_chroma)
     {
         case VLC_CODEC_P010:
@@ -295,9 +273,18 @@ static int Open(vlc_object_t *obj)
     static const struct vlc_gl_interop_ops ops = {
         .allocate_textures = tc_nvdec_gl_allocate_texture,
         .update_textures = tc_nvdec_gl_update,
+        .close = tc_nvdec_gl_close,
     };
     interop->ops = &ops;
     interop->priv = p_sys;
 
     return VLC_SUCCESS;
 }
+
+vlc_module_begin ()
+    set_description("NVDEC OpenGL surface converter")
+    set_capability("glinterop", 2)
+    set_callback(Open)
+    set_subcategory(SUBCAT_VIDEO_VOUT)
+    add_shortcut("nvdec")
+vlc_module_end ()

@@ -28,7 +28,7 @@
 # include "config.h"
 #endif
 
-#include <assert.h>
+#include <cassert>
 
 #include "qt.hpp"
 
@@ -37,9 +37,14 @@
 #include "playlist/playlist_item.hpp"
 
 #include "util/singleton.hpp"
+#include "util/shared_input_item.hpp"
+
+#include "medialibrary/mlqmltypes.hpp"
 
 #include <QObject>
 #include <QStringList>
+
+#include <vlc_es.h>
 
 #define TITLE_EXTENSIONS_MEDIA qtr( "Media Files" )
 #define TITLE_EXTENSIONS_VIDEO qtr( "Video Files" )
@@ -128,7 +133,9 @@ public slots:
     void playlistsDialog( const QVariantList & listMedia );
     void bookmarksDialog();
     void mediaInfoDialog( void );
+    void mediaInfoDialog( const SharedInputItem& inputItem );
     void mediaInfoDialog( const PlaylistItem& pItem );
+    void mediaInfoDialog( const MLItemId& itemId );
     void mediaCodecDialog();
     void prefsDialog();
     void firstRunDialog();

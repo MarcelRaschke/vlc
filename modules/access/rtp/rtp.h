@@ -325,7 +325,7 @@ extern struct vlc_rtp_es *const vlc_rtp_es_dummy;
  *
  * \param obj VLC object for logging and configuration
  * \param pt RTP payload type
- * \param desc[in] SDP payload format description and type mapping
+ * \param[in] desc SDP payload format description and type mapping
  *
  * \return VLC_SUCCESS on success, an error code on failure.
  */
@@ -338,8 +338,8 @@ typedef int (*vlc_rtp_parser_cb)(vlc_object_t *obj, struct vlc_rtp_pt *pt,
 #define set_rtp_parser_callback(cb) \
     { \
         vlc_rtp_parser_cb cb__ = (cb); (void) cb__; \
-        set_callback(cb); \
-        set_capability("rtp parser", 0); \
+        set_callback(cb) \
+        set_capability("rtp parser", 0) \
     }
 
 int vlc_rtp_pt_instantiate(vlc_object_t *obj, struct vlc_rtp_pt *restrict pt,
@@ -359,10 +359,17 @@ static inline uint8_t rtp_ptype (const block_t *block)
  * \defgroup rtp_session RTP session
  * @{
  */
-rtp_session_t *rtp_session_create (demux_t *);
-void rtp_session_destroy (demux_t *, rtp_session_t *);
-void rtp_queue (demux_t *, rtp_session_t *, block_t *);
-bool rtp_dequeue (demux_t *, const rtp_session_t *, vlc_tick_t *);
+#define RTP_MAX_SRC_DEFAULT 1
+#define RTP_MAX_DROPOUT_DEFAULT 3000
+#define RTP_MAX_TIMEOUT_DEFAULT 5
+#define RTP_MAX_MISORDER_DEFAULT 100
+
+rtp_session_t *rtp_session_create (void);
+rtp_session_t *rtp_session_create_custom (uint16_t max_dropout, uint16_t max_misorder,
+                                          uint8_t max_src, vlc_tick_t timeout);
+void rtp_session_destroy (struct vlc_logger *, rtp_session_t *);
+void rtp_queue (struct vlc_logger *, rtp_session_t *, block_t *);
+bool rtp_dequeue (struct vlc_logger *, const rtp_session_t *, vlc_tick_t, vlc_tick_t *);
 int rtp_add_type(rtp_session_t *ses, rtp_pt_t *pt);
 int vlc_rtp_add_media_types(vlc_object_t *obj, rtp_session_t *ses,
                             const struct vlc_sdp_media *media,
@@ -372,22 +379,3 @@ void *rtp_dgram_thread (void *data);
 
 /** @} */
 /** @} */
-
-/* Global data */
-typedef struct
-{
-    rtp_session_t *session;
-    struct vlc_demux_chained_t *chained_demux;
-#ifdef HAVE_SRTP
-    struct srtp_session_t *srtp;
-#endif
-    struct vlc_dtls *rtp_sock;
-    struct vlc_dtls *rtcp_sock;
-    vlc_thread_t  thread;
-
-    vlc_tick_t    timeout;
-    uint16_t      max_dropout; /**< Max packet forward misordering */
-    uint16_t      max_misorder; /**< Max packet backward misordering */
-    uint8_t       max_src; /**< Max simultaneous RTP sources */
-} demux_sys_t;
-

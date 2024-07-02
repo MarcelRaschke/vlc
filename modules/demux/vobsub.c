@@ -49,7 +49,7 @@ static void Close( vlc_object_t *p_this );
 vlc_module_begin ()
     set_description( N_("Vobsub subtitles parser") )
     set_subcategory( SUBCAT_INPUT_DEMUX )
-    set_capability( "demux", 1 )
+    set_capability( "demux", 4 )
 
     set_callbacks( Open, Close )
 
@@ -97,10 +97,10 @@ typedef struct
     int            i_tracks;
     vobsub_track_t *track;
 
-    int            i_original_frame_width;
-    int            i_original_frame_height;
+    unsigned       i_original_frame_width;
+    unsigned       i_original_frame_height;
     bool           b_palette;
-    uint32_t       palette[16];
+    uint32_t       palette[VIDEO_PALETTE_CLUT_COUNT];
 } demux_sys_t;
 
 
@@ -149,10 +149,9 @@ static int Open ( vlc_object_t *p_this )
     p_sys->track = malloc( sizeof( vobsub_track_t ) );
     if( unlikely( !p_sys->track ) )
         goto error;
-    p_sys->i_original_frame_width = -1;
-    p_sys->i_original_frame_height = -1;
+    p_sys->i_original_frame_width = 0;
+    p_sys->i_original_frame_height = 0;
     p_sys->b_palette = false;
-    memset( p_sys->palette, 0, 16 * sizeof( uint32_t ) );
 
     /* Load the whole file */
     TextLoad( &p_sys->txt, p_demux->s );
@@ -481,7 +480,7 @@ static int ParseVobSubIDX( demux_t *p_demux )
             if( vobsub_size_parse( line, &p_sys->i_original_frame_width,
                                    &p_sys->i_original_frame_height ) == VLC_SUCCESS )
             {
-                msg_Dbg( p_demux, "original frame size: %dx%d", p_sys->i_original_frame_width, p_sys->i_original_frame_height );
+                msg_Dbg( p_demux, "original frame size: %ux%u", p_sys->i_original_frame_width, p_sys->i_original_frame_height );
             }
             else
             {
@@ -542,8 +541,10 @@ static int ParseVobSubIDX( demux_t *p_demux )
             fmt.psz_language = language;
             if( p_sys->b_palette )
             {
-                fmt.subs.spu.palette[0] = SPU_PALETTE_DEFINED;
-                memcpy( &fmt.subs.spu.palette[1], p_sys->palette, 16 * sizeof( uint32_t ) );
+                fmt.subs.spu.b_palette = true;
+                static_assert(sizeof(fmt.subs.spu.palette) == sizeof(p_sys->palette),
+                              "vobsub palette size mismatch");
+                memcpy( fmt.subs.spu.palette, p_sys->palette, sizeof( p_sys->palette ) );
             }
 
             fmt.i_id = i_track_id;
@@ -562,7 +563,7 @@ static int ParseVobSubIDX( demux_t *p_demux )
             int64_t i_location = 0;
 
             if( p_sys->i_tracks > 0 &&
-                sscanf( line, "timestamp: %02d:%02d:%02d:%03d, filepos: %"SCNx64,
+                sscanf( line, "timestamp: %02d:%02d:%02d:%03d, filepos: %"SCNi64,
                         &h, &m, &s, &ms, &loc ) == 5  )
             {
                 vobsub_track_t *current_tk = &p_sys->track[p_sys->i_tracks - 1];

@@ -52,7 +52,7 @@
     [self.window setTitle: _NS("Errors and Warnings")];
     [self.cleanupButton setTitle: _NS("Clean up")];
 
-    if ([[NSApplication sharedApplication] userInterfaceLayoutDirection] == NSUserInterfaceLayoutDirectionRightToLeft) {
+    if ([NSApplication.sharedApplication userInterfaceLayoutDirection] == NSUserInterfaceLayoutDirectionRightToLeft) {
         [self.errorTable moveColumn:0 toColumn:1];
     }
 }
@@ -69,7 +69,7 @@
                      range: NSMakeRange(0, [title length])];
     [_errors addObject: ourError];
 
-    [_icons addObject: [[NSWorkspace sharedWorkspace] iconForFileType:NSFileTypeForHFSTypeCode(kAlertStopIcon)]];
+    [_icons addObject: [NSWorkspace.sharedWorkspace iconForFileType:NSFileTypeForHFSTypeCode(kAlertStopIcon)]];
 
     [self.errorTable reloadData];
 }

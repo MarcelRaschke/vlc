@@ -18,8 +18,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as T
+import QtQuick
+import QtQuick.Templates as T
 
 import org.videolan.vlc 0.1
 
@@ -61,7 +61,12 @@ T.Switch {
 
     Keys.priority: Keys.AfterItem
 
-    Keys.onPressed: Navigation.defaultKeyAction(event)
+    Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
+
+    // Accessible
+
+    Accessible.onPressAction: control.clicked()
+    Accessible.onToggleAction: control.toggle()
 
     // Events
 
@@ -78,8 +83,8 @@ T.Switch {
         if (_update === false)
             return
 
-        var from = handle.x
-        var to
+        const from = handle.x
+        let to
 
         if (checked)
             to = handle.drag.maximumX
@@ -94,8 +99,8 @@ T.Switch {
     // Private
 
     function _applyX(x) {
-        var from = handle.x
-        var to
+        const from = handle.x
+        let to
 
         _update = false
 
@@ -151,9 +156,8 @@ T.Switch {
     }
 
     background: AnimatedBackground {
-        active: root.visualFocus
-        animate: theme.initialized
-        activeBorderColor: theme.visualFocus
+        enabled: theme.initialized
+        border.color: root.visualFocus ? theme.visualFocus : "transparent"
     }
 
     indicator: Rectangle {

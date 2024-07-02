@@ -28,6 +28,8 @@
 #include "interface_window_handler.hpp"
 #include <QAbstractNativeEventFilter>
 
+#include <objbase.h>
+
 class WinTaskbarWidget : public QObject, public QAbstractNativeEventFilter
 {
     Q_OBJECT
@@ -36,7 +38,7 @@ public:
     virtual ~WinTaskbarWidget();
 
 private:
-    virtual bool nativeEventFilter(const QByteArray &eventType, void *message, long *result) override;
+    bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
     void createTaskBarButtons();
 
 private slots:
@@ -51,6 +53,22 @@ private:
     UINT taskbar_wmsg = 0;
     QWindow* m_window = nullptr;
 
+    class ComHolder
+    {
+    public:
+        ComHolder()
+        {
+            if (Q_UNLIKELY(FAILED(CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE))))
+                throw std::runtime_error("CoInitializeEx failed");
+        }
+
+        ~ComHolder()
+        {
+            CoUninitialize();
+        }
+    };
+
+    std::optional<ComHolder> m_comHolder;
 };
 
 
@@ -63,27 +81,25 @@ public:
     virtual ~MainCtxWin32() = default;
 
 public slots:
-    virtual void reloadPrefs() override;
+    void reloadPrefs() override;
 };
 
 class InterfaceWindowHandlerWin32 : public InterfaceWindowHandler, public QAbstractNativeEventFilter
 {
     Q_OBJECT
 public:
-    explicit InterfaceWindowHandlerWin32(qt_intf_t *_p_intf, MainCtx* mainCtx, QWindow* window, QWidget* widget, QObject *parent = nullptr);
+    explicit InterfaceWindowHandlerWin32(qt_intf_t *_p_intf, MainCtx* mainCtx, QWindow* window, QObject *parent = nullptr);
     virtual ~InterfaceWindowHandlerWin32();
-    virtual void toggleWindowVisibility() override;
+    void toggleWindowVisibility() override;
 
-    virtual bool eventFilter(QObject*, QEvent* event) override;
+    bool eventFilter(QObject*, QEvent* event) override;
 
 protected:
-    bool nativeEventFilter(const QByteArray &eventType, void *message, long *result) override;
+    bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 
 private:
-#if QT_CLIENT_SIDE_DECORATION_AVAILABLE
     void updateCSDWindowSettings() override;
     QObject *m_CSDWindowEventHandler {};
-#endif
 };
 
 #endif // MAIN_INTERFACE_WIN32_HPP

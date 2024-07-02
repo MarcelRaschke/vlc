@@ -32,6 +32,7 @@
 #include <stdatomic.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
@@ -119,8 +120,10 @@ static int Create( filter_t *p_filter )
             break;
         CASE_PACKED_YUV_422
             break;
+        CASE_PACKED_RGB32
+            break;
         case VLC_CODEC_RGB24:
-        case VLC_CODEC_RGB32:
+        case VLC_CODEC_BGR24:
             break;
 
         default:
@@ -129,7 +132,8 @@ static int Create( filter_t *p_filter )
             return VLC_EGENERIC;
     }
 
-    if( p_filter->fmt_in.video.i_chroma != p_filter->fmt_out.video.i_chroma )
+    if( !video_format_IsSameChroma( &p_filter->fmt_in.video,
+                                    &p_filter->fmt_out.video ) )
     {
         msg_Err( p_filter, "Input and output chromas don't match" );
         return VLC_EGENERIC;
@@ -216,9 +220,10 @@ static void VerticalMirror( picture_t *p_pic, picture_t *p_outpic, int i_plane,
         case VLC_CODEC_UYVY:
             break;
         case VLC_CODEC_RGB24:
+        case VLC_CODEC_BGR24:
             RV24VerticalMirror( p_pic, p_outpic, i_plane, b_left_to_right );
             break;
-        case VLC_CODEC_RGB32:
+        CASE_PACKED_RGB32
             RV32VerticalMirror( p_pic, p_outpic, i_plane, b_left_to_right );
             break;
         default:

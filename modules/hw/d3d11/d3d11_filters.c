@@ -42,12 +42,12 @@
 #include "d3d11_processor.h"
 #include "../../video_chroma/d3d11_fmt.h"
 
-#ifdef __MINGW32__
+#if defined(__MINGW64_VERSION_MAJOR) && __MINGW64_VERSION_MAJOR < 8
 #define D3D11_VIDEO_PROCESSOR_FILTER_CAPS_BRIGHTNESS   0x1
 #define D3D11_VIDEO_PROCESSOR_FILTER_CAPS_CONTRAST     0x2
 #define D3D11_VIDEO_PROCESSOR_FILTER_CAPS_HUE          0x4
 #define D3D11_VIDEO_PROCESSOR_FILTER_CAPS_SATURATION   0x8
-#endif
+#endif // __MINGW64_VERSION_MAJOR<8
 
 #define PROCESSOR_SLICES 2
 
@@ -188,17 +188,7 @@ static picture_t *AllocPicture( filter_t *p_filter )
 {
     d3d11_video_context_t *vctx_sys = GetD3D11ContextPrivate( p_filter->vctx_out );
 
-    const d3d_format_t *cfg = NULL;
-    for (const d3d_format_t *output_format = DxgiGetRenderFormatList();
-            output_format->name != NULL; ++output_format)
-    {
-        if (output_format->formatTexture == vctx_sys->format &&
-            is_d3d11_opaque(output_format->fourcc))
-        {
-            cfg = output_format;
-            break;
-        }
-    }
+    const d3d_format_t *cfg = D3D11_RenderFormat(vctx_sys->format, vctx_sys->secondary ,true);
     if (unlikely(cfg == NULL))
         return NULL;
 

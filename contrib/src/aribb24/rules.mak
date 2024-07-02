@@ -19,6 +19,7 @@ $(TARBALLS)/aribb24-$(ARIBB24_VERSION).tar.gz:
 
 aribb24: aribb24-$(ARIBB24_VERSION).tar.gz .sum-aribb24
 	$(UNPACK)
+	# $(call update_autoconfig,.)
 	$(APPLY) $(SRC)/aribb24/libm.patch
 	$(call pkg_static,"src/aribb24.pc.in")
 	$(MOVE)
@@ -28,7 +29,8 @@ DEPS_aribb24 = png $(DEPS_png)
 .aribb24: aribb24
 	$(REQUIRE_GPL)
 	$(REQUIRE_GNUV3)
-	cd $< && $(SHELL) ./bootstrap
+	mkdir -p $</m4
+	$(RECONF)
 	$(MAKEBUILDDIR)
 	$(MAKECONFIGURE)
 	+$(MAKEBUILD)

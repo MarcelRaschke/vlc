@@ -15,10 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQml.Models 2.11
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Controls
+import QtQml.Models
+import QtQuick.Layouts
 
 import org.videolan.vlc 0.1
 
@@ -32,7 +32,7 @@ GridView {
 
     clip: true
 
-    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
+    ScrollBar.vertical: ScrollBar { }
     model: PlayerControlbarControls.controlList.length
 
     currentIndex: -1
@@ -40,6 +40,8 @@ GridView {
 
     cellWidth: VLCStyle.cover_small
     cellHeight: cellWidth
+
+    boundsBehavior: Flickable.StopAtBounds
 
     property alias removeInfoRectVisible: removeInfoRect.visible
 
@@ -52,8 +54,11 @@ GridView {
         colorSet: ColorContext.View
     }
 
-    MouseEventFilter {
-        target: root
+    MouseArea {
+        anchors.fill: parent
+        z: -1
+
+        preventStealing: true
     }
 
     Util.FlickableScrollHandler { }
@@ -71,7 +76,7 @@ GridView {
                 return false
         }
 
-        onDropped: {
+        onDropped: (drop) => {
             if (isFromList())
                 return
 
@@ -132,6 +137,8 @@ GridView {
 
         drag.target: buttonDragItem
 
+        drag.smoothed: false
+
         readonly property int mIndex: PlayerControlbarControls.controlList[model.index].id
 
         drag.onActiveChanged: {
@@ -152,16 +159,10 @@ GridView {
             }
         }
 
-        onPositionChanged: {
-            if (drag.active) {
-                // FIXME: There must be a better way of this
-
-                var pos = mapToItem(buttonDragItem.parent, mouseX, mouseY)
-                // y should be set first, because the automatic scroll is
-                // triggered by change on X
-                buttonDragItem.y = pos.y
-                buttonDragItem.x = pos.x
-            }
+        onPressed: (mouse) => {
+            const pos = mapToItem(buttonDragItem.parent, mouseX, mouseY)
+            buttonDragItem.y = pos.y + VLCStyle.dragDelta
+            buttonDragItem.x = pos.x + VLCStyle.dragDelta
         }
 
         Rectangle {
@@ -195,6 +196,7 @@ GridView {
 
                     color: theme.fg.secondary
                     elide: Text.ElideNone
+                    fontSizeMode: Text.Fit
                     text: PlayerControlbarControls.controlList[model.index].text
                     wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignHCenter

@@ -1,3 +1,4 @@
+#include <vlc_configuration.h>
 #include <vlc_picture_fifo.h>
 #include <vlc_filter.h>
 #include <vlc_codec.h>
@@ -83,7 +84,8 @@ struct sout_stream_id_sys_t
     void *downstream_id;
     void *(*pf_transcode_downstream_add)( sout_stream_t *,
                                           const es_format_t *orig,
-                                          const es_format_t *current );
+                                          const es_format_t *current,
+                                          const char *es_id );
 
     vlc_fifo_t *output_fifo;
 
@@ -95,7 +97,6 @@ struct sout_stream_id_sys_t
         vlc_mutex_t lock;
         union
         {
-            vlc_picture_chain_t pic;
             struct {
                 subpicture_t *first;
                 subpicture_t **last;
@@ -153,6 +154,8 @@ struct sout_stream_id_sys_t
     /* Sync */
     date_t          next_input_pts; /**< Incoming calculated PTS */
     vlc_tick_t      i_drift; /** how much buffer is ahead of calculated PTS */
+
+    const char *es_id;
 
     transcode_track_pcr_helper_t *pcr_helper;
 };
@@ -225,6 +228,7 @@ int  transcode_audio_init   ( sout_stream_t *, const es_format_t *,
 void transcode_video_clean  ( sout_stream_id_sys_t * );
 int  transcode_video_process( sout_stream_t *, sout_stream_id_sys_t *,
                                      block_t *, block_t ** );
+void transcode_video_flush  ( sout_stream_id_sys_t * );
 int transcode_video_get_output_dimensions( sout_stream_id_sys_t *,
                                            unsigned *w, unsigned *h );
 void transcode_video_push_spu( sout_stream_t *, sout_stream_id_sys_t *, subpicture_t * );

@@ -43,6 +43,8 @@
 #include <unistd.h>     /* close() */
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_input.h>
 #include <vlc_access.h>
@@ -52,6 +54,7 @@
 #include <vlc_mouse.h>
 #include <vlc_dialog.h>
 #include <vlc_iso_lang.h>
+#include <vlc_subpicture.h> // vlc_spu_highlight_t
 
 #include <dvdnav/dvdnav.h>
 /* Expose without patching headers */
@@ -96,7 +99,7 @@ vlc_module_begin ()
     add_submodule()
         set_description( N_("DVDnav demuxer") )
         set_subcategory( SUBCAT_INPUT_DEMUX )
-        set_capability( "demux", 5 )
+        set_capability( "demux", 7 )
         set_callbacks( DemuxOpen, Close )
         add_shortcut( "dvd", "iso" )
 vlc_module_end ()
@@ -138,7 +141,7 @@ typedef struct
     es_out_id_t *spu_es;
 
     /* palette for menus */
-    uint32_t clut[16];
+    uint32_t clut[VIDEO_PALETTE_CLUT_COUNT];
     bool b_spu_change;
     struct
     {
@@ -169,7 +172,7 @@ typedef struct
 
 static int Control( demux_t *, int, va_list );
 static int Demux( demux_t * );
-static int DemuxBlock( demux_t *, const uint8_t *, int );
+static int DemuxBlock( demux_t *, const uint8_t *, int32_t );
 static void DemuxForceStill( demux_t * );
 
 static void DemuxTitles( demux_t * );
@@ -871,7 +874,7 @@ static int Demux( demux_t *p_demux )
     uint8_t buffer[DVD_VIDEO_LB_LEN];
     uint8_t *packet = buffer;
     int i_event;
-    int i_len;
+    int32_t i_len;
     dvdnav_status_t status;
 
     if( p_sys->b_readahead )
@@ -956,19 +959,22 @@ static int Demux( demux_t *p_demux )
 
     case DVDNAV_SPU_CLUT_CHANGE:
     {
-        int i;
-
         msg_Dbg( p_demux, "DVDNAV_SPU_CLUT_CHANGE" );
-        /* Update color lookup table (16 *uint32_t in packet) */
-        memcpy( p_sys->clut, packet, 16 * sizeof( uint32_t ) );
-
-        /* HACK to get the SPU tracks registered in the right order */
-        for( i = 0; i < 0x1f; i++ )
+        if ( unlikely( (size_t)i_len < sizeof( p_sys->clut ) ) )
+            msg_Err(  p_demux, "invalid CLUT size %d", i_len );
+        else
         {
-            if( dvdnav_spu_stream_to_lang( p_sys->dvdnav, i ) != 0xffff )
-                ESNew( p_demux, 0xbd20 + i );
+            /* Update color lookup table (16 *uint32_t in packet) */
+            memcpy( p_sys->clut, packet, sizeof( p_sys->clut ) );
+
+            /* HACK to get the SPU tracks registered in the right order */
+            for( int i = 0; i < 0x1f; i++ )
+            {
+                if( dvdnav_spu_stream_to_lang( p_sys->dvdnav, i ) != 0xffff )
+                    ESNew( p_demux, 0xbd20 + i );
+            }
+            /* END HACK */
         }
-        /* END HACK */
         break;
     }
 
@@ -1451,7 +1457,7 @@ static void ESSubtitleUpdate( demux_t *p_demux )
 /*****************************************************************************
  * DemuxBlock: demux a given block
  *****************************************************************************/
-static int DemuxBlock( demux_t *p_demux, const uint8_t *p, int len )
+static int DemuxBlock( demux_t *p_demux, const uint8_t *p, int32_t len )
 {
     demux_sys_t *p_sys = p_demux->p_sys;
 
@@ -1629,9 +1635,10 @@ static void ESNew( demux_t *p_demux, int i_id )
         i_lang = dvdnav_spu_stream_to_lang( p_sys->dvdnav, i_id&0x1f );
 
         /* Palette */
-        tk->fmt.subs.spu.palette[0] = SPU_PALETTE_DEFINED;
-        memcpy( &tk->fmt.subs.spu.palette[1], p_sys->clut,
-                16 * sizeof( uint32_t ) );
+        tk->fmt.subs.spu.b_palette = true;
+        static_assert(sizeof(tk->fmt.subs.spu.palette) == sizeof(p_sys->clut),
+                      "CLUT palette size mismatch");
+        memcpy( tk->fmt.subs.spu.palette, p_sys->clut, sizeof( p_sys->clut ) );
 
         /* We select only when we are not in the menu */
         if( dvdnav_current_title_info( p_sys->dvdnav, &i_title, &i_part ) == DVDNAV_STATUS_OK &&
@@ -1737,9 +1744,29 @@ static int ProbeDVD( const char *psz_name )
          goto bailout;
     if( !S_ISREG( stat_info.st_mode ) )
     {
-        if( S_ISDIR( stat_info.st_mode ) || S_ISBLK( stat_info.st_mode ) )
+        if( S_ISBLK( stat_info.st_mode ) )
+        {
             ret = VLC_SUCCESS; /* Let dvdnav_open() do the probing */
-        goto bailout;
+            goto bailout;
+        }
+        if( S_ISDIR( stat_info.st_mode ) )
+        {
+            // If we have directory, check if VIDEO_TS/VIDEO_TS.IFO exists, as
+            // dvdnav will check and fail without it
+            char *video_ts_location;
+            if( asprintf( &video_ts_location, "%s/VIDEO_TS/VIDEO_TS.IFO", psz_name) == -1 )
+            {
+                ret = VLC_EGENERIC;
+                goto bailout;
+            }
+
+            if( access(video_ts_location, R_OK) == -1 )
+                ret = VLC_EGENERIC;
+            else
+                ret = VLC_SUCCESS;
+            free( video_ts_location );
+            goto bailout;
+        }
     }
 
     /* ISO 9660 volume descriptor */

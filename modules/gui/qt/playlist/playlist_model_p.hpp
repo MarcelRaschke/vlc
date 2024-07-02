@@ -41,11 +41,10 @@ public:
     inline void callAsync(Fun&& fun)
     {
         Q_Q(PlaylistListModel);
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 10, 0))
-        QMetaObject::invokeMethod(q, std::forward<Fun>(fun), Qt::QueuedConnection, nullptr);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+        QMetaObject::invokeMethod(q, [fun = std::forward<Fun>(fun)]() -> void* { fun(); return nullptr; }, Qt::QueuedConnection);
 #else
-        QObject src;
-        QObject::connect(&src, &QObject::destroyed, q, std::forward<Fun>(fun), Qt::QueuedConnection);
+        QMetaObject::invokeMethod(q, std::forward<Fun>(fun), Qt::QueuedConnection, nullptr);
 #endif
     }
 

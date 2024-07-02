@@ -38,7 +38,6 @@ public:
     explicit CompositorX11(qt_intf_t *p_intf, QObject *parent = nullptr);
     virtual ~CompositorX11();
 
-    static bool preInit(qt_intf_t *);
     bool init() override;
 
     bool makeMainInterface(MainCtx*) override;
@@ -47,7 +46,7 @@ public:
 
     bool setupVoutWindow(vlc_window_t *p_wnd, VoutDestroyCb destroyCb)  override;
 
-    inline Type type() const override { return X11Compositor; };
+    inline Type type() const override { return X11Compositor; }
 
     QWindow* interfaceMainWindow() const override;
 

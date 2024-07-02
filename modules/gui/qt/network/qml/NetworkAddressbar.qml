@@ -15,9 +15,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as T
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Templates as T
+import QtQuick.Layouts
 
 import org.videolan.vlc 0.1
 
@@ -27,7 +27,7 @@ import "qrc:///widgets/" as Widgets
 T.Control {
     id: control
 
-    property var path
+    property var path: []
 
     property var _contentModel
     property var _menuModel
@@ -46,14 +46,14 @@ T.Control {
     onActiveFocusChanged: if (activeFocus) contentItem.forceActiveFocus(focusReason)
 
     function createContentModel() {
-        var contentModel = []
-        var menuModel = []
+        const contentModel = []
+        const menuModel = []
         if (path.length < 1)
             return
-        var leftWidth = control.availableWidth
-        var i = path.length
+        let leftWidth = control.availableWidth
+        let i = path.length
         while (--i >= 0) {
-            var textWidth = fontMetrics.advanceWidth(path[i].display)
+            const textWidth = fontMetrics.advanceWidth(path[i].display)
                     + (i !== path.length - 1 ? iconMetrics.advanceWidth(
                                                     VLCIcons.breadcrumb_sep) : 0) + VLCStyle.margin_xsmall * 4
 
@@ -103,7 +103,7 @@ T.Control {
                     contentRepeater.itemAt(0).forceActiveFocus(Qt.TabFocusReason)
             }
             Keys.priority: Keys.AfterItem
-            Keys.onPressed: Navigation.defaultKeyAction(event)
+            Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
 
             onClicked: control.homeButtonClicked(focusReason)
         }
@@ -123,7 +123,7 @@ T.Control {
                 contentRepeater.itemAt(0).forceActiveFocus(Qt.TabFocusReason)
             }
             Keys.priority: Keys.AfterItem
-            Keys.onPressed: Navigation.defaultKeyAction(event)
+            Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
 
             onClicked: popup.show()
         }
@@ -158,7 +158,7 @@ T.Control {
                 }
 
                 Keys.priority: Keys.AfterItem
-                Keys.onPressed: Navigation.defaultKeyAction(event)
+                Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
 
                 AddressbarButton {
                     id: btn
@@ -206,11 +206,11 @@ T.Control {
         id: popup
 
         function show() {
-            var model = control._menuModel.map(function (modelData) {
+            const model = control._menuModel.map(function (modelData) {
                 return modelData.display
             })
 
-            var point = control.mapToGlobal(0, menuButton.height + VLCStyle.margin_xxsmall)
+            const point = control.mapToGlobal(0, menuButton.height + VLCStyle.margin_xxsmall)
 
             popup.popup(point, model)
         }

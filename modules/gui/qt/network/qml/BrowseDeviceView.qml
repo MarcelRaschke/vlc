@@ -18,7 +18,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 
@@ -32,32 +32,33 @@ FocusScope {
 
     // Properties
 
-    /* required */ property var model
+    required property BaseModel model
 
-    property var parentFilter: null
+    readonly property int rowHeight: _currentView?.rowHeight ?? 0
 
-    readonly property int rowHeight: (_currentView) ? _currentView.rowHeight : 0
+    readonly property int contentHeight: _currentView?.contentHeight ?? 0
 
-    readonly property int contentHeight: (_currentView) ? _currentView.contentHeight : 0
-
-    readonly property int contentMargin: (_currentView) ? _currentView.contentLeftMargin : 0
+    readonly property int contentLeftMargin: _currentView?.contentLeftMargin ?? 0
+    readonly property int contentRightMargin: _currentView?.contentRightMargin ?? 0
 
     property int displayMarginEnd: 0
 
-    readonly property int currentIndex: (_currentView) ? _currentView.currentIndex : -1
+    readonly property int currentIndex: _currentView?.currentIndex ?? -1
 
     property int maximumRows: -1
 
-    readonly property int maximumCount: (_currentView) ? _currentView.maximumCount : -1
+    readonly property int maximumCount: _currentView?.maximumCount ?? -1
 
-    readonly property int nbItemPerRow: (_currentView) ? _currentView.nbItemPerRow : 1
+    readonly property int nbItemPerRow: _currentView?.nbItemPerRow ?? 1
 
-    property Component header: BrowseDeviceHeader {
+    property bool isSearchable: true
+
+    property Component header: Widgets.ViewHeader {
         view: root
 
         text: root.title
 
-        button.visible: root.sourceModel.hasMoreItems
+        seeAllButton.visible: root.model.count < root.model.maximumCount
 
         Navigation.parentItem: root
 
@@ -65,7 +66,7 @@ FocusScope {
             view.setCurrentItemFocus(Qt.TabFocusReason)
         }
 
-        onClicked: root.seeAll(reason)
+        onSeeAllButtonClicked: reason => root.seeAll(reason)
     }
 
     property string title
@@ -74,10 +75,6 @@ FocusScope {
 
     property alias leftPadding: view.leftPadding
     property alias rightPadding: view.rightPadding
-
-    property alias modelFilter: modelFilter
-
-    property alias sourceModel: modelFilter.sourceModel
 
     // Private
 
@@ -98,47 +95,21 @@ FocusScope {
         model.currentIndex = 0
     }
 
-    onParentFilterChanged: {
-        if (parentFilter === null || sourceModel === null)
-            return
-
-        sourceModel.searchRole = parentFilter.searchRole
-
-        sourceModel.searchPattern = parentFilter.searchPattern
-
-        sourceModel.sortCriteria = parentFilter.sortCriteria
-
-        sourceModel.sortOrder = parentFilter.sortOrder
-    }
-
     // Connections
 
     Connections {
         target: MainCtx
 
-        onGridViewChanged: {
+        function onGridViewChanged() {
             if (MainCtx.gridView) view.replace(grid)
             else                  view.replace(list)
         }
     }
 
-    // NOTE: If it exists, we're applying 'parentFilter' properties to fit the sorting options.
-    Connections {
-        target: parentFilter
-
-        onSearchRoleChanged: sourceModel.searchRole = parentFilter.searchRole
-
-        onSearchPatternChanged: sourceModel.searchPattern = parentFilter.searchPattern
-
-        onSortCriteriaChanged: sourceModel.sortCriteria = parentFilter.sortCriteria
-
-        onSortOrderChanged: sourceModel.sortOrder = parentFilter.sortOrder
-    }
-
     // Functions
 
     function playAt(index) {
-        model.addAndPlay(modelFilter.mapIndexToSource(index))
+        model.addAndPlay(index)
     }
 
     function setCurrentItemFocus(reason) {
@@ -155,17 +126,17 @@ FocusScope {
     // Events
 
     function onAction(index) {
-        var indexes = modelSelect.selectedIndexes
+        const indexes = modelSelect.selectedIndexes
 
         if (indexes.length > 1) {
-            model.addAndPlay(modelFilter.mapIndexesToSource(indexes))
+            model.addAndPlay(indexes)
 
             return
         }
 
-        var data = modelFilter.getDataAt(index)
+        const data = model.getDataAt(index)
 
-        var type = data.type
+        const type = data.type
 
         if (type === NetworkMediaModel.TYPE_DIRECTORY || type === NetworkMediaModel.TYPE_NODE)
             browse(data.tree, Qt.TabFocusReason)
@@ -182,7 +153,7 @@ FocusScope {
     }
 
     function onDoubleClicked(model, index) {
-        var type = model.type
+        const type = model.type
 
         if (type === NetworkMediaModel.TYPE_NODE || type === NetworkMediaModel.TYPE_DIRECTORY)
             browse(model.tree, Qt.MouseFocusReason)
@@ -192,20 +163,10 @@ FocusScope {
 
     // Children
 
-    Util.SelectableDelegateModel {
+    ListSelectionModel {
         id: modelSelect
 
-        model: modelFilter
-    }
-
-    SortFilterProxyModel {
-        id: modelFilter
-
-        sourceModel: root.model
-
-        searchRole: "name"
-
-        searchPattern: (sourceModel) ? sourceModel.searchPattern : ""
+        model: root.model
     }
 
     Widgets.StackViewExt {
@@ -233,20 +194,20 @@ FocusScope {
 
             displayMarginEnd: root.displayMarginEnd
 
-            model: modelFilter
+            model: root.model
 
             headerDelegate: root.header
 
-            selectionDelegateModel: modelSelect
+            selectionModel: modelSelect
 
             Navigation.parentItem: root
 
             Navigation.upItem: headerItem
 
-            onActionAtIndex: root.onAction(index)
+            onActionAtIndex: (index) => { root.onAction(index) }
 
             delegate: NetworkGridItem {
-                onItemClicked: root.onClicked(model, index, modifier)
+                onItemClicked: (modifier) => { root.onClicked(model, index, modifier) }
 
                 onItemDoubleClicked: root.onDoubleClicked(model, index)
 
@@ -281,7 +242,7 @@ FocusScope {
 
                     subCriterias: [ "mrl" ],
 
-                    text: I18n.qtr("Name"),
+                    text: qsTr("Name"),
 
                     headerDelegate: artworkHeader,
                     colDelegate: artworkColumn
@@ -294,6 +255,10 @@ FocusScope {
                 model: {
                     criteria: "artwork",
 
+                    text: qsTr("Cover"),
+
+                    isSortable: false,
+
                     headerDelegate: artworkHeader,
                     colDelegate: artworkColumn
                 }
@@ -303,7 +268,7 @@ FocusScope {
                 model: {
                     criteria: "name",
 
-                    text: I18n.qtr("Name")
+                    text: qsTr("Name")
                 }
             }, {
                 size: Math.max(_nbCols - _size - 1, 1),
@@ -311,7 +276,7 @@ FocusScope {
                 model: {
                     criteria: "mrl",
 
-                    text: I18n.qtr("Url"),
+                    text: qsTr("Url"),
 
                     colDelegate: mrlColumn
                 }
@@ -323,83 +288,87 @@ FocusScope {
 
             displayMarginEnd: root.displayMarginEnd
 
-            model: modelFilter
+            model: root.model
 
             sortModel: (availableRowWidth < VLCStyle.colWidth(4)) ? _modelSmall
                                                                   : _modelMedium
 
             header: root.header
 
-            selectionDelegateModel: modelSelect
+            selectionModel: modelSelect
 
             Navigation.parentItem: root
 
             Navigation.upItem: headerItem
 
-            onActionForSelection: root.onAction(selection[0].row)
+            onActionForSelection: selection => root.onAction(selection[0].row)
 
-            onItemDoubleClicked: root.onDoubleClicked(model, index)
+            onItemDoubleClicked: (index, model) => root.onDoubleClicked(model, index)
 
             Component {
                 id: artworkHeader
 
-                Widgets.IconLabel {
-                    text: VLCIcons.album_cover
+                Widgets.TableHeaderDelegate {
+                    Widgets.IconLabel {
 
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: VLCStyle.icon_tableHeader
+                        height: VLCStyle.listAlbumCover_height
+                        width: VLCStyle.listAlbumCover_width
+                        anchors.centerIn: parent
 
-                    color: parent.colorContext.fg.secondary
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        font.pixelSize: VLCStyle.icon_tableHeader
+
+                        text: VLCIcons.album_cover
+
+                        color: parent.colorContext.fg.secondary
+                    }
                 }
             }
 
             Component {
                 id: artworkColumn
 
-                NetworkThumbnailItem { onPlayClicked: root.playAt(index) }
+                NetworkThumbnailItem { onPlayClicked: index => root.playAt(index) }
             }
 
             Component {
                 id: mrlColumn
 
-                Widgets.ScrollingText {
+                Widgets.TableRowDelegate {
                     id: itemText
 
-                    property var rowModel: parent.rowModel
-                    property var colModel: parent.colModel
+                    Widgets.TextAutoScroller {
 
-                    readonly property ColorContext colorContext: parent.colorContext
-                    readonly property bool selected: parent.selected
+                        anchors.fill: parent
 
-                    width: parent.width
+                        clip: scrolling
 
-                    clip: scrolling
+                        label: itemLabel
 
-                    label: itemLabel
+                        forceScroll: itemText.currentlyFocused
 
-                    forceScroll: parent.currentlyFocused
+                        Widgets.ListLabel {
+                            id: itemLabel
 
-                    Widgets.ListLabel {
-                        id: itemLabel
+                            anchors.verticalCenter: parent.verticalCenter
 
-                        anchors.verticalCenter: parent.verticalCenter
+                            text: {
+                                if (itemText.rowModel === null)
+                                    return ""
 
-                        text: {
-                            if (itemText.rowModel === null)
-                                return ""
+                                const text = itemText.rowModel[itemText.colModel.criteria]
 
-                            var text = itemText.rowModel[itemText.colModel.criteria]
+                                if (text.toString() === "vlc://nop")
+                                    return ""
+                                else
+                                    return text
+                            }
 
-                            if (text.toString() === "vlc://nop")
-                                return ""
-                            else
-                                return text
+                            color: itemText.selected
+                                ? itemText.colorContext.fg.highlight
+                                : itemText.colorContext.fg.primary
                         }
-
-                        color: itemText.selected
-                            ? itemText.colorContext.fg.highlight
-                            : itemText.colorContext.fg.primary
                     }
                 }
             }

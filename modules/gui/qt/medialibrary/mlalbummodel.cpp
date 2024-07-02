@@ -18,9 +18,11 @@
 
 #include "mlalbummodel.hpp"
 
+#include "util/vlctick.hpp"
+
 QHash<QByteArray, vlc_ml_sorting_criteria_t> MLAlbumModel::M_names_to_criteria = {
     {"id", VLC_ML_SORTING_DEFAULT},
-    {"title", VLC_ML_SORTING_ALBUM},
+    {"title", VLC_ML_SORTING_ALPHA},
     {"release_year", VLC_ML_SORTING_RELEASEDATE},
     {"main_artist", VLC_ML_SORTING_ARTIST},
     //{"nb_tracks"},
@@ -87,7 +89,7 @@ void MLAlbumModel::onVlcMlEvent(const MLEvent &event)
         case VLC_ML_EVENT_GENRE_DELETED:
             if ( m_parent.id != 0 && m_parent.type == VLC_ML_PARENT_GENRE &&
                  event.deletion.i_entity_id == m_parent.id )
-                    emit resetRequested();;
+                    emit resetRequested();
             return;
         default:
             break;
@@ -145,33 +147,27 @@ QVariant MLAlbumModel::itemRoleData(MLItem *item, const int role) const
     }
 }
 
-std::unique_ptr<MLBaseModel::BaseLoader>
-MLAlbumModel::createLoader() const
+std::unique_ptr<MLListCacheLoader>
+MLAlbumModel::createMLLoader() const
 {
-    return std::make_unique<Loader>(*this);
+    return std::make_unique<MLListCacheLoader>(m_mediaLib, std::make_shared<MLAlbumModel::Loader>(*this));
 }
 
-size_t MLAlbumModel::Loader::count(vlc_medialibrary_t* ml) const
+size_t MLAlbumModel::Loader::count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* query) const
 {
-    MLQueryParams params = getParams();
-    auto queryParams = params.toCQueryParams();
-
     if ( m_parent.id <= 0 )
-        return vlc_ml_count_albums(ml, &queryParams);
-    return vlc_ml_count_albums_of(ml, &queryParams, m_parent.type, m_parent.id);
+        return vlc_ml_count_albums(ml, query);
+    return vlc_ml_count_albums_of(ml, query, m_parent.type, m_parent.id);
 }
 
 std::vector<std::unique_ptr<MLItem>>
-MLAlbumModel::Loader::load(vlc_medialibrary_t* ml, size_t index, size_t count) const
+MLAlbumModel::Loader::load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* query) const
 {
-    MLQueryParams params = getParams(index, count);
-    auto queryParams = params.toCQueryParams();
-
     ml_unique_ptr<vlc_ml_album_list_t> album_list;
     if ( m_parent.id <= 0 )
-        album_list.reset( vlc_ml_list_albums(ml, &queryParams) );
+        album_list.reset( vlc_ml_list_albums(ml, query) );
     else
-        album_list.reset( vlc_ml_list_albums_of(ml, &queryParams, m_parent.type, m_parent.id ) );
+        album_list.reset( vlc_ml_list_albums_of(ml, query, m_parent.type, m_parent.id ) );
     if ( album_list == nullptr )
         return {};
     std::vector<std::unique_ptr<MLItem>> res;

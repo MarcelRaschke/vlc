@@ -25,6 +25,8 @@
 #import <vlc_common.h>
 #import <vlc_interface.h>
 
+@class VLCRendererMenuController;
+
 @interface VLCMainMenu : NSObject
 
 /* main menu */
@@ -66,9 +68,6 @@
 @property (readwrite, weak) IBOutlet NSMenuItem *toggleJumpButtons;
 @property (readwrite, weak) IBOutlet NSMenuItem *togglePlaymodeButtons;
 @property (readwrite, weak) IBOutlet NSMenuItem *toggleEffectsButton;
-@property (readwrite, weak) IBOutlet NSMenu *playlistTableColumnsMenu;
-@property (readwrite, weak) IBOutlet NSMenuItem *playlistTableColumns;
-
 @property (readwrite, weak) IBOutlet NSMenu *controlsMenu;
 @property (readwrite, weak) IBOutlet NSMenuItem *play;
 @property (readwrite, weak) IBOutlet NSMenuItem *stop;
@@ -88,6 +87,7 @@
 @property (readwrite, weak) IBOutlet NSMenuItem *random;
 @property (readwrite, weak) IBOutlet NSMenuItem *repeat;
 @property (readwrite, weak) IBOutlet NSMenuItem *AtoBloop;
+@property (readwrite, weak) IBOutlet NSMenuItem *libraryPlaylistMode;
 @property (readwrite, weak) IBOutlet NSMenuItem *sortPlaylist;
 @property (readwrite, weak) IBOutlet NSMenuItem *quitAfterPB;
 @property (readwrite, weak) IBOutlet NSMenuItem *fwd;
@@ -180,6 +180,7 @@
 @property (readwrite, weak) IBOutlet NSMenuItem *videoeffects;
 @property (readwrite, weak) IBOutlet NSMenuItem *bookmarks;
 @property (readwrite, weak) IBOutlet NSMenuItem *playlist;
+@property (readwrite, weak) IBOutlet NSMenuItem *detachedAudioWindow;
 @property (readwrite, weak) IBOutlet NSMenuItem *info;
 @property (readwrite, weak) IBOutlet NSMenuItem *errorsAndWarnings;
 @property (readwrite, weak) IBOutlet NSMenuItem *messages;
@@ -224,6 +225,8 @@
 @property (readwrite, weak) IBOutlet NSPopUpButton *playlistSaveAccessoryPopup;
 @property (readwrite, weak) IBOutlet NSTextField *playlistSaveAccessoryText;
 
+@property (readonly, strong) VLCRendererMenuController *rendererMenuController;
+
 - (void)releaseRepresentedObjects:(NSMenu *)the_menu;
 
 - (IBAction)openAddonManager:(id)sender;
@@ -256,6 +259,7 @@
 - (IBAction)toggleRecord:(id)sender;
 - (IBAction)setPlaybackRate:(id)sender;
 - (IBAction)toggleAtoBloop:(id)sender;
+- (IBAction)toggleLibraryPlaylistMode:(id)sender;
 - (IBAction)selectRenderer:(id)sender;
 
 - (IBAction)toggleFullscreen:(id)sender;

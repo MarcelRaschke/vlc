@@ -18,6 +18,7 @@
 
 #include "mlvideomodel.hpp"
 #include "mlhelper.hpp"
+#include "util/vlctick.hpp"
 
 template<typename T>
 QVariantList getVariantList(const QList<T> & desc)
@@ -119,6 +120,11 @@ QVariant MLVideoModel::itemRoleData(MLItem *item, int role) const
             }
             return QVariant::fromValue( thumbnail );
         }
+        case VIDEO_IS_LOCAL:
+        {
+            QUrl videoUrl(video->getMRL());
+            return QVariant::fromValue( videoUrl.isLocalFile() );
+        }
         case VIDEO_DURATION:
             return QVariant::fromValue( video->getDuration() );
         case VIDEO_PROGRESS:
@@ -137,6 +143,8 @@ QVariant MLVideoModel::itemRoleData(MLItem *item, int role) const
             return getVariantList( video->getVideoDesc() );
         case VIDEO_AUDIO_TRACK:
             return getVariantList( video->getAudioDesc() );
+        case VIDEO_SUBTITLE_TRACK:
+            return getVariantList( video->getSubtitleDesc() );
         case VIDEO_TITLE_FIRST_SYMBOL:
             return QVariant::fromValue( getFirstSymbol( video->getTitle() ) );
 
@@ -154,6 +162,7 @@ QHash<int, QByteArray> MLVideoModel::roleNames() const
         { VIDEO_FILENAME, "fileName" },
         { VIDEO_TITLE, "title" },
         { VIDEO_THUMBNAIL, "thumbnail" },
+        { VIDEO_IS_LOCAL, "isLocal"},
         { VIDEO_DURATION, "duration" },
         { VIDEO_PROGRESS, "progress" },
         { VIDEO_PLAYCOUNT, "playcount" },
@@ -163,6 +172,7 @@ QHash<int, QByteArray> MLVideoModel::roleNames() const
         { VIDEO_DISPLAY_MRL, "display_mrl" },
         { VIDEO_AUDIO_TRACK, "audioDesc" },
         { VIDEO_VIDEO_TRACK, "videoDesc" },
+        { VIDEO_SUBTITLE_TRACK, "subtitleDesc" },
         { VIDEO_TITLE_FIRST_SYMBOL, "title_first_symbol"},
     };
 }
@@ -246,37 +256,33 @@ void MLVideoModel::generateThumbnail(uint64_t id) const
     });
 }
 
-std::unique_ptr<MLBaseModel::BaseLoader>
-MLVideoModel::createLoader() const
+std::unique_ptr<MLListCacheLoader>
+MLVideoModel::createMLLoader() const
 {
-    return std::make_unique<Loader>(*this);
+    return std::make_unique<MLListCacheLoader>(m_mediaLib, std::make_shared<MLVideoModel::Loader>(*this));
 }
 
-size_t MLVideoModel::Loader::count(vlc_medialibrary_t* ml) const /* override */
+size_t MLVideoModel::Loader::count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const /* override */
 {
-    vlc_ml_query_params_t params = getParams().toCQueryParams();
-
     int64_t id = m_parent.id;
 
     if (id <= 0)
-        return vlc_ml_count_video_media(ml, &params);
+        return vlc_ml_count_video_media(ml, queryParams);
     else
-        return vlc_ml_count_video_of(ml, &params, m_parent.type, id);
+        return vlc_ml_count_video_of(ml, queryParams, m_parent.type, id);
 }
 
 std::vector<std::unique_ptr<MLItem>>
-MLVideoModel::Loader::load(vlc_medialibrary_t* ml, size_t index, size_t count) const /* override */
+MLVideoModel::Loader::load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const /* override */
 {
-    vlc_ml_query_params_t params = getParams(index, count).toCQueryParams();
-
     ml_unique_ptr<vlc_ml_media_list_t> list;
 
     int64_t id = m_parent.id;
 
     if (id <= 0)
-        list.reset(vlc_ml_list_video_media(ml, &params));
+        list.reset(vlc_ml_list_video_media(ml, queryParams));
     else
-        list.reset(vlc_ml_list_video_of(ml, &params, m_parent.type, id));
+        list.reset(vlc_ml_list_video_of(ml, queryParams, m_parent.type, id));
 
     if (list == nullptr)
         return {};
@@ -301,3 +307,8 @@ MLVideoModel::Loader::loadItemById(vlc_medialibrary_t* ml, MLItemId itemId) cons
     return std::make_unique<MLVideo>(media.get());
 }
 
+/* Q_INVOKABLE */ QUrl MLVideoModel::getParentURL(const QModelIndex &index)
+{
+    MLVideo *video = static_cast<MLVideo *>(item(index.row()));
+    return getParentURLFromMLItem(video);
+}

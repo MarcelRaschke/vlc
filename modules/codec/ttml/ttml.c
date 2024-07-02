@@ -55,15 +55,144 @@ vlc_module_begin ()
         set_subcategory( SUBCAT_INPUT_DEMUX )
         set_callbacks( tt_OpenDemux, tt_CloseDemux )
         add_shortcut( "ttml" )
-
+#ifdef ENABLE_SOUT
+    add_submodule()
+        set_shortname( N_("TTML") )
+        set_description( N_("TTML encoder") )
+        set_capability( "spu encoder", 101 )
+        set_subcategory( SUBCAT_INPUT_SCODEC )
+        set_callbacks( tt_OpenEncoder, NULL )
+#endif
 vlc_module_end ()
 
-
-int tt_node_NameCompare( const char* psz_tagname, const char* psz_pattern )
+struct tt_namespace_s
 {
-    if( !strncasecmp( "tt:", psz_tagname, 3 ) )
-        psz_tagname += 3;
-    return strcasecmp( psz_tagname, psz_pattern );
+    char *psz_prefix;
+    char *psz_uri;
+    struct vlc_list links;
+};
+
+void tt_namespaces_Clean( tt_namespaces_t *nss )
+{
+    struct tt_namespace_s *ns;
+    vlc_list_foreach( ns, &nss->nodes, links )
+    {
+        free( ns->psz_prefix );
+        free( ns->psz_uri );
+        free( ns );
+    }
+}
+
+void tt_namespaces_Init( tt_namespaces_t *nss )
+{
+    vlc_list_init( &nss->nodes );
+}
+
+const char * tt_namespaces_GetURI( const tt_namespaces_t *nss,
+                                   const char *psz_qn )
+{
+    const struct tt_namespace_s *ns;
+    vlc_list_foreach_const( ns, &nss->nodes, links )
+    {
+        /* compares prefixed name against raw prefix */
+        for( size_t i=0; ; i++ )
+        {
+            if( ns->psz_prefix[i] == psz_qn[i] )
+            {
+                if( psz_qn[i] == '\0' )
+                    return ns->psz_uri;
+            }
+            else
+            {
+                if( ns->psz_prefix[i] == '\0' && psz_qn[i] == ':' )
+                    return ns->psz_uri;
+                else
+                    break;
+            }
+        }
+    }
+    return NULL;
+}
+
+const char * tt_namespaces_GetPrefix( const tt_namespaces_t *nss,
+                                      const char *psz_uri )
+{
+    const struct tt_namespace_s *ns;
+    vlc_list_foreach_const( ns, &nss->nodes, links )
+    {
+        if( !strcmp( ns->psz_uri, psz_uri ) )
+            return ns->psz_prefix;
+    }
+    return NULL;
+}
+
+void tt_namespaces_Register( tt_namespaces_t *nss, const char *psz_prefix,
+                             const char *psz_uri )
+{
+    if( tt_namespaces_GetPrefix( nss, psz_uri ) )
+        return;
+    struct tt_namespace_s *ns = malloc(sizeof(*ns));
+    if( ns )
+    {
+        const char *sep = strchr( psz_prefix, ':' );
+        if( sep )
+            ns->psz_prefix = strndup( psz_prefix, sep - psz_prefix );
+        else
+            ns->psz_prefix = strdup("");
+        ns->psz_uri = strdup( psz_uri );
+        if( !ns->psz_prefix || !ns->psz_uri )
+        {
+            free( ns->psz_prefix );
+            free( ns->psz_uri );
+            free( ns );
+            return;
+        }
+        vlc_list_append( &ns->links, &nss->nodes );
+    }
+}
+
+static const char * tt_node_InheritNS( const tt_node_t *p_node )
+{
+    for( ; p_node ; p_node = p_node->p_parent )
+    {
+        if( p_node->psz_namespace )
+            return p_node->psz_namespace;
+    }
+    return NULL;
+}
+
+bool tt_node_Match( const tt_node_t *p_node, const char *psz_name, const char *psz_namespace )
+{
+    /* compare local part first (should have less chars) */
+    const char *psz_nodelocal = tt_LocalName( p_node->psz_node_name );
+    const char *psz_namelocal = tt_LocalName( psz_name );
+    if( strcmp( psz_namelocal, psz_nodelocal ) )
+        return false;
+
+    const char *psz_nodens = p_node->psz_namespace;
+    if( !psz_nodens )
+        psz_nodens = tt_node_InheritNS( p_node->p_parent );
+    if( psz_namespace && psz_nodens )
+        return !strcmp( psz_namespace, psz_nodens );
+    return !!psz_namespace == !!psz_nodens;
+}
+
+const char * tt_node_GetAttribute( tt_namespaces_t *p_nss, const tt_node_t *p_node,
+                                   const char *psz_name, const char *psz_namespace )
+{
+    const void *value;
+    char *alloc = NULL;
+    if( psz_namespace )
+    {
+        const char *psz_prefix = tt_namespaces_GetPrefix( p_nss, psz_namespace );
+        if( psz_prefix == NULL ||
+            asprintf( &alloc, "%s:%s", psz_prefix, psz_name ) < 1 )
+            return NULL;
+        psz_name = alloc;
+    }
+    value = vlc_dictionary_value_for_key( &p_node->attr_dict, psz_name );
+    free( alloc );
+    return value != kVLCDictionaryNotFound ? (const char *)value : NULL;
 }
 
 bool tt_node_HasChild( const tt_node_t *p_node )
@@ -164,6 +293,7 @@ static void tt_node_FreeDictValue( void* p_value, void* p_obj )
 static void tt_node_Delete( tt_node_t *p_node )
 {
     free( p_node->psz_node_name );
+    free( p_node->psz_namespace );
     vlc_dictionary_clear( &p_node->attr_dict, tt_node_FreeDictValue, NULL );
     free( p_node );
 }
@@ -183,6 +313,20 @@ void tt_node_RecursiveDelete( tt_node_t *p_node )
     tt_node_Delete( p_node );
 }
 
+void tt_node_RemoveAttribute( tt_node_t *p_node, const char *key )
+{
+    vlc_dictionary_remove_value_for_key( &p_node->attr_dict, key,
+                                        tt_node_FreeDictValue, NULL );
+}
+
+int tt_node_AddAttribute( tt_node_t *p_node, const char *key, const char *value )
+{
+    char *p_dup = strdup( value );
+    if( p_dup )
+        vlc_dictionary_insert( &p_node->attr_dict, key, p_dup );
+    return p_dup ? VLC_SUCCESS : VLC_EGENERIC;
+}
+
 static void tt_node_ParentAddChild( tt_node_t* p_parent, tt_basenode_t *p_child )
 {
     tt_basenode_t **pp_node = &p_parent->p_child;
@@ -191,20 +335,37 @@ static void tt_node_ParentAddChild( tt_node_t* p_parent, tt_basenode_t *p_child 
     *pp_node = p_child;
 }
 
-static tt_textnode_t *tt_textnode_New( tt_node_t *p_parent, const char *psz_text )
+static tt_textnode_t *tt_textnode_NewImpl( tt_node_t *p_parent, char *psz )
 {
+    if( !psz )
+        return NULL;
     tt_textnode_t *p_node = calloc( 1, sizeof( *p_node ) );
     if( !p_node )
+    {
+        free( psz );
         return NULL;
+    }
+    p_node->psz_text = psz;
     p_node->i_type = TT_NODE_TYPE_TEXT;
     p_node->p_parent = p_parent;
     if( p_parent )
         tt_node_ParentAddChild( p_parent, (tt_basenode_t *) p_node );
-    p_node->psz_text = strdup( psz_text );
     return p_node;
 }
 
-tt_node_t * tt_node_New( xml_reader_t* reader, tt_node_t* p_parent, const char* psz_node_name )
+tt_textnode_t *tt_textnode_New( tt_node_t *p_parent, const char *psz_text )
+{
+    return tt_textnode_NewImpl( p_parent, strdup( psz_text ) );
+}
+
+tt_textnode_t *tt_subtextnode_New( tt_node_t *p_parent, const char *psz_text, size_t len )
+{
+    return tt_textnode_NewImpl( p_parent, strndup( psz_text, len ) );
+}
+
+tt_node_t * tt_node_New( tt_node_t* p_parent,
+                         const char* psz_node_name,
+                         const char *psz_namespace )
 {
     tt_node_t *p_node = calloc( 1, sizeof( *p_node ) );
     if( !p_node )
@@ -212,6 +373,13 @@ tt_node_t * tt_node_New( xml_reader_t* reader, tt_node_t* p_parent, const char* 
 
     p_node->i_type = TT_NODE_TYPE_ELEMENT;
     p_node->psz_node_name = strdup( psz_node_name );
+    const char *psz_parent_ns = tt_node_InheritNS( p_parent );
+    /* set new namespace if not same as parent */
+    if( psz_namespace &&
+        (!psz_parent_ns || strcmp( psz_namespace, psz_parent_ns )) )
+        p_node->psz_namespace = strdup( psz_namespace );
+    else
+        p_node->psz_namespace = NULL;
     if( unlikely( p_node->psz_node_name == NULL ) )
     {
         free( p_node );
@@ -225,11 +393,24 @@ tt_node_t * tt_node_New( xml_reader_t* reader, tt_node_t* p_parent, const char* 
     if( p_parent )
         tt_node_ParentAddChild( p_parent, (tt_basenode_t *) p_node );
 
-    const char* psz_value = NULL;
-    for( const char* psz_key = xml_ReaderNextAttr( reader, &psz_value );
+    return p_node;
+}
+
+tt_node_t * tt_node_NewRead( xml_reader_t* reader,
+                             tt_namespaces_t *p_nss, tt_node_t* p_parent,
+                             const char* psz_node_name, const char *psz_namespace )
+{
+    tt_node_t *p_node = tt_node_New( p_parent, psz_node_name, psz_namespace );
+    if( !p_node )
+        return NULL;
+
+    const char* psz_value = NULL, *psz_ns = NULL;
+    for( const char* psz_key = xml_ReaderNextAttrNS( reader, &psz_value, &psz_ns );
          psz_key != NULL;
-         psz_key = xml_ReaderNextAttr( reader, &psz_value ) )
+         psz_key = xml_ReaderNextAttrNS( reader, &psz_value, &psz_ns ) )
     {
+        if( psz_ns && psz_key )
+        tt_namespaces_Register( p_nss, psz_key, psz_ns );
         char *psz_val = strdup( psz_value );
         if( psz_val )
         {
@@ -306,15 +487,15 @@ static int tt_node_Skip( xml_reader_t *p_reader, const char *psz_skipped )
     return VLC_EGENERIC;
 }
 #endif
-int tt_nodes_Read( xml_reader_t *p_reader, tt_node_t *p_root_node )
+int tt_nodes_Read( xml_reader_t *p_reader, tt_namespaces_t *p_nss, tt_node_t *p_root_node )
 {
     size_t i_depth = 0;
     tt_node_t *p_node = p_root_node;
 
     do
     {
-        const char* psz_node_name;
-        int i_type = xml_ReaderNextNode( p_reader, &psz_node_name );
+        const char *psz_node_name, *psz_node_namespace;
+        int i_type = xml_ReaderNextNodeNS( p_reader, &psz_node_name, &psz_node_namespace );
         /* !warn read empty state now as attributes reading will **** it up */
         bool b_empty = xml_ReaderIsEmptyElement( p_reader );
 
@@ -328,7 +509,10 @@ int tt_nodes_Read( xml_reader_t *p_reader, tt_node_t *p_root_node )
 
             case XML_READER_STARTELEM:
             {
-                tt_node_t *p_newnode = tt_node_New( p_reader, p_node, psz_node_name );
+                tt_namespaces_Register( p_nss, psz_node_name, psz_node_namespace );
+                tt_node_t *p_newnode = tt_node_NewRead( p_reader, p_nss, p_node,
+                                                        psz_node_name,
+                                                        psz_node_namespace );
                 if( !p_newnode )
                     return VLC_EGENERIC;
                 if( !b_empty )
@@ -348,7 +532,7 @@ int tt_nodes_Read( xml_reader_t *p_reader, tt_node_t *p_root_node )
 
             case XML_READER_ENDELEM:
             {
-                if( strcmp( psz_node_name, p_node->psz_node_name ) )
+                if( !tt_node_Match( p_node, psz_node_name, psz_node_namespace ) )
                     return VLC_EGENERIC;
 
                 if( i_depth == 0 )

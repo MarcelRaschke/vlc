@@ -15,8 +15,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
+import QtQuick
+import QtQuick.Controls
 
 import org.videolan.vlc 0.1
 
@@ -33,7 +33,7 @@ Widgets.BannerTabButton {
     DropArea {
         anchors.fill: parent
 
-        onEntered: {
+        onEntered: (drag) => {
             root.dropEnterred()
         }
     }

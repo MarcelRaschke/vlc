@@ -57,7 +57,7 @@
 #include "../platform_fonts.h"
 #include "backends.h"
 
-#ifndef VLC_WINSTORE_APP
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
 #define FONT_DIR_NT  TEXT("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts")
 #define FONT_LINKING_NT TEXT("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\FontLink\\SystemLink")
 
@@ -134,7 +134,7 @@ static int GetFileFontByName( const WCHAR * font_name, char **psz_filename, int 
         DWORD vbuflen = MAX_PATH - 1;
         DWORD dbuflen = 255;
 
-        LONG i_result = RegEnumValue( hKey, index, vbuffer, &vbuflen,
+        LONG i_result = RegEnumValueW( hKey, index, vbuffer, &vbuflen,
                                       NULL, NULL, (LPBYTE)dbuffer, &dbuflen);
         if( i_result != ERROR_SUCCESS )
         {
@@ -171,7 +171,7 @@ static char* GetWindowsFontPath(void)
     if( S_OK != SHGetFolderPathW( NULL, CSIDL_FONTS, NULL, SHGFP_TYPE_CURRENT, wdir ) )
     {
         GetWindowsDirectoryW( wdir, MAX_PATH );
-        wcscat( wdir, TEXT("\\fonts") );
+        wcscat_s( wdir, MAX_PATH, L"\\fonts" );
     }
     return FromWide( wdir );
 }
@@ -262,7 +262,7 @@ static int GetSfntNameString( FT_Byte *p_table, FT_UInt i_size, FT_UShort i_plat
  * We have to get the English name because that's what the Windows registry uses
  * for name to file mapping.
  */
-static WCHAR *GetFullEnglishName( const ENUMLOGFONTEX *lpelfe )
+static WCHAR *GetFullEnglishName( const ENUMLOGFONTEXW *lpelfe )
 {
 
     HFONT    hFont      = NULL;
@@ -270,7 +270,7 @@ static WCHAR *GetFullEnglishName( const ENUMLOGFONTEX *lpelfe )
     FT_Byte *p_table    = NULL;
     WCHAR   *psz_result = NULL;
 
-    hFont = CreateFontIndirect( &lpelfe->elfLogFont );
+    hFont = CreateFontIndirectW( &lpelfe->elfLogFont );
 
     if( !hFont )
         return NULL;
@@ -338,12 +338,13 @@ struct enumFontCallbackContext
     WCHAR prevFullName[LF_FULLFACESIZE];
 };
 
-static int CALLBACK EnumFontCallback(const ENUMLOGFONTEX *lpelfe, const NEWTEXTMETRICEX *metric,
+static int CALLBACK EnumFontCallback(const LOGFONTW *lp, const TEXTMETRICW *metric,
                                      DWORD type, LPARAM lParam)
 {
     VLC_UNUSED( metric );
     if( (type & RASTER_FONTTYPE) ) return 1;
 
+    const ENUMLOGFONTEXW *lpelfe = container_of(lp, ENUMLOGFONTEXW, elfLogFont);
     struct enumFontCallbackContext *ctx = ( struct enumFontCallbackContext * ) lParam;
     vlc_family_t *p_family = ctx->p_family;
 
@@ -398,7 +399,7 @@ static int CALLBACK EnumFontCallback(const ENUMLOGFONTEX *lpelfe, const NEWTEXTM
 }
 
 static void FillLinkedFontsForFamily( vlc_font_select_t *fs,
-                                      LPTSTR name, vlc_family_t *p_family )
+                                      const WCHAR *name, vlc_family_t *p_family )
 {
     HDC hDC = GetDC( NULL );
     if( !hDC )
@@ -409,11 +410,11 @@ static void FillLinkedFontsForFamily( vlc_font_select_t *fs,
     ctx.p_family = p_family;
     ctx.prevFullName[0] = 0;
 
-    LOGFONT lf = { 0 };
+    LOGFONTW lf = { 0 };
     lf.lfCharSet = DEFAULT_CHARSET;
-    wcsncpy( (LPTSTR)&lf.lfFaceName, name, LF_FACESIZE );
+    wcsncpy( lf.lfFaceName, name, ARRAY_SIZE(lf.lfFaceName) );
 
-    EnumFontFamiliesEx( hDC, &lf, (FONTENUMPROC)&EnumFontCallback, (LPARAM)&ctx, 0 );
+    EnumFontFamiliesEx( hDC, &lf, &EnumFontCallback, (LPARAM)&ctx, 0 );
     ReleaseDC( NULL, hDC );
 }
 
@@ -425,7 +426,7 @@ static int AddLinkedFonts( vlc_font_select_t *fs, const char *psz_family,
                              0, KEY_READ, &fontLinkKey )))
         return VLC_EGENERIC;
 
-    LPTSTR psz_buffer = ToWide( psz_family );
+    WCHAR *psz_buffer = ToWide( psz_family );
     if( !psz_buffer )
     {
         RegCloseKey( fontLinkKey );
@@ -434,7 +435,7 @@ static int AddLinkedFonts( vlc_font_select_t *fs, const char *psz_family,
 
     DWORD linkedFontsBufferSize = 0;
     DWORD lpType;
-    if( FAILED(RegQueryValueEx( fontLinkKey, psz_buffer, 0, &lpType,
+    if( FAILED(RegQueryValueExW( fontLinkKey, psz_buffer, 0, &lpType,
                                NULL, &linkedFontsBufferSize )) )
     {
         free( psz_buffer );
@@ -445,7 +446,7 @@ static int AddLinkedFonts( vlc_font_select_t *fs, const char *psz_family,
     WCHAR* linkedFonts = (WCHAR*) malloc(linkedFontsBufferSize);
 
     if ( linkedFonts &&
-         SUCCEEDED(RegQueryValueEx( fontLinkKey, psz_buffer, 0, &lpType,
+         SUCCEEDED(RegQueryValueExW( fontLinkKey, psz_buffer, 0, &lpType,
                                    (BYTE*)linkedFonts, &linkedFontsBufferSize ) )
         && lpType == REG_MULTI_SZ)
     {
@@ -490,11 +491,11 @@ int Win32_GetFamily( vlc_font_select_t *fs, const char *psz_lcname, const vlc_fa
     if( unlikely( !p_family ) )
         return VLC_EGENERIC;
 
-    LOGFONT lf;
+    LOGFONTW lf;
     lf.lfCharSet = DEFAULT_CHARSET;
 
-    LPTSTR psz_fbuffer = ToWide( psz_lcname );
-    wcsncpy( (LPTSTR)&lf.lfFaceName, psz_fbuffer, LF_FACESIZE );
+    WCHAR *psz_fbuffer = ToWide( psz_lcname );
+    wcsncpy( lf.lfFaceName, psz_fbuffer, ARRAY_SIZE(lf.lfFaceName) );
     free( psz_fbuffer );
 
     /* */
@@ -503,7 +504,7 @@ int Win32_GetFamily( vlc_font_select_t *fs, const char *psz_lcname, const vlc_fa
     ctx.fs = fs;
     ctx.p_family = p_family;
     ctx.prevFullName[0] = 0;
-    EnumFontFamiliesEx(hDC, &lf, (FONTENUMPROC)&EnumFontCallback, (LPARAM)&ctx, 0);
+    EnumFontFamiliesExW(hDC, &lf, &EnumFontCallback, (LPARAM)&ctx, 0);
     ReleaseDC(NULL, hDC);
 
     *pp_result = p_family;
@@ -523,9 +524,10 @@ static int CALLBACK MetaFileEnumProc( HDC hdc, HANDLETABLE* table,
         const EMREXTCREATEFONTINDIRECTW* create_font_record =
                 ( const EMREXTCREATEFONTINDIRECTW * ) record;
 
-        *( ( LOGFONT * ) log_font ) = create_font_record->elfw.elfLogFont;
+        *( ( LOGFONTW * ) log_font ) = create_font_record->elfw.elfLogFont;
+        return 1;
     }
-    return 1;
+    return 0;
 }
 
 /**
@@ -547,17 +549,17 @@ static char *UniscribeFallback( const char *psz_lcname, uni_char_t codepoint )
     if( !meta_file_dc )
         goto error;
 
-    LOGFONT lf;
+    LOGFONTW lf;
     memset( &lf, 0, sizeof( lf ) );
 
     wchar_t *psz_fbuffer = ToWide( psz_lcname );
     if( !psz_fbuffer )
         goto error;
-    wcsncpy( ( LPTSTR ) &lf.lfFaceName, psz_fbuffer, LF_FACESIZE );
+    wcsncpy( lf.lfFaceName, psz_fbuffer, ARRAY_SIZE(lf.lfFaceName) );
     free( psz_fbuffer );
 
     lf.lfCharSet = DEFAULT_CHARSET;
-    HFONT hFont = CreateFontIndirect( &lf );
+    HFONT hFont = CreateFontIndirectW( &lf );
     if( !hFont )
         goto error;
 
@@ -582,7 +584,7 @@ static char *UniscribeFallback( const char *psz_lcname, uni_char_t codepoint )
 
     if( SUCCEEDED( hresult ) )
     {
-        LOGFONT log_font;
+        LOGFONTW log_font;
         log_font.lfFaceName[ 0 ] = 0;
         EnumEnhMetaFile( 0, meta_file, MetaFileEnumProc, &log_font, NULL );
         if( log_font.lfFaceName[ 0 ] )
@@ -683,6 +685,9 @@ done:
     *pp_result = p_family;
     return i_ret;
 }
+#else // !WINAPI_PARTITION_DESKTOP
+#define GetWindowsFontPath()  (NULL)
+#endif // !WINAPI_PARTITION_DESKTOP
 
 char * MakeFilePath( vlc_font_select_t *fs, const char *psz_filename )
 {
@@ -705,6 +710,3 @@ char * MakeFilePath( vlc_font_select_t *fs, const char *psz_filename )
 
     return psz_filepath;
 }
-
-#endif
-

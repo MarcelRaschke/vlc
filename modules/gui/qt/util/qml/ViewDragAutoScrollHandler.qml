@@ -15,8 +15,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
+import QtQuick
+import QtQuick.Controls
 
 import "qrc:///style/"
 
@@ -24,7 +24,17 @@ QtObject {
     id: root
 
     property Flickable view: null
+
+    // if 'dragItem' is null, user must override property 'dragging' and 'dragPosProvider'
     property Item dragItem: null
+
+    property bool dragging: dragItem?.visible ?? false
+
+    property var dragPosProvider: function () {
+        return root.view.mapFromItem(root.dragItem.parent,
+                                     root.dragItem.x,
+                                     root.dragItem.y)
+    }
 
     property int orientation: (view && view.orientation !== undefined) ? view.orientation
                                                                        : Qt.Vertical
@@ -61,17 +71,12 @@ QtObject {
                                                             : null
 
         readonly property int direction: {
-            if (!root.dragItem || !root.view)
+            if (!root.view || !root.view.visible || !root.dragging)
                 return ViewDragAutoScrollHandler.Direction.None
 
-            if (!root.dragItem.visible || !root.view.visible)
-                return ViewDragAutoScrollHandler.Direction.None
+            const pos = root.dragPosProvider()
 
-            var pos = root.view.mapFromItem(root.dragItem.parent,
-                                            root.dragItem.x,
-                                            root.dragItem.y)
-
-            var size, mark, atBeginning, atEnd
+            let size, mark, atBeginning, atEnd
             if (root.orientation === Qt.Vertical) {
                 size = root.view.height
                 mark = pos.y
@@ -111,11 +116,8 @@ QtObject {
         function directionChangedHandler() {
             if (direction === ViewDragAutoScrollHandler.Direction.None) {
                 running = false
-
-                if (_scrollBar)
-                    _scrollBar.active = false // TODO: Use Binding Qt >=5.14
             } else if (!running) {
-                var _to
+                let _to
 
                 if (direction === ViewDragAutoScrollHandler.Direction.Backward) {
                     _to = 0
@@ -137,10 +139,14 @@ QtObject {
 
                 to = _to
                 running = true
-
-                if (_scrollBar)
-                    _scrollBar.active = true // TODO: Use Binding Qt >= 5.14
             }
+        }
+
+        readonly property Binding _scrollBarActiveBinding: Binding {
+            when: !!animation._scrollBar && animation.running
+            target: animation._scrollBar
+            property: "active"
+            value: true
         }
     }
 }

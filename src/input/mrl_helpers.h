@@ -49,13 +49,11 @@
  * See the \link mrl MRL-specification\endlink for a detailed
  * explanation of how `payload` will be escaped.
  *
- * \param[out] out `*out` will refer to the created string on success,
- *                  and an unspecified value on error.
  * \param[in] payload the data to escape.
- * \return VLC_SUCCESS on success, an error-code on failure.
+ * \return he created string on success, and NULL on error.
  **/
-static inline int
-mrl_EscapeFragmentIdentifier( char** out, char const* payload )
+VLC_MALLOC static inline char *
+mrl_EscapeFragmentIdentifier( char const* payload )
 {
     struct vlc_memstream mstream;
 
@@ -69,7 +67,7 @@ mrl_EscapeFragmentIdentifier( char** out, char const* payload )
 #define RFC3986_FRAGMENT   RFC3986_PCHAR "/" "?"
 
     if( vlc_memstream_open( &mstream ) )
-        return VLC_EGENERIC;
+        return NULL;
 
     for( char const* p = payload; *p; ++p )
     {
@@ -86,10 +84,65 @@ mrl_EscapeFragmentIdentifier( char** out, char const* payload )
 #undef RFC3986_SUBDELIMS
 
     if( vlc_memstream_close( &mstream ) )
-        return VLC_EGENERIC;
+        return NULL;
 
-    *out = mstream.ptr;
-    return VLC_SUCCESS;
+    return mstream.ptr;
+}
+
+static inline char *
+mrl_AppendAnchorFragment( const char *anchor, char const *payload )
+{
+    struct vlc_memstream mstream;
+    if( vlc_memstream_open( &mstream ) )
+        return NULL;
+
+    if( anchor )
+        vlc_memstream_puts( &mstream, anchor );
+    else
+        vlc_memstream_putc( &mstream, '#' );
+
+    char *escaped = mrl_EscapeFragmentIdentifier( payload );
+    if( escaped == NULL )
+    {
+        if( !vlc_memstream_close( &mstream ) )
+            free( mstream.ptr );
+        return NULL;
+    }
+
+    vlc_memstream_puts( &mstream, "!+" );
+    vlc_memstream_puts( &mstream, escaped );
+    free( escaped );
+
+    if( vlc_memstream_close( &mstream ) )
+        return NULL;
+
+    return mstream.ptr;
+}
+
+struct mrl_info
+{
+    vlc_array_t identifiers;
+    vlc_array_t volumes;
+    char const *extra;
+};
+
+static inline void
+mrl_info_Clean( struct mrl_info *mrli )
+{
+    for( size_t i = 0; i < vlc_array_count( &mrli->identifiers ); ++i )
+        free( vlc_array_item_at_index( &mrli->identifiers, i ) );
+    vlc_array_clear( &mrli->identifiers );
+    for( size_t i = 0; i < vlc_array_count( &mrli->volumes ); ++i )
+        free( vlc_array_item_at_index( &mrli->volumes, i ) );
+    vlc_array_clear( &mrli->volumes );
+}
+
+static inline void
+mrl_info_Init( struct mrl_info *mrli )
+{
+    vlc_array_init( &mrli->identifiers );
+    vlc_array_init( &mrli->volumes );
+    mrli->extra = NULL;
 }
 
 /**
@@ -112,14 +165,9 @@ mrl_EscapeFragmentIdentifier( char** out, char const* payload )
  * \return VLC_SUCCESS on success, an error-code on failure
  **/
 static inline int
-mrl_FragmentSplit( vlc_array_t* out_items,
-                   char const** out_extra,
+mrl_FragmentSplit( struct mrl_info *mrli,
                    char const* payload )
 {
-    char const* extra = NULL;
-
-    vlc_array_init( out_items );
-
     while( strncmp( payload, "!/", 2 ) == 0 )
     {
         payload += 2;
@@ -130,7 +178,25 @@ mrl_FragmentSplit( vlc_array_t* out_items,
         if( unlikely( !decoded ) || !vlc_uri_decode( decoded ) )
             goto error;
 
-        if( vlc_array_append( out_items, decoded ) )
+        if( vlc_array_append( &mrli->identifiers, decoded ) )
+        {
+            free( decoded );
+            goto error;
+        }
+        payload += len;
+    }
+
+    while( strncmp( payload, "!+", 2 ) == 0 )
+    {
+        payload += 2;
+
+        int len = strcspn( payload, "!?" );
+        char* decoded = strndup( payload, len );
+
+        if( unlikely( !decoded ) || !vlc_uri_decode( decoded ) )
+            goto error;
+
+        if( vlc_array_append( &mrli->volumes, decoded ) )
         {
             free( decoded );
             goto error;
@@ -143,19 +209,15 @@ mrl_FragmentSplit( vlc_array_t* out_items,
         if( *payload == '!' )
             goto error;
 
-        if( *payload == '?' && vlc_array_count( out_items ) )
+        if( *payload == '?' && vlc_array_count( &mrli->identifiers ) )
             ++payload;
 
-        extra = payload;
+        mrli->extra = payload;
     }
 
-    *out_extra = extra;
     return VLC_SUCCESS;
 
 error:
-    for( size_t i = 0; i < vlc_array_count( out_items ); ++i )
-        free( vlc_array_item_at_index( out_items, i ) );
-    vlc_array_clear( out_items );
     return VLC_EGENERIC;
 }
 

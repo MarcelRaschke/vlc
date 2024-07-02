@@ -24,7 +24,7 @@
 #include <QSize>
 #include <QQuickImageProvider>
 
-class EffectsImageProvider : public QObject, public QQuickImageProvider
+class EffectsImageProvider : public QQuickImageProvider
 {
     Q_OBJECT
 
@@ -34,7 +34,8 @@ public:
     enum Effect
     {
         RectDropShadow = 1,
-        RoundedRectDropShadow
+        RoundedRectDropShadow,
+        DoubleRoundedRectDropShadow
     };
     Q_ENUM(Effect)
 

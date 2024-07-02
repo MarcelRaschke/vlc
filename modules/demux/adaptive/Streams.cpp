@@ -622,11 +622,14 @@ ChunkInterface * AbstractStream::getNextChunk() const
 {
     const bool b_restarting = fakeEsOut()->restarting();
     ChunkInterface *ck = segmentTracker->getNextChunk(!b_restarting);
+
     if(ck && !fakeEsOut()->hasSegmentStartTimes())
         fakeEsOut()->setSegmentStartTimes(startTimeContext);
 
     if(ck && !fakeEsOut()->hasSynchronizationReference())
     {
+        if(!fakeEsOut()->hasSegmentStartTimes())
+            return ck;
         assert(fakeEsOut()->hasSegmentStartTimes());
         SynchronizationReference r;
         if(segmentTracker->getSynchronizationReference(currentSequence, startTimeContext.media, r))
@@ -648,6 +651,7 @@ block_t * AbstractStream::readNextBlock()
         /* clear up discontinuity on demux start (discontinuity on start segment bug) */
         discontinuity = false;
         needrestart = false;
+        fakeesout->setSrcID(nextSrcID);
     }
     else if(discontinuity || needrestart)
     {
@@ -798,6 +802,7 @@ void AbstractStream::trackerEvent(const TrackerEvent &ev)
                     static_cast<const DiscontinuityEvent &>(ev);
             discontinuity = true;
             currentSequence = event.discontinuitySequenceNumber;
+            nextSrcID = SrcID::make();
         }
             break;
 
@@ -844,6 +849,7 @@ void AbstractStream::trackerEvent(const TrackerEvent &ev)
                     event.next ? event.next->getStreamFormat().str().c_str() : ""));
             if(event.next)
             {
+                nextSrcID = SrcID::make();
                 currentrep.width = event.next->getWidth() > 0 ? event.next->getWidth() : 0;
                 currentrep.height = event.next->getHeight() > 0 ? event.next->getHeight() : 0;
             }

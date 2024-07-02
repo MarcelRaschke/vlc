@@ -23,6 +23,7 @@
 
 #include <vlc_common.h>
 #include <vlc_picture.h>
+#include <vlc_ancillary.h>
 
 #include <libplacebo/colorspace.h>
 #include <libplacebo/shaders/colorspace.h>
@@ -42,7 +43,6 @@ enum pl_chroma_location vlc_placebo_ChromaLoc(const video_format_t *);
 void vlc_placebo_HdrMetadata(const vlc_video_hdr_dynamic_metadata_t *src,
                              struct pl_hdr_metadata *dst);
 
-#if PL_API_VER >= 185
 // Map raw dolby vision metadata struct
 void vlc_placebo_DoviMetadata(const vlc_video_dovi_metadata_t *src,
                               struct pl_dovi_metadata *dst);
@@ -50,15 +50,13 @@ void vlc_placebo_DoviMetadata(const vlc_video_dovi_metadata_t *src,
 // Map metadata from frame if present, using `data` as storage
 void vlc_placebo_frame_DoviMetadata(struct pl_frame *frame, const picture_t *pic,
                                     struct pl_dovi_metadata *data);
-#endif
 
 int vlc_placebo_PlaneComponents(const video_format_t *, struct pl_plane[4]);
 
 // Fill a pl_plane_data array with various data. Returns the number of planes,
 // or 0 if the format is unsupported by the libplacebo API. If `buf` is set,
 // then all addresses of the picture_t must lie within `buf`'s mapped memory.
-int vlc_placebo_PlaneFormat(const video_format_t *, struct pl_plane_data[4]);
-int vlc_placebo_PlaneData(const picture_t *, struct pl_plane_data[4], pl_buf buf);
+int vlc_placebo_PlaneData(const picture_t *, struct pl_plane_data[4]);
 
 // See if a given FourCC is physically supported by a given GPU
 bool vlc_placebo_FormatSupported(pl_gpu, vlc_fourcc_t);
@@ -68,51 +66,23 @@ bool vlc_placebo_FormatSupported(pl_gpu, vlc_fourcc_t);
 void vlc_placebo_ColorMapParams(vlc_object_t *obj, const char *prefix,
                                 struct pl_color_map_params *out_params);
 
-#if PL_API_VER >= 188
-# define add_placebo_extra_color_map_opts(prefix) \
-    add_bool(prefix"-inverse-tone-mapping", false, \
-            INVERSE_TONEMAPPING_TEXT, INVERSE_TONEMAPPING_LONGTEXT) \
-    add_float(prefix"-crosstalk", pl_color_map_default_params.tone_mapping_crosstalk, \
-            CROSSTALK_TEXT, CROSSTALK_LONGTEXT)
-#else
-# define add_placebo_extra_color_map_opts(prefix)
-#endif
-
 #define add_placebo_color_map_opts(prefix) \
-    add_integer(prefix"-rendering-intent", pl_color_map_default_params.intent, \
-            RENDER_INTENT_TEXT, RENDER_INTENT_LONGTEXT) \
-            change_integer_list(intent_values, intent_text) \
+    add_integer(prefix"-gamut-mapping", GAMUT_AUTO, \
+            GAMUT_MAPPING_TEXT, GAMUT_MAPPING_LONGTEXT) \
+            change_integer_list(gamut_values, gamut_text) \
+    add_obsolete_integer(prefix"-gamut-mode") /* since 4.0.0 */ \
+    add_obsolete_integer(prefix"-rendering-intent") /* since 4.0.0 */ \
     add_integer(prefix"-tone-mapping-function", TONEMAP_AUTO, \
             TONEMAP_FUNC_TEXT, TONEMAP_FUNC_LONGTEXT) \
             change_integer_list(tone_values, tone_text) \
     add_float(prefix"-tone-mapping-param", pl_color_map_default_params.tone_mapping_param, \
             TONEMAP_PARAM_TEXT, TONEMAP_PARAM_LONGTEXT) \
-    add_integer(prefix"-tone-mapping-mode", TONEMAP_MODE_AUTO, \
-            TONEMAP_MODE_TEXT, TONEMAP_MODE_LONGTEXT) \
-            change_integer_list(tone_mode_values, tone_mode_text) \
-    add_integer(prefix"-gamut-mode", GAMUT_MODE_CLIP, \
-            GAMUT_MODE_TEXT, GAMUT_MODE_LONGTEXT) \
-            change_integer_list(gamut_mode_values, gamut_mode_text) \
-    add_placebo_extra_color_map_opts(prefix)
+    add_obsolete_integer(prefix"-tone-mapping-mode") /* since 4.0.0 */ \
+    add_bool(prefix"-inverse-tone-mapping", false, \
+            INVERSE_TONEMAPPING_TEXT, INVERSE_TONEMAPPING_LONGTEXT) \
+    add_obsolete_integer(prefix"-crosstalk") /* since 4.0.0 */
 
 // Shared options strings/structs for libplacebo options
-
-#define RENDER_INTENT_TEXT "Rendering intent for color conversion"
-#define RENDER_INTENT_LONGTEXT "The mapping type used to convert between color spaces."
-
-static const int intent_values[] = {
-    PL_INTENT_PERCEPTUAL,
-    PL_INTENT_RELATIVE_COLORIMETRIC,
-    PL_INTENT_SATURATION,
-    PL_INTENT_ABSOLUTE_COLORIMETRIC,
-};
-
-static const char * const intent_text[] = {
-    "Perceptual",
-    "Relative colorimetric",
-    "Absolute colorimetric",
-    "Saturation",
-};
 
 #define PRIM_TEXT "Override detected display primaries"
 #define PRIM_LONGTEXT "Override the auto-detected display primaries."
@@ -259,10 +229,8 @@ enum {
     TONEMAP_HABLE,
     TONEMAP_GAMMA,
     TONEMAP_LINEAR,
-#if PL_API_VER >= 188
     TONEMAP_BT2446A,
     TONEMAP_SPLINE,
-#endif
 };
 
 static const int tone_values[] = {
@@ -274,10 +242,8 @@ static const int tone_values[] = {
     TONEMAP_HABLE,
     TONEMAP_GAMMA,
     TONEMAP_LINEAR,
-#if PL_API_VER >= 188
     TONEMAP_BT2446A,
     TONEMAP_SPLINE,
-#endif
 };
 
 static const char * const tone_text[] = {
@@ -289,10 +255,8 @@ static const char * const tone_text[] = {
     "Hable (filmic mapping)",
     "Gamma-Power law",
     "Perceptually linear stretch",
-#if PL_API_VER >= 188
     "ITU-R BT.2446 method A",
     "Single-pivot spline",
-#endif
 };
 
 #define TONEMAP_FUNC_TEXT "Tone-mapping function"
@@ -302,73 +266,49 @@ static const char * const tone_text[] = {
 #define TONEMAP_PARAM_LONGTEXT "This parameter can be used to tune the tone-mapping curve. Specifics depend on the curve used. If left as 0, the curve's preferred default is used."
 
 enum {
-    TONEMAP_MODE_AUTO,
-    TONEMAP_MODE_RGB,
-    TONEMAP_MODE_MAX,
-    TONEMAP_MODE_HYBRID,
-#if PL_API_VER >= 188
-    TONEMAP_MODE_LUMA,
-#endif
+    GAMUT_AUTO,
+    GAMUT_CLIP,
+    GAMUT_PERCEPTUAL,
+    GAMUT_RELATIVE,
+    GAMUT_SATURATION,
+    GAMUT_ABSOLUTE,
+    GAMUT_DESATURATE,
+    GAMUT_DARKEN,
+    GAMUT_WARN,
+    GAMUT_LINEAR,
 };
 
-static const int tone_mode_values[] = {
-    TONEMAP_MODE_AUTO,
-    TONEMAP_MODE_RGB,
-    TONEMAP_MODE_MAX,
-    TONEMAP_MODE_HYBRID,
-#if PL_API_VER >= 188
-    TONEMAP_MODE_LUMA,
-#endif
+static const int gamut_values[] = {
+    GAMUT_AUTO,
+    GAMUT_CLIP,
+    GAMUT_PERCEPTUAL,
+    GAMUT_RELATIVE,
+    GAMUT_SATURATION,
+    GAMUT_ABSOLUTE,
+    GAMUT_DESATURATE,
+    GAMUT_DARKEN,
+    GAMUT_WARN,
+    GAMUT_LINEAR,
 };
 
-static const char * const tone_mode_text[] = {
-    "Automatic selection (recommended)",
-    "Per-channel (RGB)",
-    "Maximum component",
-    "Hybrid luminance",
-#if PL_API_VER >= 188
-    "ITU-R BT.2446a luminance",
-#endif
-};
-
-#define TONEMAP_MODE_TEXT "Tone-mapping mode"
-#define TONEMAP_MODE_LONGTEXT "Determines what colorspace/component to apply the chosen tone-mapping curve to."
-
-enum {
-    GAMUT_MODE_CLIP,
-    GAMUT_MODE_WARN,
-    GAMUT_MODE_DESAT,
-#if PL_API_VER >= 190
-    GAMUT_MODE_DARKEN,
-#endif
-};
-
-static const int gamut_mode_values[] = {
-    GAMUT_MODE_CLIP,
-    GAMUT_MODE_WARN,
-    GAMUT_MODE_DESAT,
-#if PL_API_VER >= 190
-    GAMUT_MODE_DARKEN,
-#endif
-};
-
-static const char * const gamut_mode_text[] = {
+static const char * const gamut_text[] = {
+    "Automatic selection",
     "Hard clip",
-    "Highlight invalid pixels",
+    "Perceptual soft-clip",
+    "Relative colorimetric",
+    "Saturation mapping",
+    "Absolute colorimetric",
     "Colorimetrically desaturate",
-#if PL_API_VER >= 190
-    "Darken image",
-#endif
+    "Darken and clip",
+    "Highlight invalid pixels",
+    "Linear desaturate",
 };
 
-#define GAMUT_MODE_TEXT "Out-of-gamut handling"
-#define GAMUT_MODE_LONGTEXT "How to handle out-of-gamut colors while tone mapping."
+#define GAMUT_MAPPING_TEXT "Out-of-gamut handling"
+#define GAMUT_MAPPING_LONGTEXT "How to handle out-of-gamut colors while tone mapping."
 
 #define INVERSE_TONEMAPPING_TEXT "Inverse tone-mapping"
 #define INVERSE_TONEMAPPING_LONGTEXT "Expand SDR signals to HDR (only works for certain curves)."
-
-#define CROSSTALK_TEXT "Channel crosstalk"
-#define CROSSTALK_LONGTEXT "Extra channel crosstalk coefficient to apply while tone-mapping."
 
 #define PEAK_FRAMES_TEXT "HDR peak detection buffer size"
 #define PEAK_FRAMES_LONGTEXT "How many input frames to consider when determining the brightness of HDR signals. Higher values result in a slower/smoother response to brightness level changes. Setting this to 0 disables peak detection entirely."
@@ -384,6 +324,12 @@ static const char * const gamut_mode_text[] = {
 
 #define SCENE_THRESHOLD_HIGH_TEXT "Scene change upper threshold"
 #define SCENE_THRESHOLD_HIGH_LONGTEXT "This sets the upper boundary of a brightness change indicating a scene change. Brightness changes that exceed this value will instantly replace the detected peak, bypassing all smoothing. Setting this to a negative number disables this logic."
+
+#define CONTRAST_RECOVERY_TEXT "HDR contrast recovery strength"
+#define CONTRAST_RECOVERY_LONGTEXT "This sets the strength of the HDR contrast recovery algorithms. Higher values indicate more contrast boosting."
+
+#define CONTRAST_SMOOTHNESS_TEXT "HDR contrast recovery smoothness"
+#define CONTRAST_SMOOTHNESS_LONGTEXT "This sets the smoothness (lowpass frequency) of the HDR contrast recovery algorithm."
 
 #define DITHER_TEXT "Dithering algorithm"
 #define DITHER_LONGTEXT "The algorithm to use when dithering to a lower bit depth."
@@ -561,10 +507,6 @@ enum {
     FILTER_JINC,
     FILTER_SPHINX,
     FILTER_BCSPLINE,
-    FILTER_CATMULL_ROM,
-    FILTER_MITCHELL,
-    FILTER_ROBIDOUX,
-    FILTER_ROBIDOUXSHARP,
     FILTER_BICUBIC,
     FILTER_SPLINE16,
     FILTER_SPLINE36,
@@ -585,10 +527,6 @@ static const int filter_values[] = {
     FILTER_JINC,
     FILTER_SPHINX,
     FILTER_BCSPLINE,
-    FILTER_CATMULL_ROM,
-    FILTER_MITCHELL,
-    FILTER_ROBIDOUX,
-    FILTER_ROBIDOUXSHARP,
     FILTER_BICUBIC,
     FILTER_SPLINE16,
     FILTER_SPLINE36,
@@ -609,10 +547,6 @@ static const char * const filter_text[] = {
     "Jinc",
     "Sphinx",
     "BC spline",
-    "Catmull-Rom",
-    "Mitchell-Netravali",
-    "Robidoux",
-    "RobidouxSharp",
     "Bicubic",
     "Spline16",
     "Spline36",
@@ -633,10 +567,6 @@ static const struct pl_filter_function *const filter_fun[] = {
     [FILTER_JINC]           = &pl_filter_function_jinc,
     [FILTER_SPHINX]         = &pl_filter_function_sphinx,
     [FILTER_BCSPLINE]       = &pl_filter_function_bcspline,
-    [FILTER_CATMULL_ROM]    = &pl_filter_function_catmull_rom,
-    [FILTER_MITCHELL]       = &pl_filter_function_mitchell,
-    [FILTER_ROBIDOUX]       = &pl_filter_function_robidoux,
-    [FILTER_ROBIDOUXSHARP]  = &pl_filter_function_robidouxsharp,
     [FILTER_BICUBIC]        = &pl_filter_function_bicubic,
     [FILTER_SPLINE16]       = &pl_filter_function_spline16,
     [FILTER_SPLINE36]       = &pl_filter_function_spline36,

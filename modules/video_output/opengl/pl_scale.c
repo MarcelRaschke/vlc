@@ -25,29 +25,25 @@
 #include "limits.h"
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_picture.h>
 #include <vlc_plugin.h>
 #include <vlc_modules.h>
 #include <vlc_opengl.h>
 #include <vlc_filter.h>
+#include <vlc_opengl_filter.h>
 
 #include <libplacebo/log.h>
 #include <libplacebo/gpu.h>
 #include <libplacebo/opengl.h>
 #include <libplacebo/renderer.h>
 
-#include "video_output/opengl/filter.h"
 #include "video_output/opengl/gl_api.h"
 #include "video_output/opengl/gl_common.h"
 #include "video_output/opengl/gl_scale.h"
 #include "video_output/opengl/gl_util.h"
 #include "video_output/opengl/sampler.h"
 #include "video_output/libplacebo/utils.h"
-
-// Without this commit, libplacebo as used by this filter makes VLC
-// assert/crash by closing file descriptors:
-// https://github.com/haasn/libplacebo/commit/39fc39d31d65968709b4a05c571a0d85c918058d
-static_assert(PL_API_VER >= 167, "pl_scale requires libplacebo >= 4.167");
 
 #define CFG_PREFIX "plscale-"
 
@@ -68,10 +64,7 @@ struct sys
     struct pl_frame frame_in;
     struct pl_frame frame_out;
     struct pl_render_params render_params;
-
-#if PL_API_VER >= 185
     struct pl_dovi_metadata dovi_metadata;
-#endif
 
     unsigned out_width;
     unsigned out_height;
@@ -177,7 +170,6 @@ Draw(struct vlc_gl_filter *filter, const struct vlc_gl_picture *pic,
         r->y1 = coords[3] * h;
     }
 
-#if PL_API_VER >= 185
     if (frame_in->repr.dovi && meta->dovi_rpu) {
         vlc_placebo_DoviMetadata(meta->dovi_rpu, &sys->dovi_metadata);
         struct pl_hdr_metadata *hdr = &frame_in->color.hdr;
@@ -187,7 +179,6 @@ Draw(struct vlc_gl_filter *filter, const struct vlc_gl_picture *pic,
         hdr->max_luma = pl_hdr_rescale(PL_HDR_PQ, PL_HDR_NITS,
                                        scale * meta->dovi_rpu->source_max_pq);
     }
-#endif
 
     GLint value;
     vt->GetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &value);
@@ -309,14 +300,12 @@ Open(struct vlc_gl_filter *filter, const config_chain_t *config,
         .color = vlc_placebo_ColorSpace(&glfmt->fmt),
     };
 
-#if PL_API_VER >= 185
     if (glfmt->fmt.dovi.rpu_present && !glfmt->fmt.dovi.el_present) {
         sys->frame_in.color.primaries = PL_COLOR_PRIM_BT_2020;
         sys->frame_in.color.transfer = PL_COLOR_TRC_PQ;
         sys->frame_in.repr.sys = PL_COLOR_SYSTEM_DOLBYVISION;
         sys->frame_in.repr.dovi = &sys->dovi_metadata; /* to be filled later */
     }
-#endif
 
     /* Initialize frame_in.planes */
     int plane_count =
@@ -377,7 +366,7 @@ vlc_module_begin()
     set_subcategory(SUBCAT_VIDEO_VFILTER)
     set_capability("opengl filter", 0)
     set_callback(Open)
-    add_shortcut("pl_scale");
+    add_shortcut("pl_scale")
 
 #define UPSCALER_TEXT "OpenGL upscaler"
 #define UPSCALER_LONGTEXT "Upscaler filter to apply during rendering"

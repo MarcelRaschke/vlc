@@ -27,22 +27,33 @@
 #include <vlc_common.h>
 #include <vlc_media_library.h>
 
+static constexpr int64_t INVALID_MLITEMID_ID = 0;
+
 class MLItemId
 {
     Q_GADGET
 public:
-    MLItemId() : id(0), type( VLC_ML_PARENT_UNKNOWN ) {}
+    MLItemId() : id(INVALID_MLITEMID_ID), type( VLC_ML_PARENT_UNKNOWN ) {}
     MLItemId( int64_t i, vlc_ml_parent_type t ) : id( i ), type( t ) {}
-    bool operator==( const MLItemId& other )
+    bool operator==( const MLItemId& other ) const
     {
         return id == other.id && type == other.type;
     }
-    bool operator!=( const MLItemId& other )
+    bool operator!=( const MLItemId& other ) const
     {
         return !(*this == other);
     }
+    bool operator<( const MLItemId& other ) const
+    {
+        return id < other.id;
+    }
+
     int64_t id;
     vlc_ml_parent_type type;
+
+    Q_INVOKABLE constexpr bool hasParent() const {
+        return (type != VLC_ML_PARENT_UNKNOWN);
+    }
 
     Q_INVOKABLE inline QString toString() const {
 
@@ -62,7 +73,11 @@ public:
     }
 };
 
-Q_DECLARE_METATYPE(MLItemId)
+
+inline size_t qHash(const MLItemId& item, size_t seed = 0)
+{
+    return qHashMulti(seed, item.id, item.type);
+}
 
 class MLItem
 {
@@ -70,7 +85,7 @@ public:
     MLItem(MLItemId id) : m_id(id) {}
     virtual ~MLItem() = default;
 
-    MLItemId getId() const { return m_id; };
+    MLItemId getId() const { return m_id; }
 
 private:
     MLItemId m_id;

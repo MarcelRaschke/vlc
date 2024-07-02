@@ -23,9 +23,6 @@
 
 #include "srt_common.h"
 
-const char * const srt_key_length_names[] = { N_( "16 bytes" ), N_(
-        "24 bytes" ), N_( "32 bytes" ), };
-
 typedef struct parsed_param {
     char *key;
     char *val;
@@ -60,13 +57,14 @@ static int srt_url_parse_query(char *query, const char* delimiter,
 {
     int i = 0;
     char *token = NULL;
+    char *saveptr = NULL;
 
     if (!query || *query == '\0')
         return -1;
     if (!params || max_params == 0)
         return 0;
 
-    token = strtok( query, delimiter );
+    token = strtok_r( query, delimiter, &saveptr );
     while (token != NULL && i < max_params) {
         params[i].key = token;
         params[i].val = NULL;
@@ -85,7 +83,7 @@ static int srt_url_parse_query(char *query, const char* delimiter,
                     i++;
             };
         }
-        token = strtok( NULL, delimiter );
+        token = strtok_r( NULL, delimiter, &saveptr );
     }
     return i;
 }

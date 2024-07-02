@@ -35,6 +35,8 @@
 #include "qt.hpp"
 #include "util/singleton.hpp"
 
+Q_MOC_INCLUDE("maininterface/mainctx.hpp")
+
 class DialogId
 {
     Q_GADGET
@@ -52,14 +54,10 @@ public: // Variables
     vlc_dialog_id * m_id;
 };
 
-Q_DECLARE_METATYPE(DialogId)
-
 
 class DialogErrorModel : public QAbstractListModel, public Singleton<DialogErrorModel>
 {
     Q_OBJECT
-
-    Q_ENUMS(DialogRoles)
 
     Q_PROPERTY(int count READ count NOTIFY countChanged FINAL)
     Q_PROPERTY(QString notificationText READ notificationText NOTIFY countChanged FINAL)
@@ -71,6 +69,7 @@ public: // Enums
         DIALOG_TITLE = Qt::UserRole + 1,
         DIALOG_TEXT
     };
+    Q_ENUM(DialogRoles)
 
 private:
     struct DialogError
@@ -120,13 +119,12 @@ class DialogModel : public QObject
 {
     Q_OBJECT
 
-    Q_ENUMS(QuestionType)
-
     Q_PROPERTY(MainCtx* ctx READ getCtx WRITE setCtx NOTIFY ctxChanged FINAL)
 
 public: // Enums
     // NOTE: Is it really useful to have this declared here ?
     enum QuestionType { QUESTION_NORMAL, QUESTION_WARNING, QUESTION_CRITICAL };
+    Q_ENUM(QuestionType)
 
 public:
     explicit DialogModel(QObject *parent = nullptr);

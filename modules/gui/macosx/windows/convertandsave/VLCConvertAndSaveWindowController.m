@@ -316,7 +316,7 @@ NSString *VLCConvertAndSaveProfileNamesKey = @"CASProfileNames";
     }
     inputMetaItem.playbackOptions = options;
 
-    VLCPlaylistController *playlistController = [[VLCMain sharedInstance] playlistController];
+    VLCPlaylistController *playlistController = VLCMain.sharedInstance.playlistController;
     [playlistController addPlaylistItems:@[inputMetaItem]];
     [playlistController playItemAtIndex:(playlistController.playlistModel.numberOfPlaylistItems -1)];
 
@@ -673,7 +673,7 @@ NSString *VLCConvertAndSaveProfileNamesKey = @"CASProfileNames";
     if ([_MRL length] > 0) {
         NSString * path = [[NSURL URLWithString:_MRL] path];
         [_dropinMediaLabel setStringValue: [[NSFileManager defaultManager] displayNameAtPath: path]];
-        NSImage * image = [[NSWorkspace sharedWorkspace] iconForFile: path];
+        NSImage * image = [NSWorkspace.sharedWorkspace iconForFile: path];
         [image setSize:NSMakeSize(128,128)];
         [_dropinIcon setImage: image];
 

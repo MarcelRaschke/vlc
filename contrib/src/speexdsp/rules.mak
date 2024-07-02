@@ -15,6 +15,7 @@ $(TARBALLS)/speexdsp-$(SPEEXDSP_VERSION).tar.gz:
 
 speexdsp: speexdsp-$(SPEEXDSP_VERSION).tar.gz .sum-speexdsp
 	$(UNPACK)
+	$(call update_autoconfig,.)
 	$(call pkg_static,"speexdsp.pc.in")
 	$(APPLY) $(SRC)/speexdsp/missing-stdint-for-aarch.patch
 	$(MOVE)
@@ -33,7 +34,6 @@ endif
 endif
 
 .speexdsp: speexdsp
-	$(RECONF)
 	$(MAKEBUILDDIR)
 	$(MAKECONFIGURE) $(SPEEXDSP_CONF)
 	+$(MAKEBUILD)

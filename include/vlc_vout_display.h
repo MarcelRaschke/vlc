@@ -25,11 +25,12 @@
 
 #include <vlc_es.h>
 #include <vlc_picture.h>
-#include <vlc_subpicture.h>
 #include <vlc_mouse.h>
 #include <vlc_vout.h>
 #include <vlc_window.h>
 #include <vlc_viewpoint.h>
+
+struct vlc_render_subpicture;
 
 /**
  * \defgroup video_display Video output display
@@ -98,6 +99,7 @@ struct vout_display_placement {
     vlc_video_align_t align; /**< Alignment within the window */
     enum vlc_video_fitting fitting; /**< Scaling/fitting mode */
     vlc_rational_t zoom; /**< Zoom ratio (if fitting is disabled) */
+    bool full_fill; /**< whether the rendering will take the whole display */
 };
 
 /**
@@ -105,8 +107,9 @@ struct vout_display_placement {
  *
  * This primarily controls the size of the display area within the video
  * window, as follows:
- * - If \ref vout_display_cfg::display::fitting is not disabled,
- *   the video size is fitted to the display size.
+ * - If \ref vout_display_placement::fitting is not disabled, ie. equals
+ *   to \ref VLC_VIDEO_FIT_NONE, in \ref vout_display_cfg::display, the
+ *   video size is fitted to the display size.
  * - If \ref vout_display_cfg::window "window" size is valid, the video size
  *   is set to the window size,
  * - Otherwise, the video size is determined from the original video format,
@@ -127,7 +130,6 @@ typedef struct vout_display_cfg {
  *
  */
 typedef struct {
-    bool can_scale_spu;                     /* Handles subpictures with a non default zoom factor */
     const vlc_fourcc_t *subpicture_chromas; /* List of supported chromas for subpicture rendering. */
 } vout_display_info_t;
 
@@ -143,24 +145,6 @@ enum vout_display_query {
      *         request is necessary
      */
     VOUT_DISPLAY_CHANGE_DISPLAY_SIZE,
-
-    /**
-     * Notifies a change of the display fitting mode by the user.
-     *
-     * \retval VLC_SUCCESS if the display handled the change
-     * \retval VLC_EGENERIC if a \ref vlc_display_operations::reset_pictures
-     *         request is necessary
-     */
-    VOUT_DISPLAY_CHANGE_DISPLAY_FILLED,
-
-    /**
-     * Notifies a change of the user zoom factor.
-     *
-     * \retval VLC_SUCCESS if the display handled the change
-     * \retval VLC_EGENERIC if a \ref vlc_display_operations::reset_pictures
-     *         request is necessary
-     */
-    VOUT_DISPLAY_CHANGE_ZOOM,
 
     /**
      * Notifies a change of the sample aspect ratio.
@@ -182,6 +166,15 @@ enum vout_display_query {
      *         request is necessary
      */
     VOUT_DISPLAY_CHANGE_SOURCE_CROP,
+
+    /**
+     * Notified when the source placement in the display has changed
+     *
+     * \retval VLC_SUCCESS if the display handled the change
+     * \retval VLC_EGENERIC if a \ref vlc_display_operations::reset_pictures
+     *         request is necessary
+     */
+    VOUT_DISPLAY_CHANGE_SOURCE_PLACE,
 };
 
 /**
@@ -262,7 +255,7 @@ struct vlc_display_operations
      * \param date time when the picture is intended to be shown
      */
     void       (*prepare)(vout_display_t *, picture_t *pic,
-                          subpicture_t *subpic, vlc_tick_t date);
+                          const struct vlc_render_subpicture *subpic, vlc_tick_t date);
 
     /**
      * Displays a picture.
@@ -292,10 +285,9 @@ struct vlc_display_operations
      * Reset the picture format handled by the module.
      * This occurs after a
      * \ref VOUT_DISPLAY_CHANGE_DISPLAY_SIZE,
-     * \ref VOUT_DISPLAY_CHANGE_DISPLAY_FILLED,
-     * \ref VOUT_DISPLAY_CHANGE_ZOOM,
-     * \ref VOUT_DISPLAY_CHANGE_SOURCE_ASPECT or
-     * \ref VOUT_DISPLAY_CHANGE_SOURCE_CROP
+     * \ref VOUT_DISPLAY_CHANGE_SOURCE_ASPECT,
+     * \ref VOUT_DISPLAY_CHANGE_SOURCE_CROP or
+     * \ref VOUT_DISPLAY_CHANGE_SOURCE_PLACE
      * control query returns an error.
      *
      * \param ftmp video format that the module expects as input
@@ -421,7 +413,7 @@ VLC_API void vout_display_Delete(vout_display_t *);
  *
  * \bug Currently, only one picture can be prepared at a time. It must be
  * displayed with vout_display_Display() before any picture is prepared or
- * before the display is destroyd with vout_display_Delete().
+ * before the display is destroyed with vout_display_Delete().
  *
  \ bug Rendering subpictures is not supported with this function yet.
  * \c subpic must be @c NULL .
@@ -433,7 +425,7 @@ VLC_API void vout_display_Delete(vout_display_t *);
  * \return The prepared picture is returned, NULL on error.
  */
 VLC_API picture_t *vout_display_Prepare(vout_display_t *vd, picture_t *picture,
-                                        subpicture_t *subpic, vlc_tick_t date);
+                                        const struct vlc_render_subpicture *subpic, vlc_tick_t date);
 
 /**
  * Displays a picture.
@@ -496,7 +488,7 @@ void vout_display_GetDefaultDisplaySize(unsigned *width, unsigned *height,
  *
  * This structure stores the result of a vout_display_PlacePicture() call.
  */
-typedef struct {
+typedef struct vout_display_place_t {
     int x; /*< Relative pixel offset from the display left edge */
     int y; /*< Relative pixel offset from the display top edge */
     unsigned width; /*< Picture pixel width */

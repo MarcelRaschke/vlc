@@ -26,22 +26,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface NSFont (VLCAdditions)
 
-+ (instancetype)VLClibrarySectionHeaderFont;
-+ (instancetype)VLClibraryHighlightCellTitleFont;
-+ (instancetype)VLClibraryHighlightCellSubtitleFont;
-+ (instancetype)VLClibraryHighlightCellHighlightLabelFont;
-+ (instancetype)VLClibraryLargeCellTitleFont;
-+ (instancetype)VLClibraryLargeCellSubtitleFont;
-+ (instancetype)VLClibrarySmallCellTitleFont;
-+ (instancetype)VLClibrarySmallCellSubtitleFont;
-+ (instancetype)VLClibraryCellAnnotationFont;
-+ (instancetype)VLClibraryButtonFont;
-+ (instancetype)VLCplaylistLabelFont;
-+ (instancetype)VLCplaylistSelectedItemLabelFont;
-+ (instancetype)VLCsmallPlaylistLabelFont;
-+ (instancetype)VLCsmallPlaylistSelectedItemLabelFont;
-+ (instancetype)VLCLibrarySupplementaryDetailViewTitleFont;
-+ (instancetype)VLCLibrarySupplementaryDetailViewSubtitleFont;
+@property (class, readonly) NSFont *VLClibrarySectionHeaderFont;
+@property (class, readonly) NSFont *VLCLibrarySubsectionHeaderFont;
+@property (class, readonly) NSFont *VLCLibrarySubsectionSubheaderFont;
+@property (class, readonly) NSFont *VLCLibraryItemAnnotationFont;
 
 @end
 

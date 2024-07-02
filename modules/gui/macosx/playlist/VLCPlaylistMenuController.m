@@ -48,6 +48,10 @@
     NSMenuItem *_clearPlaylistMenuItem;
     NSMenuItem *_sortMenuItem;
 }
+
+@property (readwrite, atomic) NSArray<NSMenuItem *> *items;
+@property (readwrite, atomic) NSArray<NSMenuItem *> *multipleSelectionItems;
+
 @end
 
 @implementation VLCPlaylistMenuController
@@ -57,7 +61,7 @@
     self = [super init];
     if (self) {
         [self createMenu];
-        _playlistController = [[VLCMain sharedInstance] playlistController];
+        _playlistController = VLCMain.sharedInstance.playlistController;
     }
     return self;
 }
@@ -86,8 +90,44 @@
     _sortMenuItem = [[NSMenuItem alloc] initWithTitle:_NS("Sort") action:nil keyEquivalent:@""];
     [_sortMenuItem setSubmenu:_playlistSortingMenuController.playlistSortingMenu];
 
+    self.items = @[
+        _playMenuItem,
+        _removeMenuItem,
+        _revealInFinderMenuItem,
+        _informationMenuItem,
+        NSMenuItem.separatorItem,
+        _addFilesToPlaylistMenuItem,
+        _clearPlaylistMenuItem,
+        _sortMenuItem
+    ];
+
+    self.multipleSelectionItems = @[
+        _removeMenuItem,
+        NSMenuItem.separatorItem,
+        _addFilesToPlaylistMenuItem,
+        _clearPlaylistMenuItem,
+        _sortMenuItem
+    ];
+
     _playlistMenu = [[NSMenu alloc] init];
-    [_playlistMenu addMenuItemsFromArray:@[_playMenuItem, _removeMenuItem, _revealInFinderMenuItem, _informationMenuItem, [NSMenuItem separatorItem], _addFilesToPlaylistMenuItem, _clearPlaylistMenuItem, _sortMenuItem]];
+    _playlistMenu.itemArray = self.items;
+}
+
+- (void)setPlaylistTableView:(NSTableView *)playlistTableView
+{
+    NSNotificationCenter * const notificationCenter = NSNotificationCenter.defaultCenter;
+    if (self.playlistTableView != nil) {
+        [notificationCenter removeObserver:self
+                                      name:NSTableViewSelectionDidChangeNotification
+                                    object:self.playlistTableView];
+    }
+
+    _playlistTableView = playlistTableView;
+    [notificationCenter addObserver:self
+                           selector:@selector(tableViewSelectionDidChange:)
+                               name:NSTableViewSelectionDidChangeNotification
+                             object:self.playlistTableView];
+
 }
 
 - (void)play:(id)sender
@@ -103,9 +143,6 @@
 
 - (void)remove:(id)sender
 {
-    if (self.playlistTableView.selectedRow == -1)
-        return;
-
     [_playlistController removeItemsAtIndexes:self.playlistTableView.selectedRowIndexes];
 }
 
@@ -141,14 +178,14 @@
         return;
 
     NSString *path = item.path;
-    [[NSWorkspace sharedWorkspace] selectFile:path inFileViewerRootedAtPath:path];
+    [NSWorkspace.sharedWorkspace selectFile:path inFileViewerRootedAtPath:path];
 }
 
 - (void)addFilesToPlaylist:(id)sender
 {
     NSInteger selectedRow = self.playlistTableView.selectedRow;
 
-    [[[VLCMain sharedInstance] open] openFileWithAction:^(NSArray *files) {
+    [[VLCMain.sharedInstance open] openFileWithAction:^(NSArray *files) {
         [self->_playlistController addPlaylistItems:files
                                          atPosition:selectedRow
                                       startPlayback:NO];
@@ -178,6 +215,21 @@
     }
 
     return NO;
+}
+
+- (void)tableViewSelectionDidChange:(NSNotification *)notification
+{
+    NSTableView * const tableView = notification.object;
+    if (tableView != self.playlistTableView) {
+        return;
+    }
+
+    const BOOL multipleSelection = tableView.selectedRowIndexes.count > 1;
+    if (multipleSelection) {
+        self.playlistMenu.itemArray = self.multipleSelectionItems;
+    } else {
+        self.playlistMenu.itemArray = self.items;
+    }
 }
 
 @end

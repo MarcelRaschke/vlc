@@ -83,6 +83,7 @@ struct PS_INPUT\n\
 #define SAMPLE_TRIPLANAR_TO_YUVA     7\n\
 #define SAMPLE_TRIPLANAR10_TO_YUVA   8\n\
 #define SAMPLE_PLANAR_YUVA_TO_YUVA   9\n\
+#define SAMPLE_BGRX_TO_RGBA         17\n\
 \n\
 #define SAMPLE_NV12_TO_NV_Y         10\n\
 #define SAMPLE_NV12_TO_NV_UV        11\n\
@@ -90,6 +91,7 @@ struct PS_INPUT\n\
 #define SAMPLE_RGBA_TO_NV_GB        13\n\
 #define SAMPLE_PLANAR_YUVA_TO_NV_Y  14\n\
 #define SAMPLE_PLANAR_YUVA_TO_NV_UV 15\n\
+#define SAMPLE_NV12A_TO_YUVA        16\n\
 \n\
 #if (TONE_MAPPING==TONE_MAP_HABLE)\n\
 /* see http://filmicworlds.com/blog/filmic-tonemapping-operators/ */\n\
@@ -177,6 +179,10 @@ inline float4 sampleTexture(SamplerState samplerState, float2 coords) {\n\
     sample.x  = shaderTexture[0].Sample(samplerState, coords).x;\n\
     sample.yz = shaderTexture[1].Sample(samplerState, coords).xy;\n\
     sample.a  = 1;\n\
+#elif (SAMPLE_TEXTURES==SAMPLE_NV12A_TO_YUVA)\n\
+    sample.x  = shaderTexture[0].Sample(samplerState, coords).x;\n\
+    sample.yz = shaderTexture[1].Sample(samplerState, coords).xy;\n\
+    sample.a  = shaderTexture[2].Sample(samplerState, coords).x;\n\
 #elif (SAMPLE_TEXTURES==SAMPLE_YUY2_TO_YUVA)\n\
     sample.x  = shaderTexture[0].Sample(samplerState, coords).x;\n\
     sample.y  = shaderTexture[0].Sample(samplerState, coords).y;\n\
@@ -199,6 +205,9 @@ inline float4 sampleTexture(SamplerState samplerState, float2 coords) {\n\
     sample.a  = 1;\n\
 #elif (SAMPLE_TEXTURES==SAMPLE_RGBA_TO_RGBA)\n\
     sample = shaderTexture[0].Sample(samplerState, coords);\n\
+#elif (SAMPLE_TEXTURES==SAMPLE_BGRX_TO_RGBA)\n\
+    sample = shaderTexture[0].Sample(samplerState, coords);\n\
+    sample.a  = 1;\n\
 #elif (SAMPLE_TEXTURES==SAMPLE_TRIPLANAR_TO_YUVA)\n\
     sample.x  = shaderTexture[0].Sample(samplerState, coords).x;\n\
     sample.y  = shaderTexture[1].Sample(samplerState, coords).x;\n\
@@ -254,11 +263,13 @@ float4 main( PS_INPUT In ) : SV_TARGET\n\
         sample = sampleTexture( borderSampler, In.uv );\n\
     else\n\
         sample = sampleTexture( normalSampler, In.uv );\n\
+    float srcAlpha = saturate(sample.a  * Opacity);\n\
+    sample.a = 1.0;\n\
     float3 rgb = max(mul(sample, Colorspace),0);\n\
     rgb = sourceToLinear(rgb);\n\
     rgb = toneMapping(rgb);\n\
     rgb = linearToDisplay(rgb);\n\
-    return float4(rgb, saturate(sample.a * Opacity));\n\
+    return float4(rgb, srcAlpha);\n\
 }\n\
 ";
 
@@ -321,7 +332,7 @@ static HRESULT CompileShader(vlc_object_t *obj, const d3d_shader_compiler_t *com
     ID3D10Blob* pShaderBlob = NULL, *pErrBlob = NULL;
 
     UINT compileFlags = 0;
-#ifdef VLC_WINSTORE_APP
+#if !WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
     VLC_UNUSED(compiler);
 #else
 # define D3DCompile(a,b,c,d,e,f,g,h,i,j,k)    compiler->OurD3DCompile(a,b,c,d,e,f,g,h,i,j,k)
@@ -479,8 +490,19 @@ HRESULT (D3D_CompilePixelShader)(vlc_object_t *o, const d3d_shader_compiler_t *c
         {
         case DXGI_FORMAT_NV12:
         case DXGI_FORMAT_P010:
-            psz_sampler[0] = "SAMPLE_NV12_TO_YUVA";
-            psz_shader_resource_views[0] = "2"; shader_views[0] = 2;
+            switch(dxgi_fmt->alphaTexture)
+            {
+            case DXGI_FORMAT_UNKNOWN:
+                psz_sampler[0] = "SAMPLE_NV12_TO_YUVA";
+                psz_shader_resource_views[0] = "2"; shader_views[0] = 2;
+                break;
+            case DXGI_FORMAT_NV12:
+                psz_sampler[0] = "SAMPLE_NV12A_TO_YUVA";
+                psz_shader_resource_views[0] = "4"; shader_views[0] = 4;
+                break;
+            default:
+                vlc_assert_unreachable();
+            }
             break;
         case DXGI_FORMAT_YUY2:
             psz_sampler[0] = "SAMPLE_YUY2_TO_YUVA";
@@ -500,11 +522,14 @@ HRESULT (D3D_CompilePixelShader)(vlc_object_t *o, const d3d_shader_compiler_t *c
             break;
         case DXGI_FORMAT_R8G8B8A8_UNORM:
         case DXGI_FORMAT_B8G8R8A8_UNORM:
-        case DXGI_FORMAT_B8G8R8X8_UNORM:
         case DXGI_FORMAT_R10G10B10A2_UNORM:
         case DXGI_FORMAT_R16G16B16A16_UNORM:
         case DXGI_FORMAT_B5G6R5_UNORM:
             psz_sampler[0] = "SAMPLE_RGBA_TO_RGBA";
+            psz_shader_resource_views[0] = "1"; shader_views[0] = 1;
+            break;
+        case DXGI_FORMAT_B8G8R8X8_UNORM:
+            psz_sampler[0] = "SAMPLE_BGRX_TO_RGBA";
             psz_shader_resource_views[0] = "1"; shader_views[0] = 1;
             break;
         case DXGI_FORMAT_UNKNOWN:
@@ -515,12 +540,15 @@ HRESULT (D3D_CompilePixelShader)(vlc_object_t *o, const d3d_shader_compiler_t *c
                 psz_shader_resource_views[0] = "3"; shader_views[0] = 3;
                 break;
             case VLC_CODEC_I444_16L:
+            case VLC_CODEC_I444_12L:
+            case VLC_CODEC_I444_10L:
             case VLC_CODEC_I444:
             case VLC_CODEC_I420:
                 psz_sampler[0] = "SAMPLE_TRIPLANAR_TO_YUVA";
                 psz_shader_resource_views[0] = "3"; shader_views[0] = 3;
                 break;
             case VLC_CODEC_YUVA:
+            case VLC_CODEC_YUV420A:
                 psz_sampler[0] = "SAMPLE_PLANAR_YUVA_TO_YUVA";
                 psz_shader_resource_views[0] = "4"; shader_views[0] = 4;
                 break;
@@ -647,7 +675,7 @@ int D3D_CreateShaderCompiler(vlc_object_t *obj, d3d_shader_compiler_t **compiler
     *compiler = calloc(1, sizeof(d3d_shader_compiler_t));
     if (unlikely(*compiler == NULL))
         return VLC_ENOMEM;
-#ifndef VLC_WINSTORE_APP
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
     /* d3dcompiler_47 is the latest on windows 10 */
     for (int i = 47; i > 41; --i)
     {
@@ -665,17 +693,17 @@ int D3D_CreateShaderCompiler(vlc_object_t *obj, d3d_shader_compiler_t **compiler
         free(*compiler);
         return VLC_EGENERIC;
     }
-#endif // !VLC_WINSTORE_APP
+#endif // WINAPI_PARTITION_DESKTOP
 
     return VLC_SUCCESS;
 }
 
 void D3D_ReleaseShaderCompiler(d3d_shader_compiler_t *compiler)
 {
-#ifndef VLC_WINSTORE_APP
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
     if (compiler->compiler_dll)
         FreeLibrary(compiler->compiler_dll);
-#endif // !VLC_WINSTORE_APP
+#endif // WINAPI_PARTITION_DESKTOP
     free(compiler);
 }
 

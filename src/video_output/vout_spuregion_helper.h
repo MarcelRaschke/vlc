@@ -18,6 +18,7 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 #include <vlc_image.h>
+#include <vlc_subpicture.h>
 
 #define RGB2YUV( R, G, B ) \
     ((0.257 * R) + (0.504 * G) + (0.098 * B) + 16), \
@@ -83,15 +84,8 @@ spuregion_CreateFromPicture( vlc_object_t *p_this, video_format_t *p_fmt,
     if(!p_pic)
         return NULL;
 
-    subpicture_region_t *region = subpicture_region_New(p_fmt);
-    if (!region)
-    {
-        picture_Release( p_pic );
-        return NULL;
-    }
-
-    picture_Release( region->p_picture );
-    region->p_picture = p_pic;
+    subpicture_region_t *region = subpicture_region_ForPicture(NULL, p_pic);
+    picture_Release( p_pic );
 
     return region;
 }

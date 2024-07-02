@@ -33,9 +33,11 @@
 #include "dialogs/fingerprint/fingerprintdialog.hpp"
 #include "dialogs/fingerprint/chromaprint.hpp"
 
-#include <assert.h>
+#include <cassert>
 #include <vlc_url.h>
 #include <vlc_meta.h>
+#include <vlc_input_item.h>
+#include <vlc_list.hpp>
 
 #include <QTreeWidget>
 #include <QTableWidget>
@@ -47,6 +49,7 @@
 #include <QTextEdit>
 #include <QApplication>
 #include <QPushButton>
+#include <QRegularExpression>
 
 /************************************************************************
  * Single panels
@@ -181,11 +184,13 @@ MetaPanel::MetaPanel( QWidget *parent,
 }
 
 /**
- * Update all the MetaData and art on an "item-changed" event
+ * Update all the MetaData and art
  **/
-void MetaPanel::update( input_item_t *p_item )
+void MetaPanel::update( const SharedInputItem& p_item )
 {
-    if( !p_item )
+    input_item_t * const inputItem = p_item.get();
+
+    if( !inputItem )
     {
         clear();
         return;
@@ -197,18 +202,18 @@ void MetaPanel::update( input_item_t *p_item )
 
     char *psz_meta;
 #define UPDATE_META( meta, widget ) {                                   \
-    psz_meta = input_item_Get##meta( p_item );                          \
+    psz_meta = input_item_Get##meta( inputItem );                       \
     widget->setText( !EMPTY_STR( psz_meta ) ? qfu( psz_meta ) : "" );   \
     free( psz_meta ); }
 
-#define UPDATE_META_INT( meta, widget ) {           \
-    psz_meta = input_item_Get##meta( p_item );      \
-    if( !EMPTY_STR( psz_meta ) )                    \
-        widget->setValue( atoi( psz_meta ) ); }     \
+#define UPDATE_META_INT( meta, widget ) {            \
+    psz_meta = input_item_Get##meta( inputItem );    \
+    if( !EMPTY_STR( psz_meta ) )                     \
+        widget->setValue( atoi( psz_meta ) ); }      \
     free( psz_meta );
 
     /* Name / Title */
-    psz_meta = input_item_GetTitleFbName( p_item );
+    psz_meta = input_item_GetTitleFbName( inputItem );
     if( psz_meta )
     {
         title_text->setText( qfu( psz_meta ) );
@@ -218,7 +223,7 @@ void MetaPanel::update( input_item_t *p_item )
         title_text->setText( "" );
 
     /* URL / URI */
-    psz_meta = input_item_GetURI( p_item );
+    psz_meta = input_item_GetURI( inputItem );
     if( !EMPTY_STR( psz_meta ) )
         emit uriSet( qfu( psz_meta ) );
     fingerprintButton->setVisible( Chromaprint::isSupported( QString( psz_meta ) ) );
@@ -241,13 +246,13 @@ void MetaPanel::update( input_item_t *p_item )
     UPDATE_META( TrackTotal, seqtot_text );
 
     /* Now Playing || ES Now Playing */
-    psz_meta = input_item_GetNowPlayingFb( p_item );
+    psz_meta = input_item_GetNowPlayingFb( inputItem );
     if( !EMPTY_STR( psz_meta ) )
         nowplaying_text->setText( qfu( psz_meta ) );
     free( psz_meta );
 
     /* URL */
-    psz_meta = input_item_GetURL( p_item );
+    psz_meta = input_item_GetURL( inputItem );
     if( !EMPTY_STR( psz_meta ) )
     {
         QString newURL = qfu(psz_meta);
@@ -255,7 +260,7 @@ void MetaPanel::update( input_item_t *p_item )
         {
             currentURL = newURL;
             lblURL->setText( "<a href='" + currentURL + "'>" +
-                             currentURL.remove( QRegExp( ".*://") ) + "</a>" );
+                             currentURL.remove( QRegularExpression( QStringLiteral( ".*://" ) ) ) + "</a>" );
         }
     }
     free( psz_meta );
@@ -265,7 +270,7 @@ void MetaPanel::update( input_item_t *p_item )
     // If a artURL is available as a local file, directly display it !
 
     QString file;
-    char *psz_art = input_item_GetArtURL( p_item );
+    char *psz_art = input_item_GetArtURL( inputItem );
     if( psz_art )
     {
         char *psz = vlc_uri2path( psz_art );
@@ -283,24 +288,26 @@ void MetaPanel::update( input_item_t *p_item )
  **/
 void MetaPanel::saveMeta()
 {
-    if( p_input == NULL )
+    const auto input = p_input.get();
+
+    if( input == NULL )
         return;
 
     /* now we read the modified meta data */
-    input_item_SetTitle(  p_input, qtu( title_text->text() ) );
-    input_item_SetArtist( p_input, qtu( artist_text->text() ) );
-    input_item_SetAlbum(  p_input, qtu( collection_text->text() ) );
-    input_item_SetGenre(  p_input, qtu( genre_text->text() ) );
-    input_item_SetTrackNum(  p_input, qtu( seqnum_text->text() ) );
-    input_item_SetTrackTotal(  p_input, qtu( seqtot_text->text() ) );
-    input_item_SetDate(  p_input, qtu( date_text->text() ) );
-    input_item_SetLanguage(  p_input, qtu( language_text->text() ) );
+    input_item_SetTitle(  input, qtu( title_text->text() ) );
+    input_item_SetArtist( input, qtu( artist_text->text() ) );
+    input_item_SetAlbum(  input, qtu( collection_text->text() ) );
+    input_item_SetGenre(  input, qtu( genre_text->text() ) );
+    input_item_SetTrackNum(  input, qtu( seqnum_text->text() ) );
+    input_item_SetTrackTotal(  input, qtu( seqtot_text->text() ) );
+    input_item_SetDate(  input, qtu( date_text->text() ) );
+    input_item_SetLanguage(  input, qtu( language_text->text() ) );
 
-    input_item_SetCopyright( p_input, qtu( copyright_text->text() ) );
-    input_item_SetPublisher( p_input, qtu( publisher_text->text() ) );
-    input_item_SetDescription( p_input, qtu( description_text->toPlainText() ) );
+    input_item_SetCopyright( input, qtu( copyright_text->text() ) );
+    input_item_SetPublisher( input, qtu( publisher_text->text() ) );
+    input_item_SetDescription( input, qtu( description_text->toPlainText() ) );
 
-    input_item_WriteMeta( VLC_OBJECT(p_intf), p_input );
+    input_item_WriteMeta( VLC_OBJECT(p_intf), input );
 
     /* Reset the status of the mode. No need to emit any signal because parent
        is the only caller */
@@ -354,20 +361,20 @@ void MetaPanel::clear()
 
 void MetaPanel::fingerprint()
 {
-    FingerprintDialog *dialog = new FingerprintDialog( this, p_intf, p_input );
+    FingerprintDialog *dialog = new FingerprintDialog( this, p_intf, p_input.get() );
     connect( dialog, &FingerprintDialog::metaApplied, this, &MetaPanel::fingerprintUpdate );
     dialog->setAttribute( Qt::WA_DeleteOnClose, true );
     dialog->show();
 }
 
-void MetaPanel::fingerprintUpdate( input_item_t *p_item )
+void MetaPanel::fingerprintUpdate( const SharedInputItem& p_item )
 {
     update( p_item );
     setEditMode( true );
 }
 
 /**
- * Second Panel - Shows the extra metadata in a tree, non editable.
+ * Second Panel - Shows the extra metadata in a table, non editable.
  **/
 ExtraMetaPanel::ExtraMetaPanel( QWidget *parent ) : QWidget( parent )
 {
@@ -379,11 +386,12 @@ ExtraMetaPanel::ExtraMetaPanel( QWidget *parent ) : QWidget( parent )
      layout->addWidget( topLabel, 0, 0 );
 
      extraMeta = new QTableWidget( this );
-     extraMeta->setAlternatingRowColors( true );
-     extraMeta->setColumnCount( 2 );
-     extraMeta->horizontalHeader()->hide();
      extraMeta->verticalHeader()->hide();
+     extraMeta->setAlternatingRowColors( true );
 
+     extraMeta->setColumnCount( 2 );
+     extraMeta->setHorizontalHeaderLabels({ qtr( "Property" ),
+                                            qtr( "Value" ) });
      extraMeta->horizontalHeader()->setStretchLastSection(true);
      extraMeta->resizeRowsToContents();
 
@@ -500,25 +508,19 @@ void InfoPanel::update( input_item_t *p_item)
 
     vlc_mutex_locker locker( &p_item->lock );
 
-    info_category_t *cat;
-    vlc_list_foreach(cat, &p_item->categories, node)
+    for (auto &cat : vlc::from(p_item->categories, &info_category_t::node))
     {
-        if (info_category_IsHidden(cat))
+        if (info_category_IsHidden(&cat))
             continue;
 
-        struct vlc_list *const head = &cat->infos;
-
         current_item = new QTreeWidgetItem();
-        current_item->setText( 0, qfu(cat->psz_name) );
+        current_item->setText(0, qfu(cat.psz_name));
         InfoTree->addTopLevelItem( current_item );
 
-        for (info_t *info = vlc_list_first_entry_or_null(head, info_t, node);
-             info != NULL;
-             info = vlc_list_next_entry_or_null(head, info, info_t, node))
+        for (auto &info : vlc::from(cat.infos, &info_t::node))
         {
             child_item = new QTreeWidgetItem ();
-            child_item->setText( 0, qfu(info->psz_name) + ": "
-                                    + qfu(info->psz_value));
+            child_item->setText(0, qfu(info.psz_name) + ": " + qfu(info.psz_value));
             current_item->addChild(child_item);
         }
         current_item->setExpanded( true );

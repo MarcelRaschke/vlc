@@ -15,8 +15,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
+import QtQuick
+import QtQuick.Controls
 import "qrc:///style/"
 import org.videolan.vlc 0.1
 
@@ -39,21 +39,21 @@ MouseArea {
     property int _previousX
 
     cursorShape: Qt.SplitHCursor
-    width: VLCStyle.dp(8, VLCStyle.scale)
+    width: VLCStyle.resizeHandleWidth
     acceptedButtons: Qt.LeftButton
 
-    onPressed: {
+    onPressed: (mouse) => {
         MainCtx.setCursor(cursorShape)
         _previousX = mouseX
     }
 
-    onReleased: {
+    onReleased:(mouse) => {
         MainCtx.restoreCursor()
     }
 
     onPositionChanged: {
-        var f = atRight ? -1 : 1
-        var delta = mouseX - _previousX
+        const f = atRight ? -1 : 1
+        const delta = mouseX - _previousX
 
         root.widthFactor = root.sourceWidth / (root.targetWidth + (delta * - f))
     }

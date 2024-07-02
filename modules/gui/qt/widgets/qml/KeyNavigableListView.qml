@@ -15,9 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtGraphicalEffects 1.0
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Window
+import Qt5Compat.GraphicalEffects
 
 import org.videolan.vlc 0.1
 
@@ -25,7 +26,7 @@ import "qrc:///style/"
 import "qrc:///util/" as Util
 import "qrc:///util/Helpers.js" as Helpers
 
-FadingEdgeListView {
+ListView {
     id: root
 
     // Properties
@@ -33,13 +34,9 @@ FadingEdgeListView {
     // NOTE: We want buttons to be centered vertically but configurable.
     property int buttonMargin: height / 2 - buttonLeft.height / 2
 
-    readonly property int scrollBarWidth: scroll_id.visible ? scroll_id.width : 0
-
-    property bool keyNavigationWraps: false
-
-    // NOTE: Fading is disabled by default, 'enableBeginningFade' and 'enableEndFade' take
-    // precedence over 'enableFade'.
-    property bool enableFade: false
+    property ListSelectionModel selectionModel: ListSelectionModel {
+        model: root.model
+    }
 
     // Private
 
@@ -47,25 +44,18 @@ FadingEdgeListView {
 
     // Aliases
 
+    // TODO: Qt 7 try to assign the item inline if it is possible
+    //       to set it to null, so that the item is not created
+    //       if the effect is not wanted.
+    property alias fadingEdge: fadingEdge
+
     //forward view properties
-    property alias listScrollBar: scroll_id
 
     property alias buttonLeft: buttonLeft
     property alias buttonRight: buttonRight
 
-    property alias dragAutoScrollDragItem: dragAutoScrollHandler.dragItem
-    property alias dragAutoScrollMargin: dragAutoScrollHandler.margin
-    property alias dragAutoScrolling: dragAutoScrollHandler.scrolling
-
     // Signals
-
-    signal selectionUpdated(int keyModifiers, int oldIndex, int newIndex)
-
-    signal selectAll()
-
     signal actionAtIndex(int index)
-
-    signal deselectAll()
 
     signal showContextMenu(point globalPos)
 
@@ -79,28 +69,25 @@ FadingEdgeListView {
 
     activeFocusOnTab: true
 
-    backgroundColor: theme.bg.primary
-
     //key navigation is reimplemented for item selection
     keyNavigationEnabled: false
+    keyNavigationWraps: false
 
-    ScrollBar.vertical: ScrollBar { id: scroll_id; visible: root.contentHeight > root.height }
-    ScrollBar.horizontal: ScrollBar { visible: root.contentWidth > root.width }
+    ScrollBar.vertical: ScrollBar { }
+    ScrollBar.horizontal: ScrollBar { }
+
+    flickableDirection: Flickable.AutoFlickIfNeeded
 
     highlightMoveDuration: 300 //ms
     highlightMoveVelocity: 1000 //px/s
 
+    boundsBehavior: Flickable.StopAtBounds
+
+    reuseItems: true
+
     section.property: ""
     section.criteria: ViewSection.FullString
     section.delegate: sectionHeading
-
-    enableBeginningFade: (enableFade && dragAutoScrollHandler.scrollingDirection
-                                        !==
-                                        Util.ViewDragAutoScrollHandler.Backward)
-
-    enableEndFade: (enableFade && dragAutoScrollHandler.scrollingDirection
-                                  !==
-                                  Util.ViewDragAutoScrollHandler.Forward)
 
     Accessible.role: Accessible.List
 
@@ -121,6 +108,28 @@ FadingEdgeListView {
     }
 
     // Functions
+
+    // NOTE: This function is useful to set the currentItem without losing the visual focus.
+    function setCurrentItem(index) {
+        if (currentIndex === index)
+            return
+
+        let reason
+
+        if (currentItem)
+            reason = currentItem.focusReason
+        else
+            reason = _currentFocusReason
+
+        currentIndex = index
+
+        if (reason !== Qt.OtherFocusReason) {
+            if (currentItem)
+                Helpers.enforceFocus(currentItem, reason)
+            else
+                setCurrentItemFocus(reason)
+        }
+    }
 
     function setCurrentItemFocus(reason) {
         if (!model || model.count === 0) {
@@ -149,8 +158,16 @@ FadingEdgeListView {
         root.contentX -= Math.min(root.width,root.contentX - root.originX)
     }
 
-    Keys.onPressed: {
-        var newIndex = -1
+    // Add an indirection here because additional control
+    // might be necessary as in Playqueue.
+    // Derived views may override this function.
+    function updateSelection(modifiers, oldIndex, newIndex) {
+        if (selectionModel)
+            selectionModel.updateSelection(modifiers, oldIndex, newIndex)
+    }
+
+    Keys.onPressed: (event) => {
+        let newIndex = -1
 
         if (orientation === ListView.Vertical)
         {
@@ -195,13 +212,13 @@ FadingEdgeListView {
             _keyPressed = true
         }
 
-        var oldIndex = currentIndex
+        const oldIndex = currentIndex
         if (newIndex >= 0 && newIndex < count && newIndex !== oldIndex) {
             event.accepted = true;
 
             currentIndex = newIndex;
 
-            selectionUpdated(event.modifiers, oldIndex, newIndex);
+            root.updateSelection(event.modifiers, oldIndex, newIndex);
 
             // NOTE: If we skip this call the item might end up under the header.
             positionViewAtIndex(currentIndex, ItemView.Contain);
@@ -218,7 +235,7 @@ FadingEdgeListView {
         }
     }
 
-    Keys.onReleased: {
+    Keys.onReleased: (event) => {
         if (_keyPressed === false)
             return
 
@@ -226,7 +243,8 @@ FadingEdgeListView {
 
         if (event.matches(StandardKey.SelectAll)) {
             event.accepted = true
-            selectAll()
+            if (selectionModel)
+                selectionModel.selectAll()
         } else if (KeyHelper.matchOk(event)) { //enter/return/space
             event.accepted = true
             actionAtIndex(currentIndex)
@@ -238,6 +256,15 @@ FadingEdgeListView {
         colorSet: ColorContext.View
     }
 
+    FadingEdgeForListView {
+        id: fadingEdge
+
+        anchors.fill: parent
+
+        listView: root
+
+        backgroundColor: theme.bg.primary
+    }
 
     Component {
         id: sectionHeading
@@ -259,41 +286,42 @@ FadingEdgeListView {
         }
     }
 
-
-    MouseEventFilter {
-        target: root
-
-        onMouseButtonPress: {
-            if (buttons & (Qt.LeftButton | Qt.RightButton)) {
-                Helpers.enforceFocus(root, Qt.MouseFocusReason)
-
-                if (!(modifiers & (Qt.ShiftModifier | Qt.ControlModifier))) {
-                    root.deselectAll()
-                }
-            }
-        }
-
-        onMouseButtonRelease: {
-            if (button & Qt.RightButton) {
-                root.showContextMenu(globalPos)
-            }
-        }
-    }
-
-    Util.ViewDragAutoScrollHandler {
-        id: dragAutoScrollHandler
-
-        view: root
-    }
-
     Util.FlickableScrollHandler { }
 
     // FIXME: This is probably not useful anymore.
     Connections {
         target: root.headerItem
-        onFocusChanged: {
+        function onFocusChanged() {
             if (!headerItem.focus) {
                 currentItem.focus = true
+            }
+        }
+    }
+
+    MouseArea {
+        anchors.fill: parent
+
+        z: -1
+
+        preventStealing: true
+
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+
+        onPressed: (mouse) => {
+            focus = true // Grab the focus from delegate
+            root.forceActiveFocus(Qt.MouseFocusReason) // Re-focus the list
+
+            if (!(mouse.modifiers & (Qt.ShiftModifier | Qt.ControlModifier))) {
+                if (selectionModel)
+                    selectionModel.clearSelection()
+            }
+
+            mouse.accepted = true
+        }
+
+        onReleased: (mouse) => {
+            if (mouse.button & Qt.RightButton) {
+                root.showContextMenu(mapToGlobal(mouse.x, mouse.y))
             }
         }
     }

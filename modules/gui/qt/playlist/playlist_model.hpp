@@ -25,17 +25,18 @@
 
 #include "playlist_common.hpp"
 #include "playlist_item.hpp"
-#include "util/selectable_list_model.hpp"
 #include "util/vlctick.hpp"
+
+#include <QAbstractListModel>
 
 namespace vlc {
 namespace playlist {
 
 class PlaylistListModelPrivate;
-class PlaylistListModel : public SelectableListModel
+class PlaylistListModel : public QAbstractListModel
 {
     Q_OBJECT
-    Q_PROPERTY(PlaylistPtr playlistId READ getPlaylistId WRITE setPlaylistId NOTIFY playlistIdChanged FINAL)
+    Q_PROPERTY(Playlist playlist READ getPlaylist WRITE setPlaylist NOTIFY playlistChanged FINAL)
     Q_PROPERTY(int currentIndex READ getCurrentIndex NOTIFY currentIndexChanged FINAL)
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged FINAL)
     Q_PROPERTY(VLCTick duration READ getDuration NOTIFY countChanged FINAL)
@@ -48,8 +49,7 @@ public:
         IsCurrentRole,
         ArtistRole,
         AlbumRole,
-        ArtworkRole,
-        SelectedRole,
+        ArtworkRole
     };
 
     PlaylistListModel(QObject *parent = nullptr);
@@ -65,33 +65,28 @@ public:
     /* provided for convenience */
     Q_INVOKABLE PlaylistItem itemAt(int index) const;
 
-    Q_INVOKABLE virtual void removeItems(const QList<int> &indexes);
-    Q_INVOKABLE virtual void moveItemsPre(const QList<int> &indexes, int preTarget);
-    Q_INVOKABLE virtual void moveItemsPost(const QList<int> &indexes, int postTarget);
+    Q_INVOKABLE virtual void removeItems(const QVector<int> &indexes);
+    Q_INVOKABLE virtual void moveItemsPre(const QVector<int> &indexes, int preTarget);
+    Q_INVOKABLE virtual void moveItemsPost(const QVector<int> &indexes, int postTarget);
 
     int getCurrentIndex() const;
 
-    Q_INVOKABLE QVariantList getItemsForIndexes(const QList<int> & indexes) const;
-
-protected:
-    bool isRowSelected(int row) const override;
-    void setRowSelected(int row, bool selected) override;
-    int getSelectedRole() const override;
+    Q_INVOKABLE QVariantList getItemsForIndexes(const QVector<int> & indexes) const;
 
 public slots:
-    PlaylistPtr getPlaylistId() const;
-    void setPlaylistId(PlaylistPtr id);
-    void setPlaylistId(vlc_playlist_t* playlist);
+    Playlist getPlaylist() const;
+    void setPlaylist(const Playlist& playlist);
+    void setPlaylist(vlc_playlist_t* playlist);
 
 signals:
-    void playlistIdChanged(const PlaylistPtr& );
+    void playlistChanged(const Playlist&);
     void currentIndexChanged( int );
     void countChanged(int);
 
 private:
     Q_DECLARE_PRIVATE(PlaylistListModel)
 
-    void moveItems(const QList<int> &indexes, int target, bool isPreTarget);
+    void moveItems(const QVector<int> &indexes, int target, bool isPreTarget);
 
     QScopedPointer<PlaylistListModelPrivate> d_ptr;
 

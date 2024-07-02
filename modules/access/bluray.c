@@ -42,6 +42,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_mouse.h>
 #include <vlc_plugin.h>
 #include <vlc_demux.h>                      /* demux_t */
@@ -50,6 +51,7 @@
 #include <vlc_url.h>                        /* vlc_path2uri */
 #include <vlc_iso_lang.h>
 #include <vlc_fs.h>
+#include <vlc_subpicture.h> // vlc_spu_highlight_t
 
 #include "../demux/mpeg/timestamps.h"
 #include "../demux/timestamps_filter.h"
@@ -129,80 +131,6 @@ static const char * bluray_event_debug_strings[] =
 #  define blurayDebugEvent(e, v)
 #endif
 
-#ifdef BLURAY_HAS_BDJO_DATA_H
-/* System version check menu freeze. See
- * https://code.videolan.org/videolan/libbluray/issues/1
- * To be removed with fix[ed,able] libbluray */
-#  include <libbluray/bdjo_data.h>
-#  include <strings.h>
-static int BDJO_FileSelect( const char *psz_filename )
-{
-    int i_len = strlen( psz_filename );
-    if ( i_len  <= 5 )
-        return 0;
-    else
-        return ! strcasecmp( &psz_filename[i_len - 5], ".bdjo" );
-}
-
-static bool BDJO_IsBlacklisted(demux_t *p_demux, const char *psz_bd_path)
-{
-    const char * rgsz_class_blacklist[] =
-    {
-        "com.macrovision.bdplus.Handshake",
-    };
-
-    bool b_ret = false;
-    char *psz_bdjo_dir;
-    if(-1 == asprintf(&psz_bdjo_dir, "%s/BDMV/BDJO", psz_bd_path))
-        return false;
-
-    char **ppsz_filenames = NULL;
-    int i_files = vlc_scandir(psz_bdjo_dir, &ppsz_filenames, BDJO_FileSelect, NULL);
-    if(i_files < 1)
-    {
-        free(psz_bdjo_dir);
-        return false;
-    }
-
-    for( int i=0; i<i_files && !b_ret; i++ )
-    {
-        char *psz_bdjo_file;
-        if(-1 < asprintf(&psz_bdjo_file, "%s/%s", psz_bdjo_dir, ppsz_filenames[i]))
-        {
-            struct bdjo_data *bdjo = bd_read_bdjo(psz_bdjo_file);
-            if(bdjo)
-            {
-                size_t k=0;
-                for(uint8_t j=0; j<bdjo->app_table.num_app && !b_ret; j++)
-                    for(; k<ARRAY_SIZE(rgsz_class_blacklist) && !b_ret; k++)
-                        b_ret = (!strcmp(rgsz_class_blacklist[k],
-                                         bdjo->app_table.app[j].initial_class));
-#ifdef DEBUG_BLURAY
-                 if(b_ret)
-                     msg_Warn(p_demux, "Found blacklisted class %s in %s",
-                              rgsz_class_blacklist[k],
-                              ppsz_filenames[i]);
-#else
-    VLC_UNUSED(p_demux);
-#endif
-                bd_free_bdjo(bdjo);
-            }
-            free(psz_bdjo_file);
-        }
-    }
-
-    free(psz_bdjo_dir);
-
-    for( int i=0; i<i_files; i++ )
-        free(ppsz_filenames[i]);
-    free(ppsz_filenames);
-
-    return b_ret;
-}
-#else
-# define BDJO_IsBlacklisted(foo, bar) (0)
-#endif
-
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
@@ -256,7 +184,7 @@ vlc_module_begin ()
     add_submodule()
         set_description( "BluRay demuxer" )
         set_subcategory( SUBCAT_INPUT_DEMUX )
-        set_capability( "demux", 5 )
+        set_capability( "demux", 7 )
         set_callbacks( blurayOpen, blurayClose )
 #endif
 
@@ -279,8 +207,8 @@ typedef struct bluray_overlay_t
     vlc_mutex_t         lock;
     bool                b_on_vout;
     OverlayStatus       status;
-    subpicture_region_t *p_regions;
-    int                 width, height;
+    vlc_spu_regions     regions;
+    uint16_t            width, height;
 
     /* pointer to last subpicture updater.
      * used to disconnect this overlay from vout when:
@@ -589,12 +517,12 @@ static void FindMountPoint(char **file)
 static void bluraySendBackgroundImage(vlc_object_t *p_obj,
                                       es_out_t *p_dst_out,
                                       es_out_id_t *p_es,
-                                      const es_format_t *p_fmt)
+                                      const video_format_t *p_fmt)
 {
     msg_Info(p_obj, "Start background");
 
-    block_t *p_block = block_Alloc(p_fmt->video.i_width * p_fmt->video.i_height *
-                                   p_fmt->video.i_bits_per_pixel / 8);
+    assert(p_fmt->i_chroma == VLC_CODEC_I420);
+    block_t *p_block = block_Alloc(p_fmt->i_width * p_fmt->i_height * 3 / 2);
     if (!p_block) {
         msg_Err(p_obj, "Error allocating block for background video");
         return;
@@ -604,9 +532,10 @@ static void bluraySendBackgroundImage(vlc_object_t *p_obj,
     p_block->i_dts = p_block->i_pts = vlc_tick_now() + VLC_TICK_FROM_MS(40);
 
     uint8_t *p = p_block->p_buffer;
-    memset(p, 0, p_fmt->video.i_width * p_fmt->video.i_height);
-    p += p_fmt->video.i_width * p_fmt->video.i_height;
-    memset(p, 0x80, p_fmt->video.i_width * p_fmt->video.i_height / 2);
+    // Set I420 black
+    memset(p, 0, p_fmt->i_width * p_fmt->i_height);
+    p += p_fmt->i_width * p_fmt->i_height;
+    memset(p, 0x80, p_fmt->i_width * p_fmt->i_height / 2);
 
     es_out_SetPCR(p_dst_out, p_block->i_dts - VLC_TICK_FROM_MS(40));
     es_out_Control(p_dst_out, ES_OUT_SET_ES, p_es);
@@ -994,19 +923,6 @@ static int blurayOpen(vlc_object_t *object)
              _("This Blu-ray disc requires Java for menus support.%s\nThe disc will be played without menus."),
              !disc_info->libjvm_detected ? _("Java was not found on your system.") : "");
         p_sys->b_menu = false;
-    }
-
-    if(disc_info->bdj_detected &&p_sys->b_menu &&
-       BDJO_IsBlacklisted(p_demux, p_sys->psz_bd_path))
-    {
-        p_sys->b_menu = vlc_dialog_wait_question( p_demux,
-                                                  VLC_DIALOG_QUESTION_NORMAL,
-                                                  _("Play without Menus"),
-                                                  _("Try anyway"),
-                                                  NULL,
-                                                  _("BDJO Menu check"),
-                                                  "%s",
-                                                  _("Incompatible Java Menu detected"));
     }
 
     /* Get titles and chapters */
@@ -1496,7 +1412,7 @@ static int bluray_esOutControl(es_out_t *p_out, input_source_t *in, int i_query,
                     bluraySendBackgroundImage(esout_priv->p_obj,
                                               esout_priv->p_dst_out,
                                               esout_priv->overlay.p_video_es,
-                                              &fmt);
+                                              &fmt.video);
                 }
                 es_format_Clean(&fmt);
             }
@@ -1627,66 +1543,50 @@ static void updater_unlock_overlay(bluray_spu_updater_sys_t *p_upd_sys)
     vlc_mutex_unlock(&p_upd_sys->lock);
 }
 
-static int subpictureUpdaterValidate(subpicture_t *p_subpic,
-                                      bool b_fmt_src, const video_format_t *p_fmt_src,
-                                      bool b_fmt_dst, const video_format_t *p_fmt_dst,
-                                      vlc_tick_t i_ts)
-{
-    VLC_UNUSED(b_fmt_src);
-    VLC_UNUSED(b_fmt_dst);
-    VLC_UNUSED(p_fmt_src);
-    VLC_UNUSED(p_fmt_dst);
-    VLC_UNUSED(i_ts);
-
-    bluray_spu_updater_sys_t *p_upd_sys = p_subpic->updater.p_sys;
-    bluray_overlay_t         *p_overlay = updater_lock_overlay(p_upd_sys);
-
-    if (!p_overlay) {
-        return 1;
-    }
-
-    int res = p_overlay->status == Outdated;
-
-    updater_unlock_overlay(p_upd_sys);
-
-    return res;
-}
-
 static void subpictureUpdaterUpdate(subpicture_t *p_subpic,
-                                    const video_format_t *p_fmt_src,
-                                    const video_format_t *p_fmt_dst,
+                                    const video_format_t *prev_src, const video_format_t *p_fmt_src,
+                                    const video_format_t *prev_dst, const video_format_t *p_fmt_dst,
                                     vlc_tick_t i_ts)
 {
-    VLC_UNUSED(p_fmt_src);
-    VLC_UNUSED(p_fmt_dst);
+    VLC_UNUSED(prev_src); VLC_UNUSED(p_fmt_src);
+    VLC_UNUSED(prev_dst); VLC_UNUSED(p_fmt_dst);
     VLC_UNUSED(i_ts);
-    bluray_spu_updater_sys_t *p_upd_sys = p_subpic->updater.p_sys;
+
+    bluray_spu_updater_sys_t *p_upd_sys = p_subpic->updater.sys;
     bluray_overlay_t         *p_overlay = updater_lock_overlay(p_upd_sys);
 
     if (!p_overlay) {
         return;
     }
+
+    if (p_overlay->status != Outdated)
+    {
+        updater_unlock_overlay(p_upd_sys);
+        return;
+    }
+
+    vlc_spu_regions_Clear( &p_subpic->regions );
 
     /*
      * When this function is called, all p_subpic regions are gone.
      * We need to duplicate our regions (stored internally) to this subpic.
      */
-    subpicture_region_t *p_src = p_overlay->p_regions;
-    if (!p_src) {
-        updater_unlock_overlay(p_upd_sys);
-        return;
-    }
-
-    subpicture_region_t **p_dst = &p_subpic->p_region;
-    while (p_src != NULL) {
-        *p_dst = subpicture_region_Copy(p_src);
-        if (*p_dst == NULL)
+    const subpicture_region_t *p_src;
+    subpicture_region_t *p_dst;
+    vlc_spu_regions_foreach_const(p_src, &p_overlay->regions) {
+        p_dst = subpicture_region_ForPicture(&p_src->fmt, p_src->p_picture);
+        if (p_dst == NULL)
             break;
-        p_dst = &(*p_dst)->p_next;
-        p_src = p_src->p_next;
+
+        p_dst->b_absolute = p_src->b_absolute;
+        p_dst->i_x      = p_src->i_x;
+        p_dst->i_y      = p_src->i_y;
+        // fields not modified on the source
+        p_dst->i_align  = p_src->i_align;
+        p_dst->i_alpha  = p_src->i_alpha;
+
+        vlc_spu_regions_push(&p_subpic->regions, p_dst);
     }
-    if (*p_dst != NULL)
-        (*p_dst)->p_next = NULL;
     p_overlay->status = Displayed;
 
     updater_unlock_overlay(p_upd_sys);
@@ -1694,7 +1594,7 @@ static void subpictureUpdaterUpdate(subpicture_t *p_subpic,
 
 static void subpictureUpdaterDestroy(subpicture_t *p_subpic)
 {
-    bluray_spu_updater_sys_t *p_upd_sys = p_subpic->updater.p_sys;
+    bluray_spu_updater_sys_t *p_upd_sys = p_subpic->updater.sys;
     bluray_overlay_t         *p_overlay = updater_lock_overlay(p_upd_sys);
 
     if (p_overlay) {
@@ -1716,11 +1616,15 @@ static subpicture_t *bluraySubpictureCreate(bluray_overlay_t *p_ov)
 
     p_upd_sys->p_overlay = p_ov;
 
+    static const struct vlc_spu_updater_ops spu_ops =
+    {
+        .update   = subpictureUpdaterUpdate,
+        .destroy  = subpictureUpdaterDestroy,
+    };
+
     subpicture_updater_t updater = {
-        .pf_validate = subpictureUpdaterValidate,
-        .pf_update   = subpictureUpdaterUpdate,
-        .pf_destroy  = subpictureUpdaterDestroy,
-        .p_sys       = p_upd_sys,
+        .sys = p_upd_sys,
+        .ops = &spu_ops,
     };
 
     subpicture_t *p_pic = subpicture_New(&updater);
@@ -1731,7 +1635,6 @@ static subpicture_t *bluraySubpictureCreate(bluray_overlay_t *p_ov)
 
     p_pic->i_original_picture_width = p_ov->width;
     p_pic->i_original_picture_height = p_ov->height;
-    p_pic->b_absolute = true;
 
     vlc_mutex_init(&p_upd_sys->lock);
     p_upd_sys->ref_cnt = 2;
@@ -1789,7 +1692,7 @@ static void blurayCloseOverlay(demux_t *p_demux, int plane)
         /* no references to this overlay exist in vo anymore */
         es_out_Control(p_sys->p_out, BLURAY_ES_OUT_CONTROL_DELETE_OVERLAY, plane);
 
-        subpicture_region_ChainDelete(ov->p_regions);
+        vlc_spu_regions_Clear(&ov->regions);
         free(ov);
 
         p_sys->bdj.p_overlays[plane] = NULL;
@@ -1849,14 +1752,13 @@ static void blurayClearOverlay(demux_t *p_demux, int plane)
 
     vlc_mutex_lock(&ov->lock);
 
-    subpicture_region_ChainDelete(ov->p_regions);
-    ov->p_regions = NULL;
+    vlc_spu_regions_Clear(&ov->regions);
     ov->status = Outdated;
 
     vlc_mutex_unlock(&ov->lock);
 }
 
-static void blurayInitOverlay(demux_t *p_demux, int plane, int width, int height)
+static void blurayInitOverlay(demux_t *p_demux, int plane, uint16_t width, uint16_t height)
 {
     demux_sys_t *p_sys = p_demux->p_sys;
 
@@ -1875,6 +1777,7 @@ static void blurayInitOverlay(demux_t *p_demux, int plane, int width, int height
     ov->width = width;
     ov->height = height;
     ov->b_on_vout = false;
+    vlc_spu_regions_init(&ov->regions);
 
     vlc_mutex_init(&ov->lock);
 
@@ -1900,25 +1803,24 @@ static void blurayDrawOverlay(demux_t *p_demux, const BD_OVERLAY* const eventov)
     vlc_mutex_lock(&ov->lock);
 
     /* Find a region to update */
-    subpicture_region_t **pp_reg = &ov->p_regions;
-    subpicture_region_t *p_reg = ov->p_regions;
-    subpicture_region_t *p_last = NULL;
-    while (p_reg != NULL) {
-        p_last = p_reg;
-        if (p_reg->i_x == eventov->x &&
-            p_reg->i_y == eventov->y &&
-            p_reg->fmt.i_width == eventov->w &&
-            p_reg->fmt.i_height == eventov->h &&
-            p_reg->fmt.i_chroma == VLC_CODEC_YUVP)
+    subpicture_region_t *p_reg = NULL;
+    subpicture_region_t *found;
+    vlc_spu_regions_foreach(found, &ov->regions) {
+        if (found->i_x == eventov->x &&
+            found->i_y == eventov->y &&
+            found->p_picture->format.i_width == eventov->w &&
+            found->p_picture->format.i_height == eventov->h &&
+            found->p_picture->format.i_chroma == VLC_CODEC_YUVP)
+        {
+            p_reg = found;
             break;
-        pp_reg = &p_reg->p_next;
-        p_reg = p_reg->p_next;
+        }
     }
 
     if (!eventov->img) {
         if (p_reg) {
             /* drop region */
-            *pp_reg = p_reg->p_next;
+            vlc_spu_regions_remove(&ov->regions, p_reg);
             subpicture_region_Delete(p_reg);
         }
         vlc_mutex_unlock(&ov->lock);
@@ -1933,13 +1835,11 @@ static void blurayDrawOverlay(demux_t *p_demux, const BD_OVERLAY* const eventov)
 
         p_reg = subpicture_region_New(&fmt);
         if (p_reg) {
+            p_reg->b_absolute = true;
             p_reg->i_x = eventov->x;
             p_reg->i_y = eventov->y;
             /* Append it to our list. */
-            if (p_last != NULL)
-                p_last->p_next = p_reg;
-            else /* If we don't have a last region, then our list empty */
-                ov->p_regions = p_reg;
+            vlc_spu_regions_push(&ov->regions, p_reg);
         }
         else
         {
@@ -1959,12 +1859,12 @@ static void blurayDrawOverlay(demux_t *p_demux, const BD_OVERLAY* const eventov)
         }
 
     if (eventov->palette) {
-        p_reg->fmt.p_palette->i_entries = 256;
+        p_reg->p_picture->format.p_palette->i_entries = 256;
         for (int i = 0; i < 256; ++i) {
-            p_reg->fmt.p_palette->palette[i][0] = eventov->palette[i].Y;
-            p_reg->fmt.p_palette->palette[i][1] = eventov->palette[i].Cb;
-            p_reg->fmt.p_palette->palette[i][2] = eventov->palette[i].Cr;
-            p_reg->fmt.p_palette->palette[i][3] = eventov->palette[i].T;
+            p_reg->p_picture->format.p_palette->palette[i][0] = eventov->palette[i].Y;
+            p_reg->p_picture->format.p_palette->palette[i][1] = eventov->palette[i].Cb;
+            p_reg->p_picture->format.p_palette->palette[i][2] = eventov->palette[i].Cr;
+            p_reg->p_picture->format.p_palette->palette[i][3] = eventov->palette[i].T;
         }
     }
 
@@ -2022,7 +1922,7 @@ static void blurayOverlayProc(void *ptr, const BD_OVERLAY *const overlay)
 /*
  * ARGB overlay (BD-J)
  */
-static void blurayInitArgbOverlay(demux_t *p_demux, int plane, int width, int height)
+static void blurayInitArgbOverlay(demux_t *p_demux, int plane, uint16_t width, uint16_t height)
 {
     blurayInitOverlay(p_demux, plane, width, height);
 }
@@ -2042,7 +1942,8 @@ static void blurayDrawArgbOverlay(demux_t *p_demux, const BD_ARGB_OVERLAY* const
 #else
     const vlc_fourcc_t rgbchroma = VLC_CODEC_BGRA;
 #endif
-    if (!ov->p_regions)
+    subpicture_region_t *p_reg = vlc_spu_regions_first_or_null(&ov->regions);
+    if (!p_reg)
     {
         video_format_t fmt;
         video_format_Init(&fmt, 0);
@@ -2050,12 +1951,19 @@ static void blurayDrawArgbOverlay(demux_t *p_demux, const BD_ARGB_OVERLAY* const
                            rgbchroma,
                            eventov->stride, ov->height,
                            ov->width, ov->height, 1, 1);
-        ov->p_regions = subpicture_region_New(&fmt);
+        p_reg = subpicture_region_New(&fmt);
+        if (unlikely(p_reg == NULL)) {
+            vlc_mutex_unlock(&ov->lock);
+            return;
+        }
+        p_reg->b_absolute = true;
+        p_reg->i_x = 0;
+        p_reg->i_y = 0;
+        vlc_spu_regions_push(&ov->regions, p_reg);
     }
 
     /* Find a region to update */
-    subpicture_region_t *p_reg = ov->p_regions;
-    if (!p_reg || p_reg->fmt.i_chroma != rgbchroma) {
+    if (p_reg->p_picture->format.i_chroma != rgbchroma) {
         vlc_mutex_unlock(&ov->lock);
         return;
     }
@@ -2572,12 +2480,12 @@ static int blurayControl(demux_t *p_demux, int query, va_list args)
 
         if (!EMPTY_STR(meta->di_name)) vlc_meta_SetTitle(p_meta, meta->di_name);
 
-        if (!EMPTY_STR(meta->language_code)) vlc_meta_AddExtra(p_meta, "Language", meta->language_code);
-        if (!EMPTY_STR(meta->filename)) vlc_meta_AddExtra(p_meta, "Filename", meta->filename);
-        if (!EMPTY_STR(meta->di_alternative)) vlc_meta_AddExtra(p_meta, "Alternative", meta->di_alternative);
+        if (!EMPTY_STR(meta->language_code)) vlc_meta_SetExtra(p_meta, "Language", meta->language_code);
+        if (!EMPTY_STR(meta->filename)) vlc_meta_SetExtra(p_meta, "Filename", meta->filename);
+        if (!EMPTY_STR(meta->di_alternative)) vlc_meta_SetExtra(p_meta, "Alternative", meta->di_alternative);
 
         // if (meta->di_set_number > 0) vlc_meta_SetTrackNum(p_meta, meta->di_set_number);
-        // if (meta->di_num_sets > 0) vlc_meta_AddExtra(p_meta, "Discs numbers in Set", meta->di_num_sets);
+        // if (meta->di_num_sets > 0) vlc_meta_SetExtra(p_meta, "Discs numbers in Set", meta->di_num_sets);
 
         if (p_sys->i_cover_idx >= 0 && p_sys->i_cover_idx < p_sys->i_attachments) {
             char psz_url[128];

@@ -88,7 +88,7 @@ vlc_modules += {
 ```
 
 @warning 	Make sure to not accidentally overwrite the `vlc_modules` variable by using
-		 	and `=` instead of `+=` when appending the dictionary.
+		 	an `=` instead of `+=` when appending the dictionary.
 
 Currently the modules dict accepts the following keys:
 
@@ -97,6 +97,9 @@ Currently the modules dict accepts the following keys:
 
 @param 	sources
 		The source files for the module, use [`files()`][mref_files] to specify them. **Required**
+
+@param  enabled
+        A boolean indicating whether the module should be built or not.
 
 @param  dependencies
 		The dependencies needed by the module. Only list external dependencies
@@ -173,13 +176,12 @@ Now we can just look up the option and use that for the `required` argument of t
 ```meson
 # dav1d AV1 decoder
 dav1d_dep = dependency('dav1d', version: '>= 0.5.0', required: get_option('dav1d'))
-if dav1d_dep.found()
-    vlc_modules += {
-        'name' : 'dav1d',
-        'sources' : files('dav1d.c'),
-        'dependencies' : [dav1d_dep]
-    }
-endif
+vlc_modules += {
+    'name' : 'dav1d',
+    'sources' : files('dav1d.c'),
+    'dependencies' : [dav1d_dep],
+    'enabled' : dav1d_dep.found(),
+}
 ```
 
 As the option defaults to `auto`, meson will look it up, and if its is found, add the module.
@@ -191,11 +193,13 @@ cases of conditional dependencies. For example suppose we want an option to be d
 cases when it is set to `auto`:
 
 ```meson
-if (get_option('x11')
-    .disable_auto_if(host_system in ['darwin', 'windows'])
-    .allowed())
-    # Do something here if the X11 option is enabled
-endif
+vlc_modules += {
+    'name' : 'xcb',
+    'sources' : files('xcb.c'),
+    'enabled' : get_option('x11') \
+        .disable_auto_if(host_system in ['darwin', 'windows']) \
+        .allowed(),
+}
 ```
 
 This will disable the `x11` option if it is set to auto, when on `darwin` or `windows`.
@@ -212,6 +216,102 @@ endif
 it would not do what you might expect, as `disable_auto_if` returns a new option and does not mutate the
 existing one. The returned option object is never assigned to any variable, so it is lost.
 
+### Adding new tests
+
+VLC tests are also meson dictionaries added to the special array named `vlc_tests`.
+This mechanism allows a test to reference modules that should be available when
+running the test.
+
+To add a new test, simply append to that variable:
+
+```meson
+vlc_tests += {
+    'name' : 'test_src_input_thumbnail',
+    'sources' : files('input/thumbnail.c'),
+    'suite' : ['src', 'test_src'],
+    'link_with' : [libvlc, libvlccore],
+    'module_depends' : ['demux_mock', 'rawvideo']
+}
+```
+
+@warning    Make sure to not accidentally overwrite the `vlc_tests` variable
+            by using an `=` instead of `+=` when appending the dictionary.
+
+Currently the modules dictionary accepts the following keys:
+
+@param  name
+        The name of the new VLC test, which will map to the executable name. **Required**
+
+@param  sources
+        The source files for the new test, use [`files()`][mref_files] to specify them. **Required**
+
+@param  suite
+        The meson test suites to which this test should be available.
+
+@param  dependencies
+		The dependencies needed by the test. Only list external dependencies
+		here, not libraries that are built as part of the VLC build, for these
+		use `link_with` instead.
+
+@param  link_with
+		The dependencies needed by the test that are part of the VLC build.
+        For external dependencies, use `dependencies` instead.
+
+@param  include_directories
+		Additional include directories that should be used when compiling the test.
+		These should be specified using the [`include_directories()`][mref_include_directories]
+		function.
+
+@param  module_depends
+        The list of module names this test depends upon.
+
+@param  moc_headers
+        A list of header files that should be transformed by Qt's moc
+        source translater built for the test.
+
+@param  c_args
+	    Additional flags to pass to the C compiler.
+
+@param  cpp_args
+		Additional flags to pass to the C++ compiler.
+
+@param  objc_args
+		Additional flags to pass to the Objective-C compiler.
+
+To run a specific test, you can directly use:
+
+```bash
+meson test -C build-meson test_src_input_thumbnail
+```
+
+where `test_src_input_thumbnail` can be replaced by the `name` of the test.
+Make sure that a module really depends upon the module it's using through the
+`module_depends` variable. If every modules should be used to run the test,
+you can use the special value `vlc_plugins_targets.keys()`, but adding more
+module dependencies than necessary will drastically increase the compile time
+when running a specific test in cases like automated `git bisect`.
+
+#### Compiling with contribs
+
+The meson build system also supports using dependencies and binaries provided
+by the contrib system. 
+
+Once the contrib has been prepared, a meson machine file will be generated
+in the installation prefix. For native linux x86_64, it will typically be
+found at the following location:
+
+    vlc/contrib/x86_64-pc-linux-gnu/share/meson/native/contrib.ini
+
+Then you can setup meson with this file using the following command:
+
+    meson setup build-meson \
+        --native-file contrib/x86_64-pc-linux-gnu/share/meson/native/contrib.ini 
+
+When cross-compiling, both the crossfile and the contrib machine file
+can be supplied at the same time:
+
+    meson setup build-meson --cross-file win32.crossfile \
+        --cross-file contrib/x86_64-w64-mingw32/share/meson/cross/contrib.ini 
 
 [mref_files]: https://mesonbuild.com/Reference-manual_functions.html#files
 [mref_include_directories]: https://mesonbuild.com/Reference-manual_functions.html#include_directories

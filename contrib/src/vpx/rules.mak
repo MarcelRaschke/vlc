@@ -1,9 +1,11 @@
 # libvpx
 
-VPX_VERSION := 1.12.0
+VPX_VERSION := 1.14.1
 VPX_URL := $(GITHUB)/webmproject/libvpx/archive/v${VPX_VERSION}.tar.gz
 
+ifneq ($(filter arm aarch64 i386 loongarch64 mipsel mips64el ppc64le x86_64, $(ARCH)),)
 PKGS += vpx
+endif
 ifeq ($(call need_pkg,"vpx >= 1.5.0"),)
 PKGS_FOUND += vpx
 endif
@@ -53,14 +55,10 @@ else ifeq ($(ARCH),mips)
 VPX_ARCH := mips32
 else ifeq ($(ARCH),ppc)
 VPX_ARCH := ppc32
-else ifeq ($(ARCH),ppc64)
-VPX_ARCH := ppc64
-else ifeq ($(ARCH),sparc)
-VPX_ARCH := sparc
-else ifeq ($(ARCH),x86_64)
-VPX_ARCH := x86_64
 else ifeq ($(ARCH),aarch64)
 VPX_ARCH := arm64
+else
+VPX_ARCH := $(ARCH)
 endif
 
 ifdef HAVE_ANDROID
@@ -119,11 +117,19 @@ ifndef HAVE_WIN32
 VPX_CONF += --enable-pic
 else
 VPX_CONF += --extra-cflags="-mstackrealign"
+ifeq ($(ARCH),arm)
+# As of libvpx 1.14.0 we have to explicitly disable runtime CPU detection for Windows armv7
+VPX_CONF += --disable-runtime-cpu-detect
+endif
 endif
 ifdef HAVE_MACOSX
 VPX_CONF += --extra-cflags="$(CFLAGS) $(EXTRA_CFLAGS)"
 endif
 ifdef HAVE_IOS
+ifeq ($(ARCH),arm)
+# As of libvpx 1.14.0 we have to explicitly disable runtime CPU detection for iOS arm7
+VPX_CONF += --disable-runtime-cpu-detect
+endif
 VPX_CONF += --enable-vp8-decoder --disable-tools
 VPX_CONF += --extra-cflags="$(CFLAGS) $(EXTRA_CFLAGS)"
 VPX_LDFLAGS := -L$(IOS_SDK)/usr/lib -isysroot $(IOS_SDK) $(LDFLAGS)

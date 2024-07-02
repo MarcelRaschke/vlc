@@ -82,11 +82,11 @@ public:
     typedef std::map<mkv_track_t::track_id_t, std::unique_ptr<mkv_track_t>> tracks_map_t;
     typedef std::vector<Tag>            tags_t;
 
-    matroska_segment_c( demux_sys_t &, EbmlStream &, KaxSegment * );
+    matroska_segment_c( demux_sys_t &, matroska_iostream_c &, KaxSegment * );
     virtual ~matroska_segment_c();
 
     KaxSegment              *segment;
-    EbmlStream              & es;
+    matroska_iostream_c     & es;
 
     /* time scale */
     uint64_t                i_timescale;
@@ -110,7 +110,7 @@ public:
     int64_t                 i_attachments_position;
 
     KaxCluster              *cluster;
-    uint64                  i_block_pos;
+    uint64_t                i_block_pos;
     KaxSegmentUID           *p_segment_uid;
     KaxPrevUID              *p_prev_segment_uid;
     KaxNextUID              *p_next_segment_uid;
@@ -141,7 +141,7 @@ public:
 
     bool Preload();
     bool PreloadFamily( const matroska_segment_c & segment );
-    bool PreloadClusters( uint64 i_cluster_position );
+    bool PreloadClusters( uint64_t i_cluster_position );
     void InformationCreate();
 
     bool Seek( demux_t &, vlc_tick_t i_mk_date, vlc_tick_t i_mk_time_offset, bool b_accurate );

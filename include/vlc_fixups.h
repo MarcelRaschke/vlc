@@ -108,7 +108,7 @@ typedef unsigned short mode_t;
 
 /* C++11 says there's no need to define __STDC_*_MACROS when including
  * inttypes.h and stdint.h. */
-#if defined (__cplusplus) && (defined(__MINGW32__) || defined(__UCLIBC__))
+#if defined (__cplusplus) && defined(__UCLIBC__)
 # ifndef __STDC_FORMAT_MACROS
 #  define __STDC_FORMAT_MACROS 1
 # endif
@@ -333,7 +333,9 @@ time_t timegm(struct tm *);
 #endif
 
 #ifndef HAVE_TIMESPEC_GET
+#ifndef TIME_UTC
 #define TIME_UTC 1
+#endif
 struct timespec;
 int timespec_get(struct timespec *, int);
 #endif
@@ -342,6 +344,15 @@ int timespec_get(struct timespec *, int);
 #ifndef HAVE_GETTIMEOFDAY
 struct timezone;
 int gettimeofday(struct timeval *, struct timezone *);
+#endif
+
+#if defined(WIN32) && !defined(WINSTORECOMPAT)
+#include <winapifamily.h>
+#if !WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+// getpid is incorrectly detected in UWP so we won't use the compat version
+#include <processthreadsapi.h>
+#define getpid()  GetCurrentProcessId()
+#endif
 #endif
 
 /* unistd.h */
@@ -396,9 +407,7 @@ void *aligned_alloc(size_t, size_t);
 } /* extern "C" */
 #endif
 
-#if defined (_WIN32) && defined(__MINGW32__)
-#define aligned_free(ptr)  __mingw_aligned_free(ptr)
-#elif defined (_WIN32) && defined(_MSC_VER)
+#if defined (_WIN32)
 #define aligned_free(ptr)  _aligned_free(ptr)
 #else
 #define aligned_free(ptr)  free(ptr)
@@ -456,11 +465,18 @@ void swab (const void *, void *, ssize_t);
 
 /* Socket stuff */
 #ifndef HAVE_INET_PTON
+# ifdef __cplusplus
+}
+# endif
 # ifndef _WIN32
 #  include <sys/socket.h>
 #else
 typedef int socklen_t;
 # endif
+# ifdef __cplusplus
+extern "C" {
+# endif
+
 int inet_pton(int, const char *, void *);
 const char *inet_ntop(int, const void *, char *, socklen_t);
 #endif
@@ -493,7 +509,13 @@ int poll (struct pollfd *, unsigned, int);
 #endif
 
 #ifndef HAVE_IF_NAMEINDEX
+# ifdef __cplusplus
+}
+# endif
 #include <errno.h>
+# ifdef __cplusplus
+extern "C" {
+# endif
 # ifndef HAVE_STRUCT_IF_NAMEINDEX
 struct if_nameindex
 {
@@ -531,7 +553,13 @@ struct msghdr
 };
 
 # ifndef HAVE_IF_NAMETOINDEX
+#  ifdef __cplusplus
+}
+#  endif
 #  include <stdlib.h> /* a define may change from the real atoi declaration */
+#  ifdef __cplusplus
+extern "C" {
+#  endif
 static inline int if_nametoindex(const char *name)
 {
     return atoi(name);
@@ -740,15 +768,16 @@ void sincosf(float, float *, float *);
 char *realpath(const char * restrict pathname, char * restrict resolved_path);
 #endif
 
-/* mingw-w64 has a broken IN6_IS_ADDR_MULTICAST macro */
-#if defined(_WIN32) && defined(__MINGW64_VERSION_MAJOR)
-# define IN6_IS_ADDR_MULTICAST IN6_IS_ADDR_MULTICAST
-#endif
-
 #ifdef __APPLE__
 # define fdatasync fsync
 
+# ifdef __cplusplus
+}
+# endif
 # include <time.h>
+# ifdef __cplusplus
+extern "C" {
+# endif
 # ifndef TIMER_ABSTIME
 #  define TIMER_ABSTIME 0x01
 # endif
@@ -768,7 +797,13 @@ int clock_getres(clockid_t clock_id, struct timespec *tp);
 
 #ifndef _WIN32
 # ifndef HAVE_CLOCK_NANOSLEEP
+#  ifdef __cplusplus
+}
+#  endif
 # include <time.h>
+#  ifdef __cplusplus
+extern "C" {
+#  endif
 int clock_nanosleep(clockid_t clock_id, int flags,
         const struct timespec *rqtp, struct timespec *rmtp);
 # endif

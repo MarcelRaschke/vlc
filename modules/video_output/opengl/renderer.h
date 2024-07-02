@@ -24,9 +24,9 @@
 #include <vlc_common.h>
 #include <vlc_codec.h>
 #include <vlc_opengl.h>
+#include <vlc_opengl_filter.h>
 #include <vlc_plugin.h>
 
-#include "filter.h"
 #include "gl_api.h"
 #include "gl_common.h"
 #include "interop.h"
@@ -70,6 +70,7 @@ struct vlc_gl_renderer
         GLint ProjectionMatrix;
         GLint ViewMatrix;
         GLint ZoomMatrix;
+        GLint OrientationMatrix;
     } uloc;
 
     struct {

@@ -52,7 +52,7 @@
 static int Open(vout_display_t *vd, video_format_t *fmt, vlc_video_context *context);
 static void Close(vout_display_t *vd);
 
-static void PictureRender   (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture,
+static void PictureRender   (vout_display_t *vd, picture_t *pic, const vlc_render_subpicture *subpicture,
                              vlc_tick_t date);
 static void PictureDisplay  (vout_display_t *vd, picture_t *pic);
 static int Control          (vout_display_t *vd, int);
@@ -119,6 +119,69 @@ typedef struct vout_display_sys_t {
 #pragma mark -
 #pragma mark OpenGL context helpers
 
+// kCGLRenderer* enum value define card value, but family is enough here.
+// However they follow some pattern by familly.
+#define kRendererIntelFamilyMask 0x00024000
+
+/*
+ * GL API does not provide a way to know if a device is a lowpower one.
+ * We could make some guess here:
+ * On a MacBookPro (intel):
+ *   - GeForce and Radeon card could be discrete or external.
+ *   - Intel could be integrated or external.
+ * To be check MacPro or MacMini or ARM ones.
+ */
+static bool vlc_IsLowPowerDevice(GLint renderer_id) {
+    int renderer_vendor = renderer_id & kCGLRendererIDMatchingMask;
+    // Consider Intel familly card as low power devices.
+    return renderer_vendor == kCGLRendererIntel900ID ||
+           renderer_vendor == kCGLRendererIntelX3100ID ||
+           renderer_vendor == kCGLRendererIntelHDID ||
+           renderer_vendor == kCGLRendererIntelHD4000ID ||
+           renderer_vendor == kCGLRendererIntelHD5000ID;
+}
+
+/*
+ * Search for a low power device.
+ * Without proper API (like Metal), here we try to look on all the available
+ * renderer and filter them.
+ * We are looking for the one attached to the main display, accelerated, and
+ * with low power consumption.
+ * Without any match, we let CGLChoosePixelFormat/CGLCreateContext do as before.
+ */
+static GLint vlc_SearchGLRendererId() {
+    CGLRendererInfoObj renderer_info = NULL;
+    GLint renderer_count = 0;
+    if (CGLQueryRendererInfo((GLuint)-1, &renderer_info, &renderer_count) !=
+        kCGLNoError)
+      return -1;
+
+    GLint best_match = -1;
+    for (GLint i = 0; i < renderer_count && best_match == -1; ++i) {
+      GLint renderer_id = -1;
+      if (CGLDescribeRenderer(renderer_info, i, kCGLRPRendererID,
+                              &renderer_id) != kCGLNoError)
+        break;
+      GLint accelerated = 0;
+      if (CGLDescribeRenderer(renderer_info, i, kCGLRPAccelerated,
+                              &accelerated) != kCGLNoError)
+        break;
+      if (!accelerated)
+        continue; // avoid not accelerated device
+      GLint display = -1;
+      if (CGLDescribeRenderer(renderer_info, i, kCGLRPDisplayMask, &display) !=
+          kCGLNoError)
+        break;
+      CGDirectDisplayID display_id = CGOpenGLDisplayMaskToDisplayID(display);
+      if (display_id != CGMainDisplayID())
+        continue;
+      if (vlc_IsLowPowerDevice(renderer_id))
+        best_match = renderer_id;
+    }
+    CGLDestroyRendererInfo(renderer_info);
+    return best_match;
+}
+
 /**
  * Create a new CGLContextObj for use by VLC
  * This function may try various pixel formats until it finds a suitable/compatible
@@ -132,7 +195,10 @@ CGLContextObj vlc_CreateCGLContext()
     CGLPixelFormatObj pix;
     CGLContextObj ctx;
 
-    CGLPixelFormatAttribute attribs[12] = {
+    GLint renderer_id = vlc_SearchGLRendererId();
+
+    CGLPixelFormatAttribute attribs[15] = {
+        kCGLPFAAllRenderers,
         kCGLPFAAllowOfflineRenderers,
         kCGLPFADoubleBuffer,
         kCGLPFAAccelerated,
@@ -148,6 +214,12 @@ CGLContextObj vlc_CreateCGLContext()
         0
     };
 
+    // A low power renderer was found, ask to use it.
+    if (renderer_id != -1) {
+        attribs[12] = kCGLPFARendererID;
+        attribs[13] = renderer_id;
+        attribs[14] = 0;
+    }
     err = CGLChoosePixelFormat(attribs, &pix, &npix);
     if (err != kCGLNoError || pix == NULL) {
         return NULL;
@@ -305,7 +377,7 @@ static int Open (vout_display_t *vd,
 
         // Retain container, released in Close
         sys->container = [container retain];
-    
+
         // Create the CGL context
         CGLContextObj cgl_ctx = vlc_CreateCGLContext();
         if (cgl_ctx == NULL) {
@@ -339,12 +411,7 @@ static int Open (vout_display_t *vd,
         glsys->cgl_prev = NULL;
 
         dispatch_sync(dispatch_get_main_queue(), ^{
-            // Reverse vertical alignment as the GL tex are Y inverted
            sys->cfg = *vd->cfg;
-           if (sys->cfg.display.align.vertical == VLC_VIDEO_ALIGN_TOP)
-               sys->cfg.display.align.vertical = VLC_VIDEO_ALIGN_BOTTOM;
-           else if (sys->cfg.display.align.vertical == VLC_VIDEO_ALIGN_BOTTOM)
-               sys->cfg.display.align.vertical = VLC_VIDEO_ALIGN_TOP;
 
             // Create video view
             sys->videoView = [[VLCVideoLayerView alloc] initWithVoutDisplay:vd];
@@ -363,7 +430,9 @@ static int Open (vout_display_t *vd,
                 sys->videoLayer = nil;
             }
 
-            vout_display_PlacePicture(&sys->place, vd->source, &sys->cfg.display);
+            vout_display_PlacePicture(&sys->place, vd->source, &vd->cfg->display);
+            // Reverse vertical alignment as the GL tex are Y inverted
+            sys->place.y = vd->cfg->display.height - (sys->place.y + sys->place.height);
         });
 
         if (sys->videoView == nil) {
@@ -407,6 +476,7 @@ static void Close(vout_display_t *vd)
     vout_display_sys_t *sys = vd->sys;
 
     atomic_store(&sys->is_ready, false);
+    [sys->videoLayer vlcClose];
     [sys->videoView vlcClose];
 
     if (sys->vgl && !vlc_gl_MakeCurrent(sys->gl)) {
@@ -447,7 +517,8 @@ static void Close(vout_display_t *vd)
     });
 }
 
-static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture,
+static void PictureRender (vout_display_t *vd, picture_t *pic,
+                           const vlc_render_subpicture *subpicture,
                            vlc_tick_t date)
 {
     VLC_UNUSED(date);
@@ -483,10 +554,9 @@ static int Control (vout_display_t *vd, int query)
         case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
             return VLC_SUCCESS;
 
-        case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
-        case VOUT_DISPLAY_CHANGE_ZOOM:
         case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
         case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
+        case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
         {
             @synchronized(sys->videoLayer)
             {
@@ -494,14 +564,11 @@ static int Control (vout_display_t *vd, int query)
                 cfg.display.width = sys->cfg.display.width;
                 cfg.display.height = sys->cfg.display.height;
 
-                // Reverse vertical alignment as the GL tex are Y inverted
-                if (cfg.display.align.vertical == VLC_VIDEO_ALIGN_TOP)
-                    cfg.display.align.vertical = VLC_VIDEO_ALIGN_BOTTOM;
-                else if (cfg.display.align.vertical == VLC_VIDEO_ALIGN_BOTTOM)
-                    cfg.display.align.vertical = VLC_VIDEO_ALIGN_TOP;
                 sys->cfg = cfg;
 
                 vout_display_PlacePicture(&sys->place, vd->source, &cfg.display);
+                // Reverse vertical alignment as the GL tex are Y inverted
+                sys->place.y = cfg.display.height - (sys->place.y + sys->place.height);
             }
 
             // Note!
@@ -550,7 +617,6 @@ static int Control (vout_display_t *vd, int query)
 - (void)vlcClose
 {
     @synchronized (self) {
-        [(VLCCAOpenGLLayer *)self.layer vlcClose];
         _vlc_vd = NULL;
     }
 }
@@ -594,124 +660,6 @@ shouldInheritContentsScale:(CGFloat)newScale
 - (BOOL)isOpaque
 {
     return YES;
-}
-
-- (BOOL)acceptsFirstResponder
-{
-    return YES;
-}
-
-- (BOOL)mouseDownCanMoveWindow
-{
-    return YES;
-}
-
-
-#pragma mark View mouse events
-
-/* Left mouse button down */
-- (void)mouseDown:(NSEvent *)event
-{
-    @synchronized(self) {
-        if (!_vlc_vd) {
-            [super mouseDown:event];
-            return;
-        }
-
-        if (event.type == NSLeftMouseDown &&
-            !(event.modifierFlags & NSControlKeyMask) &&
-            event.clickCount == 1) {
-            vout_display_SendEventMousePressed(_vlc_vd, MOUSE_BUTTON_LEFT);
-        }
-    }
-
-    [super mouseDown:event];
-}
-
-/* Left mouse button up */
-- (void)mouseUp:(NSEvent *)event
-{
-    @synchronized(self) {
-        if (!_vlc_vd) {
-            [super mouseUp:event];
-            return;
-        }
-
-        if (event.type == NSLeftMouseUp) {
-            vout_display_SendEventMouseReleased(_vlc_vd, MOUSE_BUTTON_LEFT);
-        }
-    }
-
-    [super mouseUp:event];
-}
-
-/* Middle mouse button down */
-- (void)otherMouseDown:(NSEvent *)event
-{
-    @synchronized(self) {
-        if (_vlc_vd)
-            vout_display_SendEventMousePressed(_vlc_vd, MOUSE_BUTTON_CENTER);
-    }
-
-    [super otherMouseDown:event];
-}
-
-/* Middle mouse button up */
-- (void)otherMouseUp:(NSEvent *)event
-{
-    @synchronized(self) {
-        if (_vlc_vd)
-            vout_display_SendEventMouseReleased(_vlc_vd, MOUSE_BUTTON_CENTER);
-    }
-
-    [super otherMouseUp:event];
-}
-
-- (void)mouseMovedInternal:(NSEvent *)event
-{
-    @synchronized(self) {
-        if (!_vlc_vd) {
-            return;
-        }
-
-        vout_display_sys_t *sys = _vlc_vd->sys;
-
-        // Convert window-coordinate point to view space
-        NSPoint pointInView = [self convertPoint:event.locationInWindow fromView:nil];
-
-        // Convert to pixels
-        NSPoint pointInBacking = [self convertPointToBacking:pointInView];
-
-        vout_display_SendMouseMovedDisplayCoordinates(_vlc_vd, pointInBacking.x, pointInBacking.y);
-    }
-}
-
-/* Mouse moved */
-- (void)mouseMoved:(NSEvent *)event
-{
-    [self mouseMovedInternal:event];
-    [super mouseMoved:event];
-}
-
-/* Mouse moved while clicked */
-- (void)mouseDragged:(NSEvent *)event
-{
-    [self mouseMovedInternal:event];
-    [super mouseDragged:event];
-}
-
-/* Mouse moved while center-clicked */
-- (void)otherMouseDragged:(NSEvent *)event
-{
-    [self mouseMovedInternal:event];
-    [super otherMouseDragged:event];
-}
-
-/* Mouse moved while right-clicked */
-- (void)rightMouseDragged:(NSEvent *)event
-{
-    [self mouseMovedInternal:event];
-    [super rightMouseDragged:event];
 }
 
 @end
@@ -837,7 +785,7 @@ shouldInheritContentsScale:(CGFloat)newScale
         // Ensure viewport and aspect ratio is correct
         vout_display_opengl_Viewport(sys->vgl, sys->place.x, sys->place.y,
                                      sys->place.width, sys->place.height);
-        vout_display_opengl_SetOutputSize(sys->vgl, sys->place.width, sys->place.height);
+        vout_display_opengl_SetOutputSize(sys->vgl, sys->cfg.display.width, sys->cfg.display.height);
 
         vout_display_opengl_Display(sys->vgl);
         vlc_gl_ReleaseCurrent(sys->gl);
@@ -848,7 +796,7 @@ shouldInheritContentsScale:(CGFloat)newScale
 - (CGLPixelFormatObj)copyCGLPixelFormatForDisplayMask:(uint32_t)mask
 {
     CGLPixelFormatObj fmt = CGLGetPixelFormat(_glContext);
-    
+
     return (fmt) ? CGLRetainPixelFormat(fmt) : NULL;
 }
 

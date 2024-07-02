@@ -34,7 +34,10 @@
 #endif
 #include <poll.h>
 
+#include "../../libvlc/test.h"
+
 #include <vlc_common.h>
+#include <vlc_poll.h>
 #include <vlc_modules.h>
 #include <vlc_tls.h>
 #include "../../../lib/libvlc_internal.h"
@@ -112,7 +115,7 @@ static vlc_tls_t *securepair(vlc_thread_t *th,
     return client;
 }
 
-#define CERTDIR SRCDIR "/samples/certs"
+#define CERTDIR TOP_SRCDIR "/test/samples/certs"
 #define CERTFILE CERTDIR "/certkey.pem"
 
 static const char *const test_cert_argv[] = {
@@ -130,7 +133,7 @@ int main(void)
     char *alp;
     int val;
 
-    setenv("VLC_PLUGIN_PATH", "../modules", 1);
+    test_setup();
 
     /*** Tests with normal certs database - server cert not acceptable. ***/
     vlc = libvlc_new(0, NULL);

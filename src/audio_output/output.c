@@ -28,6 +28,7 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_aout.h>
 #include <vlc_modules.h>
 #include <vlc_atomic.h>
@@ -44,6 +45,16 @@ typedef struct aout_dev
 
 
 /* Local functions */
+
+static inline float clampf(const float value, const float min, const float max)
+{
+    if (value < min)
+        return min;
+    else if (value > max)
+        return max;
+    else
+        return value;
+}
 
 static int var_Copy (vlc_object_t *src, const char *name, vlc_value_t prev,
                      vlc_value_t value, void *data)
@@ -80,6 +91,8 @@ static void aout_DrainedNotify(audio_output_t *aout)
 
 /**
  * Supply or update the current custom ("hardware") volume.
+ *
+ * @param aout the audio output notifying the new volume
  * @param volume current custom volume
  *
  * @warning The caller (i.e. the audio output plug-in) is responsible for
@@ -152,16 +165,21 @@ out:
     vlc_mutex_unlock (&owner->dev.lock);
 }
 
-static void aout_RestartNotify (audio_output_t *aout, unsigned mode)
+static void aout_RestartNotify (audio_output_t *aout, bool restart_dec)
 {
     aout_owner_t *owner = aout_owner (aout);
     if (owner->main_stream)
+    {
+        unsigned mode = restart_dec ? AOUT_RESTART_OUTPUT_DEC : AOUT_RESTART_OUTPUT;
         vlc_aout_stream_RequestRestart(owner->main_stream, mode);
+    }
 }
 
 void aout_InputRequestRestart(audio_output_t *aout)
 {
-    aout_RestartNotify(aout, AOUT_RESTART_FILTERS);
+    aout_owner_t *owner = aout_owner (aout);
+    if (owner->main_stream)
+        vlc_aout_stream_RequestRestart(owner->main_stream, AOUT_RESTART_FILTERS);
 }
 
 static int aout_GainNotify (audio_output_t *aout, float gain)
@@ -207,7 +225,8 @@ static int StereoModeCallback (vlc_object_t *obj, const char *varname,
     owner->requested_stereo_mode = newval.i_int;
     vlc_mutex_unlock (&owner->lock);
 
-    aout_RestartRequest (aout, AOUT_RESTART_STEREOMODE);
+    if (owner->main_stream)
+        vlc_aout_stream_RequestRestart(owner->main_stream, AOUT_RESTART_OUTPUT);
     return 0;
 }
 
@@ -222,7 +241,8 @@ static int MixModeCallback (vlc_object_t *obj, const char *varname,
     owner->requested_mix_mode = newval.i_int;
     vlc_mutex_unlock (&owner->lock);
 
-    aout_RestartRequest (aout, AOUT_RESTART_STEREOMODE);
+    if (owner->main_stream)
+        vlc_aout_stream_RequestRestart(owner->main_stream, AOUT_RESTART_OUTPUT);
     return 0;
 }
 
@@ -377,9 +397,10 @@ audio_output_t *aout_New (vlc_object_t *parent)
     var_Change(aout, "mix-mode", VLC_VAR_SETTEXT, _("Audio mix mode"));
 
     /* Equalizer */
-    var_Create (aout, "equalizer-preamp", VLC_VAR_FLOAT | VLC_VAR_DOINHERIT);
-    var_Create (aout, "equalizer-bands", VLC_VAR_STRING | VLC_VAR_DOINHERIT);
-    var_Create (aout, "equalizer-preset", VLC_VAR_STRING | VLC_VAR_DOINHERIT);
+    int doinherit = module_exists("equalizer") ? VLC_VAR_DOINHERIT : 0;
+    var_Create (aout, "equalizer-preamp", VLC_VAR_FLOAT | doinherit);
+    var_Create (aout, "equalizer-bands", VLC_VAR_STRING | doinherit);
+    var_Create (aout, "equalizer-preset", VLC_VAR_STRING | doinherit);
 
     owner->bitexact = var_InheritBool (aout, "audio-bitexact");
 
@@ -673,12 +694,6 @@ static void aout_UpdateMixMode(audio_output_t *aout, int mode,
     var_Change(aout, "mix-mode", VLC_VAR_SETVALUE, (vlc_value_t) { .i_int = mode});
 }
 
-/**
- * Starts an audio output stream.
- * \param output_codec codec accepted by the module, it can be different than
- * the codec from the mixer_format in case of DTSHD/DTS or EAC3/AC3 fallback
- * \warning The caller must NOT hold the audio output lock.
- */
 int aout_OutputNew(audio_output_t *aout, vlc_aout_stream *stream,
                    audio_sample_format_t *fmt, int input_profile,
                    audio_sample_format_t *filter_fmt,
@@ -785,7 +800,7 @@ int aout_OutputNew(audio_output_t *aout, vlc_aout_stream *stream,
                       "failing back to linear format");
         return -1;
     }
-    assert(aout->flush && aout->play && aout->pause);
+    assert(aout->flush != NULL && aout->play != NULL);
 
     /* Autoselect the headphones mode if available and if the user didn't
      * request any mode */
@@ -805,11 +820,6 @@ int aout_OutputNew(audio_output_t *aout, vlc_aout_stream *stream,
     return 0;
 }
 
-/**
- * Stops the audio output stream (undoes aout_OutputNew()).
- * \note This can only be called after a successful aout_OutputNew().
- * \warning The caller must NOT hold the audio output lock.
- */
 void aout_OutputDelete (audio_output_t *aout)
 {
     aout_owner_t *owner = aout_owner(aout);
@@ -819,21 +829,11 @@ void aout_OutputDelete (audio_output_t *aout)
     vlc_mutex_unlock(&owner->lock);
 }
 
-/**
- * Gets the volume of the audio output stream (independent of mute).
- * \return Current audio volume (0. = silent, 1. = nominal),
- * or a strictly negative value if undefined.
- */
 float aout_VolumeGet (audio_output_t *aout)
 {
     return var_GetFloat (aout, "volume");
 }
 
-/**
- * Sets the volume of the audio output stream.
- * \note The mute status is not changed.
- * \return 0 on success, -1 on failure.
- */
 int aout_VolumeSet (audio_output_t *aout, float vol)
 {
     aout_owner_t *owner = aout_owner(aout);
@@ -845,26 +845,18 @@ int aout_VolumeSet (audio_output_t *aout, float vol)
     return ret ? -1 : 0;
 }
 
-/**
- * Raises the volume.
- * \param value how much to increase (> 0) or decrease (< 0) the volume
- * \param volp if non-NULL, will contain contain the resulting volume
- */
 int aout_VolumeUpdate (audio_output_t *aout, int value, float *volp)
 {
     int ret = -1;
-    float stepSize = var_InheritFloat (aout, "volume-step") / (float)AOUT_VOLUME_DEFAULT;
-    float delta = value * stepSize;
+    const float defaultVolume = (float)AOUT_VOLUME_DEFAULT;
+    const float stepSize = var_InheritFloat (aout, "volume-step") / defaultVolume;
     float vol = aout_VolumeGet (aout);
 
     if (vol >= 0.f)
     {
-        vol += delta;
-        if (vol < 0.f)
-            vol = 0.f;
-        if (vol > 2.f)
-            vol = 2.f;
+        vol += (value * stepSize);
         vol = (roundf (vol / stepSize)) * stepSize;
+        vol = clampf(vol, 0.f, AOUT_VOLUME_MAX / defaultVolume);
         if (volp != NULL)
             *volp = vol;
         ret = aout_VolumeSet (aout, vol);
@@ -872,19 +864,11 @@ int aout_VolumeUpdate (audio_output_t *aout, int value, float *volp)
     return ret;
 }
 
-/**
- * Gets the audio output stream mute flag.
- * \return 0 if not muted, 1 if muted, -1 if undefined.
- */
 int aout_MuteGet (audio_output_t *aout)
 {
     return var_InheritBool (aout, "mute");
 }
 
-/**
- * Sets the audio output stream mute flag.
- * \return 0 on success, -1 on failure.
- */
 int aout_MuteSet (audio_output_t *aout, bool mute)
 {
     aout_owner_t *owner = aout_owner(aout);
@@ -896,21 +880,11 @@ int aout_MuteSet (audio_output_t *aout, bool mute)
     return ret ? -1 : 0;
 }
 
-/**
- * Gets the currently selected device.
- * \return the selected device ID (caller must free() it)
- *         NULL if no device is selected or in case of error.
- */
 char *aout_DeviceGet (audio_output_t *aout)
 {
     return var_GetNonEmptyString (aout, "device");
 }
 
-/**
- * Selects an audio output device.
- * \param id device ID to select, or NULL for the default device
- * \return zero on success, non-zero on error.
- */
 int aout_DeviceSet (audio_output_t *aout, const char *id)
 {
     aout_owner_t *owner = aout_owner(aout);
@@ -922,17 +896,6 @@ int aout_DeviceSet (audio_output_t *aout, const char *id)
     return ret ? -1 : 0;
 }
 
-/**
- * Enumerates possible audio output devices.
- *
- * The function will heap-allocate two tables of heap-allocated strings;
- * the caller is responsible for freeing all strings and both tables.
- *
- * \param ids pointer to a table of device identifiers [OUT]
- * \param names pointer to a table of device human-readable descriptions [OUT]
- * \return the number of devices, or negative on error.
- * \note In case of error, *ids and *names are undefined.
- */
 int aout_DevicesList (audio_output_t *aout, char ***ids, char ***names)
 {
     aout_owner_t *owner = aout_owner (aout);

@@ -33,9 +33,9 @@
 #include <vlc_block.h>
 #include <vlc_sout.h>
 
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id )
 {
-    VLC_UNUSED(p_stream); VLC_UNUSED(p_fmt);
+    VLC_UNUSED(p_stream); VLC_UNUSED(p_fmt); VLC_UNUSED(es_id);
     return malloc( 1 );
 }
 
@@ -53,7 +53,9 @@ static int Send( sout_stream_t *p_stream, void *id, block_t *p_buffer )
 }
 
 static const struct sout_stream_operations ops = {
-    Add, Del, Send, NULL, NULL, NULL,
+    .add = Add,
+    .del = Del,
+    .send = Send,
 };
 
 /*****************************************************************************

@@ -25,6 +25,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_codec.h>
 
@@ -192,7 +193,7 @@ static void messages_callback_handler( void *p_opaque, const char *psz_message )
     msg_Dbg( p_dec, "%s", psz_message );
 }
 
-static char* get_arib_base_dir()
+static char* get_arib_base_dir( void )
 {
     char *psz_data_dir = config_GetUserDir( VLC_USERDATA_DIR );
     if( psz_data_dir == NULL )
@@ -260,12 +261,12 @@ static subpicture_t *render( decoder_t *p_dec, arib_parser_t *p_parser,
         goto decoder_NewSubpictureText_failed;
     }
 
+    vlc_tick_t i_duration = VLC_TICK_FROM_US(arib_decoder_get_time( p_arib_decoder ));
     p_spu->i_start = p_block->i_pts;
-    p_spu->i_stop = p_block->i_pts + VLC_TICK_FROM_US(arib_decoder_get_time( p_arib_decoder ));
-    p_spu->b_ephemer  = (p_spu->i_start == p_spu->i_stop);
-    p_spu->b_absolute = true;
+    p_spu->i_stop = i_duration ? p_block->i_pts + i_duration : VLC_TICK_INVALID;
+    p_spu->b_ephemer  = i_duration == 0;
 
-    arib_spu_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
+    arib_spu_updater_sys_t *p_spu_sys = p_spu->updater.sys;
 
     arib_text_region_t *p_region = p_spu_sys->p_region =
         (arib_text_region_t*) calloc( 1, sizeof(arib_text_region_t) );

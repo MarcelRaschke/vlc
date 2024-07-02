@@ -74,9 +74,11 @@ libvlccore_sources_base = files(
     'libvlc-module.c',
     'missing.c',
     'version.c',
+    'config/cat.c',
     'config/configuration.h',
     'config/core.c',
     'config/chain.c',
+    'config/dirs.c',
     'config/file.c',
     'config/help.c',
     'config/intf.c',
@@ -121,7 +123,6 @@ libvlccore_sources_base = files(
     'preparser/fetcher.c',
     'preparser/fetcher.h',
     'preparser/preparser.c',
-    'preparser/preparser.h',
     'input/item.c',
     'input/access.c',
     'clock/clock_internal.c',
@@ -138,7 +139,10 @@ libvlccore_sources_base = files(
     'input/input.c',
     'input/info.h',
     'input/meta.c',
+    'input/parse.c',
     'input/attachment.c',
+    'input/source.c',
+    'input/source.h',
     'player/player.c',
     'player/player.h',
     'player/input.c',
@@ -235,9 +239,11 @@ libvlccore_sources_base = files(
     'misc/mtime.c',
     'misc/frame.c',
     'misc/fifo.c',
+    'misc/filesystem.c',
     'misc/fourcc.c',
     'misc/fourcc_list.h',
     'misc/es_format.c',
+    'misc/extensions.c',
     'misc/picture.c',
     'misc/picture.h',
     'misc/picture_fifo.c',
@@ -251,7 +257,6 @@ libvlccore_sources_base = files(
     'misc/diffutil.c',
     'misc/epg.c',
     'misc/exit.c',
-    'misc/events.c',
     'misc/image.c',
     'misc/messages.c',
     'misc/mime.c',
@@ -291,8 +296,11 @@ libvlccore_vlm_sources = [
 libvlccore_sources = [
     libvlccore_sources_base,
     libvlccore_sout_sources,
-    libvlccore_vlm_sources
 ]
+
+if get_option('videolan_manager')
+    libvlccore_sources += libvlccore_vlm_sources
+endif
 
 libvlccore_link_args = []
 

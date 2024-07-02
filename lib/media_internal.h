@@ -42,8 +42,6 @@ struct libvlc_media_t
     VLC_FORWARD_DECLARE_OBJECT(libvlc_media_list_t*) p_subitems; /* A media descriptor can have Sub items. This is the only dependency we really have on media_list */
     void *p_user_data;
 
-    vlc_mutex_t subitems_lock;
-
     /* Idle protection to prevent the media from being released during
      * preparsing. The preparse will be cancelled but the release will
      * be blocking until no async code is using the media anymore. */
@@ -83,6 +81,7 @@ typedef struct libvlc_media_trackpriv_t
         libvlc_subtitle_track_t subtitle;
     };
     vlc_es_id_t *es_id;
+    char *item_str_id;
     vlc_atomic_rc_t rc;
 } libvlc_media_trackpriv_t;
 
@@ -100,9 +99,7 @@ libvlc_media_track_t *
 libvlc_media_track_create_from_player_track( const struct vlc_player_track *track );
 
 libvlc_media_tracklist_t *
-libvlc_media_tracklist_from_es_array( es_format_t **es_array,
-                                      size_t es_count,
-                                      libvlc_track_type_t type );
+libvlc_media_tracklist_from_item( input_item_t *item, libvlc_track_type_t type );
 
 libvlc_media_tracklist_t *
 libvlc_media_tracklist_from_player( vlc_player_t *player,

@@ -39,7 +39,8 @@
 #include <fcntl.h>
 #include <io.h>
 #include <shlobj.h>
-#define HeapEnableTerminationOnCorruption (HEAP_INFORMATION_CLASS)1
+
+#include "../lib/libvlc_internal.h"
 
 #ifdef HAVE_BREAKPAD
 void CheckCrashDump( const wchar_t* crashdump_path );
@@ -105,7 +106,7 @@ static void PrioritizeSystem32(void)
 #endif
     PROCESS_MITIGATION_IMAGE_LOAD_POLICY m = { .Flags = 0 };
     m.PreferSystem32Images = 1;
-    SetProcessMitigationPolicy( 10 /* ProcessImageLoadPolicy */, &m, sizeof( m ) );
+    SetProcessMitigationPolicy( ProcessImageLoadPolicy, &m, sizeof( m ) );
 }
 
 static void vlc_kill(void *data)
@@ -141,21 +142,8 @@ int WINAPI WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     HeapSetInformation(NULL, HeapEnableTerminationOnCorruption, NULL, 0);
 
-    /* SetProcessDEPPolicy, SetDllDirectory, & Co. */
-    HINSTANCE h_Kernel32 = GetModuleHandle(TEXT("kernel32.dll"));
-    if (h_Kernel32 != NULL)
-    {
-        /* Enable DEP */
-#ifndef PROCESS_DEP_ENABLE
-# define PROCESS_DEP_ENABLE 1
-#endif /* PROCESS_DEP_ENABLE */
-        BOOL (WINAPI * mySetProcessDEPPolicy)( DWORD dwFlags);
-        mySetProcessDEPPolicy = (BOOL (WINAPI *)(DWORD))
-                            GetProcAddress(h_Kernel32, "SetProcessDEPPolicy");
-        if(mySetProcessDEPPolicy)
-            mySetProcessDEPPolicy(PROCESS_DEP_ENABLE);
-
-    }
+    /* Enable DEP */
+    SetProcessDEPPolicy(PROCESS_DEP_ENABLE);
 
     /* Do NOT load any library from cwd. */
     SetDllDirectory(TEXT(""));
@@ -178,10 +166,10 @@ int WINAPI WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
     char *argv[argc + 3];
     BOOL crash_handling = TRUE;
     int j = 0;
-    char *lang = NULL;
+    WCHAR *lang = NULL;
 
-    argv[j++] = FromWide( L"--media-library" );
-    argv[j++] = FromWide( L"--no-ignore-config" );
+    argv[j++] = strdup("--media-library");
+    argv[j++] = strdup("--no-ignore-config");
     for (int i = 1; i < argc; i++)
     {
         if(!wcscmp(wargv[i], L"--no-crashdump"))
@@ -192,7 +180,7 @@ int WINAPI WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
         if (!wcsncmp(wargv[i], L"--language", 10) )
         {
             if (i < argc - 1 && wcsncmp( wargv[i + 1], L"--", 2 ))
-                lang = FromWide (wargv[++i]);
+                lang = _wcsdup (wargv[++i]);
             continue;
         }
 
@@ -207,13 +195,15 @@ int WINAPI WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
     void* eh = NULL;
     if(crash_handling)
     {
-        static wchar_t path[MAX_PATH];
+        wchar_t path[MAX_PATH];
         if( S_OK != SHGetFolderPathW( NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE,
                     NULL, SHGFP_TYPE_CURRENT, path ) )
             fprintf( stderr, "Can't open the vlc conf PATH\n" );
-        _snwprintf( path+wcslen( path ), MAX_PATH,  L"%s", L"\\vlc\\crashdump" );
-        CheckCrashDump( &path[0] );
-        eh = InstallCrashHandler( &path[0] );
+        else if ( !wcscat_s( path, MAX_PATH, L"\\vlc\\crashdump" ) )
+        {
+            CheckCrashDump( path );
+            eh = InstallCrashHandler( path );
+        }
     }
 #else
     (void)crash_handling;
@@ -231,14 +221,14 @@ int WINAPI WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
             WCHAR szData[256];
             DWORD len = 256;
             if( RegQueryValueEx( h_key, TEXT("Lang"), NULL, NULL, (LPBYTE) &szData, &len ) == ERROR_SUCCESS )
-                lang = FromWide( szData );
+                lang = _wcsdup( szData );
         }
     }
 
-    if (lang && strncmp( lang, "auto", 4 ) )
+    if (lang && wcsncmp( lang, L"auto", 4 ) )
     {
         char tmp[11];
-        snprintf(tmp, 11, "LANG=%s", lang);
+        snprintf(tmp, 11, "LANG=%ls", lang);
         putenv(tmp);
     }
     free(lang);
@@ -250,13 +240,12 @@ int WINAPI WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
     {
         HANDLE sem = CreateSemaphore(NULL, 0, 1, NULL);
 
-        libvlc_set_exit_handler(vlc, vlc_kill, &sem);
+        libvlc_SetExitHandler(vlc->p_libvlc_int, vlc_kill, &sem);
         libvlc_set_app_id (vlc, "org.VideoLAN.VLC", PACKAGE_VERSION,
                            PACKAGE_NAME);
         libvlc_set_user_agent (vlc, "VLC media player", "VLC/"PACKAGE_VERSION);
-        libvlc_add_intf (vlc, "globalhotkeys,none");
-        libvlc_add_intf (vlc, NULL);
-        libvlc_playlist_play (vlc);
+        libvlc_InternalAddIntf (vlc->p_libvlc_int, NULL);
+        libvlc_InternalPlay (vlc->p_libvlc_int);
 
         WaitForSingleObject(sem, INFINITE);
         CloseHandle(sem);

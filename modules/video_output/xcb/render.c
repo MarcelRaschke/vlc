@@ -39,6 +39,7 @@
 #include <vlc_fs.h>
 #include <vlc_plugin.h>
 #include <vlc_vout_display.h>
+#include <vlc_subpicture.h>
 
 #include "pictures.h"
 #include "events.h"
@@ -51,6 +52,7 @@ typedef struct vout_display_sys_t {
         xcb_pixmap_t crop;
         xcb_pixmap_t scale;
         xcb_pixmap_t subpic;
+        xcb_pixmap_t subpic_crop;
         xcb_pixmap_t alpha;
         xcb_window_t dest;
     } drawable;
@@ -59,6 +61,7 @@ typedef struct vout_display_sys_t {
         xcb_render_picture_t crop;
         xcb_render_picture_t scale;
         xcb_render_picture_t subpic;
+        xcb_render_picture_t subpic_crop;
         xcb_render_picture_t alpha;
         xcb_render_picture_t dest;
     } picture;
@@ -110,20 +113,23 @@ static void PictureDetach(vout_display_t *vd)
     xcb_shm_detach(sys->conn, sys->segment);
 }
 
-static void RenderRegion(vout_display_t *vd, const subpicture_t *subpic,
-                         const subpicture_region_t *reg)
+static void RenderRegion(vout_display_t *vd, const vlc_render_subpicture *subpic,
+                         const struct subpicture_region_rendered *reg)
 {
     vout_display_sys_t *sys = vd->sys;
     xcb_connection_t *conn = sys->conn;
-    const vout_display_place_t *place = &sys->place;
     picture_t *pic = reg->p_picture;
-    unsigned sw = reg->fmt.i_width;
-    unsigned sh = reg->fmt.i_height;
+    unsigned sw = reg->place.width;
+    unsigned sh = reg->place.height;
     xcb_rectangle_t rects[] = { { 0, 0, sw, sh }, };
 
-    xcb_create_pixmap(conn, 32, sys->drawable.subpic, sys->root, sw, sh);
+    xcb_create_pixmap(conn, 32, sys->drawable.subpic, sys->root,
+        pic->format.i_width, pic->format.i_height);
+    xcb_create_pixmap(conn, 32, sys->drawable.subpic_crop, sys->root, sw, sh);
     xcb_create_pixmap(conn, 8, sys->drawable.alpha, sys->root, sw, sh);
     xcb_render_create_picture(conn, sys->picture.subpic, sys->drawable.subpic,
+                              sys->format.argb, 0, NULL);
+    xcb_render_create_picture(conn, sys->picture.subpic_crop, sys->drawable.subpic_crop,
                               sys->format.argb, 0, NULL);
     xcb_render_create_picture(conn, sys->picture.alpha, sys->drawable.alpha,
                               sys->format.alpha, 0, NULL);
@@ -134,9 +140,16 @@ static void RenderRegion(vout_display_t *vd, const subpicture_t *subpic,
                   pic->p->i_lines, 0, 0, 0, 32,
                   pic->p->i_pitch * pic->p->i_lines, pic->p->p_pixels);
 
-    /* Copy alpha channel */
+    /* Crop the picture with pixel accuracy */
     xcb_render_composite(conn, XCB_RENDER_PICT_OP_SRC,
                          sys->picture.subpic, XCB_RENDER_PICTURE_NONE,
+                         sys->picture.subpic_crop,
+                         reg->p_picture->format.i_x_offset, reg->p_picture->format.i_y_offset, 0, 0,
+                         0, 0, reg->p_picture->format.i_visible_width, reg->p_picture->format.i_visible_height);
+
+    /* Copy alpha channel */
+    xcb_render_composite(conn, XCB_RENDER_PICT_OP_SRC,
+                         sys->picture.subpic_crop, XCB_RENDER_PICTURE_NONE,
                          sys->picture.alpha, 0, 0, 0, 0, 0, 0, sw, sh);
 
     /* Force alpha channel to maximum (add 100% and clip).
@@ -146,44 +159,64 @@ static void RenderRegion(vout_display_t *vd, const subpicture_t *subpic,
     static const xcb_render_color_t alpha_one_color = { 0, 0, 0, 0xffff };
 
     xcb_render_fill_rectangles(conn, XCB_RENDER_PICT_OP_ADD,
-                               sys->picture.subpic, alpha_one_color,
+                               sys->picture.subpic_crop, alpha_one_color,
                                ARRAY_SIZE(rects), rects);
 
     /* Multiply by region and subpicture alpha factors */
-    static const float alpha_fixed = 0xffffp0f / (0xffp0f * 0xffp0f);
+    static const float alpha_fixed = 0xffffp0f / 0xffp0f;
     xcb_render_color_t alpha_color = {
-        0, 0, 0, lroundf(reg->i_alpha * subpic->i_alpha * alpha_fixed) };
+        0, 0, 0, lroundf(reg->i_alpha * alpha_fixed) };
 
     xcb_render_fill_rectangles(conn, XCB_RENDER_PICT_OP_IN_REVERSE,
-                               sys->picture.subpic, alpha_color,
+                               sys->picture.subpic_crop, alpha_color,
                                ARRAY_SIZE(rects), rects);
 
     /* Mask in the original alpha channel then renver over the scaled pixmap.
      * Mask (pre)multiplies RGB channels and restores the alpha channel.
      */
-    int_fast16_t dx = place->x + reg->i_x * place->width
-                      / subpic->i_original_picture_width;
-    int_fast16_t dy = place->y + reg->i_y * place->height
-                      / subpic->i_original_picture_height;
-    uint_fast16_t dw = (reg->i_x + reg->fmt.i_visible_width) * place->width
-                       / subpic->i_original_picture_width;
-    uint_fast16_t dh = (reg->i_y + reg->fmt.i_visible_height) * place->height
-                       / subpic->i_original_picture_height;
+    int_fast16_t dx = reg->place.x;
+    int_fast16_t dy = reg->place.y;
+    uint_fast16_t dw = reg->place.width;
+    uint_fast16_t dh = reg->place.height;
+
+    xcb_render_transform_t transform = {
+        0, 0, 0,
+        0, 0, 0,
+        /* Multiply z by width and height to compensate for x and y above */
+        0, 0, 10000,
+    };
+    transform.matrix11 = 10000 * reg->p_picture->format.i_visible_width  / reg->place.width;
+    transform.matrix22 = 10000 * reg->p_picture->format.i_visible_height / reg->place.height;
+
+    xcb_render_set_picture_transform(conn, sys->picture.subpic_crop, transform);
+    xcb_render_set_picture_transform(conn, sys->picture.alpha,       transform);
+
+    if (likely(sys->filter != NULL))
+    {
+        xcb_render_set_picture_filter(conn, sys->picture.subpic_crop,
+                                      strlen(sys->filter), sys->filter,
+                                      0, NULL);
+        xcb_render_set_picture_filter(conn, sys->picture.alpha,
+                                      strlen(sys->filter), sys->filter,
+                                      0, NULL);
+    }
 
     xcb_render_composite(conn, XCB_RENDER_PICT_OP_OVER,
-                         sys->picture.subpic, sys->picture.alpha,
+                         sys->picture.subpic_crop, sys->picture.alpha,
                          sys->picture.scale,
-                         reg->fmt.i_x_offset, reg->fmt.i_y_offset,
-                         reg->fmt.i_x_offset, reg->fmt.i_y_offset,
+                         0, 0, 0, 0,
                          dx, dy, dw, dh);
 
     xcb_render_free_picture(conn, sys->picture.alpha);
+    xcb_render_free_picture(conn, sys->picture.subpic_crop);
     xcb_render_free_picture(conn, sys->picture.subpic);
     xcb_free_pixmap(conn, sys->drawable.alpha);
+    xcb_free_pixmap(conn, sys->drawable.subpic_crop);
     xcb_free_pixmap(conn, sys->drawable.subpic);
 }
 
-static void Prepare(vout_display_t *vd, picture_t *pic, subpicture_t *subpic,
+static void Prepare(vout_display_t *vd, picture_t *pic,
+                    const vlc_render_subpicture *subpic,
                     vlc_tick_t date)
 {
     const video_format_t *fmt = vd->source;
@@ -233,9 +266,11 @@ static void Prepare(vout_display_t *vd, picture_t *pic, subpicture_t *subpic,
 
     /* Blend subpictures */
     if (subpic != NULL)
-        for (subpicture_region_t *r = subpic->p_region; r != NULL;
-             r = r->p_next)
+    {
+        const struct subpicture_region_rendered *r;
+        vlc_vector_foreach(r, &subpic->regions)
             RenderRegion(vd, subpic, r);
+    }
 
     xcb_flush(conn);
     (void) date;
@@ -359,10 +394,10 @@ static int Control(vout_display_t *vd, int query)
 
     switch (query) {
         case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
-        case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
-        case VOUT_DISPLAY_CHANGE_ZOOM:
         case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
-        case VOUT_DISPLAY_CHANGE_SOURCE_CROP: {
+        case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
+        case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
+        {
             /* Update the window size */
             uint32_t mask = XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
             const uint32_t values[] = {
@@ -467,6 +502,7 @@ static vlc_fourcc_t ParseFormat(const xcb_setup_t *setup,
 #endif
             }
             break;
+#if 0
         /* TODO 30 bits HDR */
         case 24:
             if (bpp == 32 && d->red_mask == 0xff && d->green_mask == 0xff
@@ -486,6 +522,7 @@ static vlc_fourcc_t ParseFormat(const xcb_setup_t *setup,
              && d->blue_mask == 0x1f && d->alpha_mask == 0x00)
                 return VLC_CODEC_RGB15;
             break;
+#endif
     }
 
     return 0;
@@ -601,7 +638,6 @@ static int Open(vout_display_t *vd,
 
     for (unsigned i = 0; i < pic_fmt_r->num_formats; i++) {
         const xcb_render_pictforminfo_t *const pic_fmt = pic_fmts + i;
-        const xcb_render_directformat_t *const d = &pic_fmt->direct;
 
         if (pic_fmt->depth == 8 && pic_fmt->direct.alpha_mask == 0xff) {
             /* Alpha mask format */
@@ -622,9 +658,6 @@ static int Open(vout_display_t *vd,
             continue;
 
         fmtp->i_chroma = chroma;
-        fmtp->i_rmask = ((uint32_t)d->red_mask) << d->red_shift;
-        fmtp->i_gmask = ((uint32_t)d->green_mask) << d->green_shift;
-        fmtp->i_bmask = ((uint32_t)d->blue_mask) << d->blue_shift;
         sys->format.argb = pic_fmt->id;
         visual = vid;
     }
@@ -649,12 +682,14 @@ static int Open(vout_display_t *vd,
     sys->drawable.crop = xcb_generate_id(conn);
     sys->drawable.scale = xcb_generate_id(conn);
     sys->drawable.subpic = xcb_generate_id(conn);
+    sys->drawable.subpic_crop = xcb_generate_id(conn);
     sys->drawable.alpha = xcb_generate_id(conn);
     sys->drawable.dest = xcb_generate_id(conn);
     sys->picture.source = xcb_generate_id(conn);
     sys->picture.crop = xcb_generate_id(conn);
     sys->picture.scale = xcb_generate_id(conn);
     sys->picture.subpic = xcb_generate_id(conn);
+    sys->picture.subpic_crop = xcb_generate_id(conn);
     sys->picture.alpha = xcb_generate_id(conn);
     sys->picture.dest = xcb_generate_id(conn);
     sys->gc = xcb_generate_id(conn);

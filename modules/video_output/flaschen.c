@@ -115,15 +115,13 @@ static int Open(vout_display_t *vd,
 
     /* */
     video_format_t fmt = *fmtp;
-    fmt.i_chroma = VLC_CODEC_RGB24;
     /* TODO: check if this works on big-endian systems */
-    fmt.i_rmask = 0xff0000;
-    fmt.i_gmask = 0x00ff00;
-    fmt.i_bmask = 0x0000ff;
+    fmt.i_chroma = VLC_CODEC_RGB24;
     fmt.i_width  = var_InheritInteger(vd, "flaschen-width");
     fmt.i_height = var_InheritInteger(vd, "flaschen-height");
     fmt.i_visible_width = fmt.i_width;
     fmt.i_visible_height = fmt.i_height;
+    fmt.orientation = ORIENT_NORMAL;
 
     /* p_vd->info is not modified */
 
@@ -235,10 +233,9 @@ static int Control(vout_display_t *vd, int query)
 {
     switch (query) {
     case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
-    case VOUT_DISPLAY_CHANGE_ZOOM:
-    case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
     case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
     case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
+    case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
         return VLC_SUCCESS;
 
     default:

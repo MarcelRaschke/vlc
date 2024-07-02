@@ -71,7 +71,7 @@ vlc_module_begin ()
 
     add_submodule ()
     set_description( N_("MPEG-PS demuxer") )
-    set_capability( "demux", 8 )
+    set_capability( "demux", 9 )
     set_callbacks( Open, Close )
     add_shortcut( "ps" )
 vlc_module_end ()
@@ -804,7 +804,7 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             {
                 vlc_tick_t i_time = va_arg( args, vlc_tick_t );
                 i_time -= p_sys->tk[p_sys->i_time_track_index].i_first_pts;
-                return demux_SetPosition( p_demux, (double) i_time / p_sys->i_length, false, true );
+                return demux_SetPosition( p_demux, (double) i_time / p_sys->i_length, false );
             }
             break;
         }

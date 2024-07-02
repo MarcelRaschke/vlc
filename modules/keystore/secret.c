@@ -73,7 +73,7 @@ static void cancellable_interrupted(void *p_data)
     g_cancellable_cancel(p_canc);
 }
 
-static GCancellable *cancellable_register()
+static GCancellable *cancellable_register(void)
 {
     GCancellable *p_canc = g_cancellable_new();
     if (!p_canc)
@@ -300,7 +300,7 @@ check_service_running(void)
     /* Cache the return of this function that may take up to 200ms. This atomic
      * doesn't prevent a cache miss (unlikely). This function can be called
      * safely from any threads. */
-    static atomic_int cache_running = ATOMIC_VAR_INIT(0);
+    static atomic_int cache_running = 0;
     int running = atomic_load_explicit(&cache_running, memory_order_relaxed);
     if (running != 0)
         return running == 1 ? VLC_SUCCESS : VLC_EGENERIC;

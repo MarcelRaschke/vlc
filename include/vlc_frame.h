@@ -23,6 +23,8 @@
 #ifndef VLC_FRAME_H
 #define VLC_FRAME_H 1
 
+#include <vlc_tick.h>
+
 struct vlc_ancillary;
 typedef uint32_t vlc_ancillary_id;
 
@@ -160,6 +162,24 @@ VLC_API vlc_frame_t *vlc_frame_Init(vlc_frame_t *frame,
                                     void *base, size_t length);
 
 /**
+ * Creates a custom frame.
+ *
+ * This function initialize a frame of timed data allocated by custom means.
+ * This allows passing data without copying even if the data has been allocated
+ * with unusual means or outside of LibVLC.
+ *
+ * Normally, frames are allocated and initialized by vlc_frame_Alloc() instead.
+ *
+ * @param cbs structure of custom callbacks to handle the frame [IN]
+ * @param base start address of the frame data
+ * @param length byte length of the frame data
+ *
+ * @return the created frame, or NULL on memory error.
+ */
+VLC_API vlc_frame_t *vlc_frame_New(const struct vlc_frame_callbacks *cbs,
+                                   void *base, size_t length);
+
+/**
  * Allocates a frame.
  *
  * Creates a new frame with the requested size.
@@ -180,6 +200,8 @@ VLC_API vlc_frame_t *vlc_frame_TryRealloc(vlc_frame_t *, ssize_t pre, size_t bod
  * reusing spare buffer space. Otherwise, a new frame is created and data is
  * copied.
  *
+ * @param frame the frame to realloc, which will be freed after the call to
+ *        this function
  * @param pre count of bytes to prepend if positive,
  *            count of leading bytes to discard if negative
  * @param body new bytes size of the frame
@@ -193,7 +215,8 @@ VLC_API vlc_frame_t *vlc_frame_TryRealloc(vlc_frame_t *, ssize_t pre, size_t bod
  * @note On error, the frame is discarded.
  * To avoid that, use vlc_frame_TryRealloc() instead.
  */
-VLC_API vlc_frame_t *vlc_frame_Realloc(vlc_frame_t *, ssize_t pre, size_t body) VLC_USED;
+VLC_API vlc_frame_t *
+vlc_frame_Realloc(vlc_frame_t *frame, ssize_t pre, size_t body) VLC_USED;
 
 /**
  * Releases a frame.
@@ -228,6 +251,7 @@ vlc_frame_AttachAncillary(vlc_frame_t *frame, struct vlc_ancillary *ancillary);
 /**
  * Return the ancillary identified by an ID
  *
+ * @param frame the frame to read the ancillary from
  * @param id id of ancillary to request
  * @return the ancillary or NULL if the ancillary for that particular id is
  * not present
@@ -338,10 +362,13 @@ VLC_API vlc_frame_t *vlc_frame_File(int fd, bool write) VLC_USED VLC_MALLOC;
  * Loads a file into a frame of memory from a path to the file.
  * See also vlc_frame_File().
  *
+ * @param path the file path to load the memory block from
  * @param write If true, request a read/write private mapping.
  *              If false, request a read-only potentially shared mapping.
  */
-VLC_API vlc_frame_t *vlc_frame_FilePath(const char *, bool write) VLC_USED VLC_MALLOC;
+VLC_API vlc_frame_t *
+vlc_frame_FilePath(const char *path, bool write)
+VLC_USED VLC_MALLOC;
 
 static inline void vlc_frame_Cleanup (void *frame)
 {
@@ -672,6 +699,7 @@ static inline void vlc_fifo_WaitCond(vlc_fifo_t *fifo, vlc_cond_t *condvar)
 /**
  * Queues a linked-list of blocks into a locked FIFO.
  *
+ * @param fifo a fifo object locked with ::vlc_fifo_Lock()
  * @param block the head of the list of blocks
  *              (if NULL, this function has no effects)
  *

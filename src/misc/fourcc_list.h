@@ -226,6 +226,10 @@ static const staticentry_t p_list_video[] = {
     B(VLC_CODEC_SVQ3, "SVQ-3 (Sorenson Video v3)"),
         A("SVQ3"),
 
+    /* VVC / H.266 */
+    B(VLC_CODEC_VVC, "MPEG-I Part3/VVC (H.266)"),
+        A("vvc1"),
+
     /* HEVC / H.265 */
     B(VLC_CODEC_HEVC, "MPEG-H Part2/HEVC (H.265)"),
         A("hevc"),
@@ -302,6 +306,7 @@ static const staticentry_t p_list_video[] = {
         E("X263", "Xirlink H263"),
         /* Zygo (partial) */
         E("ZyGo", "ITU H263+"),
+        A("HAVI"),
 
     /* H263i */
     B(VLC_CODEC_H263I, "I263.I"),
@@ -520,8 +525,14 @@ static const staticentry_t p_list_video[] = {
     B(VLC_CODEC_VP8, "Google/On2's VP8 Video"),
         A("VP80"),
 
+    B(VLC_CODEC_VP8ALPHA_ES, "Google/On2's VP8 Alpha"),
+        A("VP8a"),
+
     B(VLC_CODEC_VP9, "Google/On2's VP9 Video"),
         A("VP90"),
+
+    B(VLC_CODEC_VP9ALPHA_ES, "Google/On2's VP9 Alpha"),
+        A("VP9a"),
 
     B(VLC_CODEC_AV1, "AOMedia's AV1 Video"),
         A("av10"),
@@ -624,6 +635,9 @@ static const staticentry_t p_list_video[] = {
 
     B(VLC_CODEC_QDRAW, "Apple QuickDraw Video"),
         A("qdrw"),
+
+    B(VLC_CODEC_QOI, "Quite OK Image Format"),
+        A("qoif"),
 
     B(VLC_CODEC_QPEG, "QPEG Video"),
         A("QPEG"),
@@ -757,8 +771,6 @@ static const staticentry_t p_list_video[] = {
     B(VLC_CODEC_YV12, "Planar 4:2:0 YVU"),
         A("YV12"),
         A("yv12"),
-    B(VLC_CODEC_YV9,  "Planar 4:1:0 YVU"),
-        A("YVU9"),
     B(VLC_CODEC_I410, "Planar 4:1:0 YUV"),
         A("I410"),
     B(VLC_CODEC_I411, "Planar 4:1:1 YUV"),
@@ -775,15 +787,6 @@ static const staticentry_t p_list_video[] = {
     B(VLC_CODEC_I444, "Planar 4:4:4 YUV"),
         A("I444"),
 
-    B(VLC_CODEC_J420, "Planar 4:2:0 YUV full scale"),
-        A("J420"),
-    B(VLC_CODEC_J422, "Planar 4:2:2 YUV full scale"),
-        A("J422"),
-    B(VLC_CODEC_J440, "Planar 4:4:0 YUV full scale"),
-        A("J440"),
-    B(VLC_CODEC_J444, "Planar 4:4:4 YUV full scale"),
-        A("J444"),
-
     B(VLC_CODEC_YUVP, "Palettized YUV with palette element Y:U:V:A"),
         A("YUVP"),
 
@@ -798,21 +801,15 @@ static const staticentry_t p_list_video[] = {
     B(VLC_CODEC_YUVA_444_12L, "Planar YUV 4:4:4 Y:U:V:A 12bits LE"),
     B(VLC_CODEC_YUVA_444_12B, "Planar YUV 4:4:4 Y:U:V:A 12bits BE"),
 
-    B(VLC_CODEC_RGBP, "Palettized RGB with palette element R:G:B"),
+    B(VLC_CODEC_RGBP, "Palettized RGB with palette element R:G:B:A"),
         A("RGBP"),
 
-    B(VLC_CODEC_RGB8, "8 bits RGB"),
-        A("RGB2"),
-    B(VLC_CODEC_RGB12, "12 bits RGB"),
-        A("RV12"),
-    B(VLC_CODEC_RGB15, "15 bits RGB"),
-        A("RV15"),
-    B(VLC_CODEC_RGB16, "16 bits RGB"),
-        A("RV16"),
-    B(VLC_CODEC_RGB24, "24 bits RGB"),
-        A("RV24"),
-    B(VLC_CODEC_RGB32, "32 bits RGB"),
-        A("RV32"),
+    B(VLC_CODEC_RGB233, "8 bits RGB 2:3:3"),
+        A("RGB8"),
+    B(VLC_CODEC_RGB332, "8 bits RGB 3:3:2"),
+        A("R332"),
+    B(VLC_CODEC_BGR233, "8 bits BGR 2:3:3"),
+        A("B233"),
     B(VLC_CODEC_RGBA, "32 bits RGBA"),
         A("RGBA"),
     B(VLC_CODEC_ARGB, "32 bits ARGB"),
@@ -821,10 +818,38 @@ static const staticentry_t p_list_video[] = {
     B(VLC_CODEC_BGRA, "32 bits BGRA"),
         A("BGRA"),
     B(VLC_CODEC_ABGR, "32 bits ABGR"),
-    B(VLC_CODEC_RGBA10, "32 bits RGB 10bits A 2bits"),
+    B(VLC_CODEC_RGBA10LE, "32 bits RGB 10bits A 2bits LE"),
         A("RGA0"),
     B(VLC_CODEC_RGBA64, "64 bits RGBA"),
         A("RGA4"),
+    B(VLC_CODEC_XRGB, "32 bits xRGB"),
+        A("RV32"),
+    B(VLC_CODEC_RGBX, "32 bits RGBx"),
+        A("RGBX"),
+    B(VLC_CODEC_XBGR, "32 bits xBGR"),
+        A("XBGR"),
+    B(VLC_CODEC_BGRX, "32 bits BGRx"),
+        A("BGRX"),
+    B(VLC_CODEC_RGB24, "24 bits RGB"),
+        A("RV24"),
+    B(VLC_CODEC_BGR24, "24 bits BGR"),
+        A("BGR3"),
+    B(VLC_CODEC_RGB565LE, "16 bits R5G6G5 LE"),
+        A("RV16"),
+    B(VLC_CODEC_RGB565BE, "16 bits R5G6G5 BE"),
+        A("RB16"),
+    B(VLC_CODEC_BGR565LE, "16 bits B5G6R5 LE"),
+        A("BL16"),
+    B(VLC_CODEC_BGR565BE, "16 bits B5G6R5 BE"),
+        A("BB16"),
+    B(VLC_CODEC_RGB555LE, "15 bits R5G5G5 LE"),
+        A("RV15"),
+    B(VLC_CODEC_RGB555BE, "15 bits R5G5G5 BE"),
+        A("RB15"),
+    B(VLC_CODEC_BGR555LE, "15 bits B5G5R5 LE"),
+        A("BL15"),
+    B(VLC_CODEC_BGR555LE, "15 bits B5G5R5 BE"),
+        A("BB15"),
 
     B(VLC_CODEC_GREY, "8 bits greyscale"),
         A("GREY"),
@@ -954,7 +979,9 @@ static const staticentry_t p_list_video[] = {
 
 
     /* XYZ color space */
-    B(VLC_CODEC_XYZ12, "Packed XYZ 12-bit BE"),
+    B(VLC_CODEC_XYZ_12L, "Packed XYZ 12-bit LE"),
+
+    B(VLC_CODEC_XYZ_12B, "Packed XYZ 12-bit BE"),
         A("XY12"),
 
     /* Videogames Codecs */
@@ -1238,6 +1265,9 @@ static const staticentry_t p_list_video[] = {
 
     B(VLC_CODEC_D3D11_OPAQUE_BGRA, "BGRA D3D11 opaque"),
         A("DAGR"),
+
+    B(VLC_CODEC_D3D11_OPAQUE_ALPHA, "4:2:0 D3D11 opaque with alpha"),
+        A("DA11"),
 
     B(VLC_CODEC_NVDEC_OPAQUE, "4:2:0 NVDEC opaque"),
         A("NVD8"),
@@ -1691,6 +1721,8 @@ static const staticentry_t p_list_audio[] = {
     B(VLC_CODEC_ADPCM_IMA_EA_SEAD, "ADPCM IMA Electronic Arts SEAD"),
 
     B(VLC_CODEC_ADPCM_EA_R1, "ADPCM Electronic Arts R1"),
+
+    B(VLC_CODEC_ADPCM_EA_R3, "ADPCM Electronic Arts R3"),
 
     B(VLC_CODEC_ADPCM_IMA_APC, "ADPCM APC"),
 

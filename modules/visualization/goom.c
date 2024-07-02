@@ -30,6 +30,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_aout.h>            /* aout_FormatNbChannels, AOUT_FMTS_SIMILAR */
 #include <vlc_vout.h>              /* vout_*Picture, aout_filter_..tVout */
@@ -125,7 +126,8 @@ static int Open( vlc_object_t *p_this )
     const int width  = var_InheritInteger( p_filter, "goom-width" );
     const int height = var_InheritInteger( p_filter, "goom-height" );
 
-    video_format_Init(&p_thread->fmt, VLC_CODEC_RGB32);
+    vlc_fourcc_t chroma = VLC_CODEC_XRGB;
+    video_format_Init(&p_thread->fmt, chroma);
     p_thread->fmt.i_width = p_thread->fmt.i_visible_width = width;
     p_thread->fmt.i_height = p_thread->fmt.i_visible_height = height;
     p_thread->fmt.i_sar_num = p_thread->fmt.i_sar_den = 1;

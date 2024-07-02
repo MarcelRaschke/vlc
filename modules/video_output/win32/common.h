@@ -24,6 +24,8 @@
 
 #include <vlc_vout_display.h>
 
+#include <windows.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif// __cplusplus
@@ -32,55 +34,33 @@ extern "C" {
  * event_thread_t: event thread
  *****************************************************************************/
 
-typedef struct event_thread_t event_thread_t;
-
 typedef struct display_win32_area_t
 {
     /* Coordinates of dest images (used when blitting to display) */
     vout_display_place_t  place;
     bool                  place_changed;
+    struct event_thread_t *event; // only use if sys.event is not NULL
+
+    const video_format_t  *src_fmt;
 } display_win32_area_t;
 
 #define RECTWidth(r)   (LONG)((r).right - (r).left)
 #define RECTHeight(r)  (LONG)((r).bottom - (r).top)
 
 /*****************************************************************************
- * vout_sys_t: video output method descriptor
- *****************************************************************************
- * This structure is part of the video output thread descriptor.
- * It describes the module specific properties of an output thread.
- *****************************************************************************/
-typedef struct vout_display_sys_win32_t
-{
-    /* */
-    event_thread_t *event;
-
-    /* */
-    HWND                 hvideownd;        /* Handle of the video sub-window */
-    HWND                 hparent;             /* Handle of the parent window */
-
-# if !defined(NDEBUG) && defined(HAVE_DXGIDEBUG_H)
-    HINSTANCE     dxgidebug_dll;
-# endif
-} vout_display_sys_win32_t;
-
-
-/*****************************************************************************
  * Prototypes from common.c
  *****************************************************************************/
-#ifndef VLC_WINSTORE_APP
-int  CommonWindowInit(vout_display_t *, display_win32_area_t *, vout_display_sys_win32_t *,
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+int  CommonWindowInit(vout_display_t *, display_win32_area_t *,
                       bool projection_gestures);
-void CommonWindowClean(vout_display_sys_win32_t *);
-#endif /* !VLC_WINSTORE_APP */
-void CommonControl(vout_display_t *, display_win32_area_t *, vout_display_sys_win32_t *, int );
+void CommonWindowClean(display_win32_area_t *);
+HWND CommonVideoHWND(const display_win32_area_t *);
+#endif /* WINAPI_PARTITION_DESKTOP */
+void CommonControl(vout_display_t *, display_win32_area_t *, int );
 
 void CommonPlacePicture (vout_display_t *, display_win32_area_t *);
 
-void CommonInit(display_win32_area_t *);
-
-void* HookWindowsSensors(vout_display_t*, HWND);
-void UnhookWindowsSensors(void*);
+void CommonInit(display_win32_area_t *, const video_format_t *);
 # ifdef __cplusplus
 }
 # endif

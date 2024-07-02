@@ -16,8 +16,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as T
+import QtQuick
+import QtQuick.Templates as T
 
 import org.videolan.vlc 0.1
 
@@ -36,6 +36,19 @@ T.Control {
     property alias model: repeater.model
     property alias delegate: repeater.delegate
 
+    property alias count: repeater.count
+
+    function itemAt(index) {
+        return repeater.itemAt(index)
+    }
+
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            implicitContentWidth + leftPadding + rightPadding)
+
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             implicitContentHeight + topPadding + bottomPadding)
+
+
     // Settings
 
     Navigation.navigable: (_countEnabled > 0)
@@ -51,8 +64,8 @@ T.Control {
 
         // Next item
         if (focusReason === Qt.TabFocusReason) {
-            for (var i = 0; i < repeater.count; i++) {
-                var item = repeater.itemAt(i);
+            for (let i = 0; i < repeater.count; i++) {
+                const item = repeater.itemAt(i);
 
                 if (item.visible && item.enabled) {
                     item.forceActiveFocus(Qt.TabFocusReason);
@@ -63,8 +76,8 @@ T.Control {
         }
         // Previous item
         else if (focusReason === Qt.BacktabFocusReason) {
-            for (var i = repeater.count - 1; i >= 0; i--) {
-                var item= repeater.itemAt(i);
+            for (let i = repeater.count - 1; i >= 0; i--) {
+                const item = repeater.itemAt(i);
 
                 if (item.visible && item.enabled) {
                     item.forceActiveFocus(Qt.BacktabFocusReason);
@@ -75,10 +88,10 @@ T.Control {
         }
         // NOTE: We make sure that one item has the focus.
         else {
-            var itemFocus = undefined;
+            let itemFocus = undefined;
 
-            for (var i = 0 ; i < repeater.count; i++) {
-                var item = repeater.itemAt(i);
+            for (let i = 0 ; i < repeater.count; i++) {
+                const item = repeater.itemAt(i);
 
                 if (item.visible && item.enabled) {
                     // NOTE: We already have a focused item, so we keep it this way.
@@ -99,14 +112,14 @@ T.Control {
 
     Keys.priority: Keys.AfterItem
 
-    Keys.onPressed: root.Navigation.defaultKeyAction(event)
+    Keys.onPressed: (event) => root.Navigation.defaultKeyAction(event)
 
     // Functions
 
     function _applyFocus() {
         if (indexFocus < 0 || indexFocus >= count) return false;
 
-        var item = repeater.itemAt(indexFocus);
+        const item = repeater.itemAt(indexFocus);
 
         if (item.visible && item.enabled) {
             item.forceActiveFocus(focusReason);
@@ -118,22 +131,12 @@ T.Control {
     }
 
     function _hasFocus() {
-        for (var i = 0 ; i < count; i++) {
+        for (let i = 0 ; i < count; i++) {
             if (repeater.itemAt(i).activeFocus)
                 return true;
         }
 
         return false;
-    }
-
-    // Childs
-
-    Component {
-        id: enabledConnection
-
-        Connections {
-            onEnabledChanged: root._countEnabled += (target.enabled ? 1 : -1)
-        }
     }
 
     // Childs
@@ -144,13 +147,13 @@ T.Control {
         Repeater{
             id: repeater
 
-            onItemAdded: {
+            onItemAdded: (index, item) => {
                 if (item.enabled) root._countEnabled += 1;
 
-                enabledConnection.createObject(item, { target: item });
+                item.onEnabledChanged.connect(() => { root._countEnabled += (item.enabled ? 1 : -1) });
 
                 item.Navigation.upAction = function() {
-                    var i = index;
+                    let i = index;
 
                     do {
                         i--;
@@ -165,7 +168,7 @@ T.Control {
                 }
 
                 item.Navigation.downAction = function() {
-                    var i = index;
+                    let i = index;
 
                     do {
                         i++;
@@ -180,7 +183,9 @@ T.Control {
                 }
             }
 
-            onItemRemoved: if (item.enabled) root._countEnabled -= 1
+            onItemRemoved: (index, item) => {
+                if (item.enabled) root._countEnabled -= 1
+            }
         }
     }
 }

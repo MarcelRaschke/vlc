@@ -636,7 +636,7 @@ error:
 /*****************************************************************************
  * Video
  *****************************************************************************/
-static void PrepareVideo(vout_display_t *vd, picture_t *picture, subpicture_t *,
+static void PrepareVideo(vout_display_t *vd, picture_t *picture, const vlc_render_subpicture *,
                          vlc_tick_t date)
 {
     decklink_sys_t *sys = (decklink_sys_t *) vd->sys;
@@ -765,10 +765,9 @@ static int ControlVideo(vout_display_t *vd, int query)
 
     switch (query) {
         case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
-        case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
-        case VOUT_DISPLAY_CHANGE_ZOOM:
         case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
         case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
+        case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
             return VLC_SUCCESS;
     }
     return VLC_EGENERIC;
@@ -974,7 +973,7 @@ static int OpenAudio(vlc_object_t *p_this)
     aout->drain     = Drain;
     aout->time_get  = TimeGet;
 
-    aout->pause     = aout_PauseDefault;
+    aout->pause     = NULL;
     aout->stop      = Flush;
     aout->mute_set  = NULL;
     aout->volume_set= NULL;

@@ -28,9 +28,10 @@
 # include "config.h"
 #endif
 
-#include <assert.h>
+#include <cassert>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_aout.h>
 #include <vlc_filter.h>
@@ -318,7 +319,7 @@ static const struct FilterOperationInitializer {
         ops.flush = Flush;
         ops.change_viewpoint = ChangeViewpoint;
         ops.close = Close;
-    };
+    }
 } filter_ops;
 
 static int OpenBinauralizer(vlc_object_t *p_this)

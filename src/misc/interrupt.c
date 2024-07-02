@@ -2,6 +2,10 @@
  * interrupt.c:
  *****************************************************************************
  * Copyright (C) 2015 Rémi Denis-Courmont
+ * Copyright (C) 2023 Videolabs
+ *
+ * Authors: Rémi Denis-Courmont
+ *          Alexandre Janniaux <ajanni@videolabs.io>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by
@@ -37,6 +41,8 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
+#include <vlc_poll.h>
 #include <vlc_fs.h> /* vlc_pipe */
 #include <vlc_network.h> /* vlc_accept */
 
@@ -105,8 +111,11 @@ vlc_interrupt_t *vlc_interrupt_set(vlc_interrupt_t *newctx)
 
 /**
  * Prepares to enter interruptible wait.
+ *
+ * @param ctx an unused interruption context to prepare
  * @param cb callback to interrupt the wait (i.e. wake up the thread)
  * @param data opaque data pointer for the callback
+ *
  * @note Any <b>successful</b> call <b>must</b> be paired with a call to
  * vlc_interrupt_finish().
  */
@@ -292,7 +301,12 @@ static void vlc_poll_i11e_wake(void *opaque)
     int canc;
 
     canc = vlc_savecancel();
-    write(fd[1], &value, sizeof (value));
+    while (write(fd[1], &value, sizeof (value)) == -1)
+    {
+        /* Only EINTR can happen here, so ignore the error.
+         * We still need to ensure we really wrote the value to trigger
+         * the interruption check though. */
+    }
     vlc_restorecancel(canc);
 }
 
@@ -351,7 +365,12 @@ static int vlc_poll_i11e_inner(struct pollfd *restrict fds, unsigned nfds,
     {
         uint64_t dummy;
 
-        read(fd[0], &dummy, sizeof (dummy));
+        while (read(fd[0], &dummy, sizeof (dummy)) == -1)
+        {
+            /* Only EINTR can happen here, so ignore the error.
+             * We still need to read() the value though, to ensure
+             * that the interruption is correctly acknowledged. */
+        }
         ret--;
     }
     vlc_cleanup_pop();
@@ -624,4 +643,3 @@ int vlc_accept_i11e(int fd, struct sockaddr *addr, socklen_t *addrlen,
         return -1;
     return vlc_accept(fd, addr, addrlen, nonblock);
 }
-

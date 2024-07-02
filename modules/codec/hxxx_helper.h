@@ -112,6 +112,7 @@ block_t * hxxx_helper_get_extradata_chain(const struct hxxx_helper *hh);
 block_t * hxxx_helper_get_extradata_block(const struct hxxx_helper *hh);
 
 int hxxx_helper_get_current_picture_size(const struct hxxx_helper *hh,
+                                         unsigned *p_ox, unsigned *p_oy,
                                          unsigned *p_w, unsigned *p_h,
                                          unsigned *p_vw, unsigned *p_vh);
 
@@ -122,6 +123,8 @@ int h264_helper_get_current_dpb_values(const struct hxxx_helper *hh,
 
 int hxxx_helper_get_current_profile_level(const struct hxxx_helper *hh,
                                           uint8_t *p_profile, uint8_t *p_level);
+int h264_helper_get_constraint_flag(const struct hxxx_helper *hh,
+                                    uint8_t *pi_constraints);
 
 int
 hxxx_helper_get_chroma_chroma(const struct hxxx_helper *hh, uint8_t *pi_chroma_format,

@@ -28,6 +28,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 
@@ -56,7 +57,7 @@
   "Helper setting for dst, dst=bind+'/'+path. dst-parameter overrides this." )
 
 static int      Open    ( vlc_object_t * );
-static void     Close   ( vlc_object_t * );
+static void     Close   ( sout_stream_t * );
 
 #define SOUT_CFG_PREFIX "sout-standard-"
 
@@ -85,7 +86,7 @@ vlc_module_begin ()
     add_obsolete_string( SOUT_CFG_PREFIX "email" ) /* since 4.0.0 */
     add_obsolete_string( SOUT_CFG_PREFIX "phone" ) /* since 3.0.0 */
 
-    set_callbacks( Open, Close )
+    set_callback( Open )
 vlc_module_end ()
 
 
@@ -100,14 +101,15 @@ static const char *const ppsz_sout_options[] = {
 typedef struct
 {
     sout_mux_t           *p_mux;
-    session_descriptor_t *p_session;
     bool                  synchronous;
 } sout_stream_sys_t;
 
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *
+Add( sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id )
 {
     sout_stream_sys_t *p_sys = p_stream->p_sys;
     return sout_MuxAddStream( p_sys->p_mux, p_fmt );
+    (void)es_id;
 }
 
 static void Del( sout_stream_t *p_stream, void *id )
@@ -252,7 +254,12 @@ static int Control(sout_stream_t *stream, int query, va_list args)
 }
 
 static const struct sout_stream_operations ops = {
-    Add, Del, Send, Control, Flush, NULL,
+    .add = Add,
+    .del = Del,
+    .send = Send,
+    .control = Control,
+    .flush = Flush,
+    .close = Close,
 };
 
 /*****************************************************************************
@@ -300,7 +307,6 @@ static int Open( vlc_object_t *p_this )
         ret = VLC_ENOMEM;
         goto end;
     }
-    p_sys->p_session = NULL;
 
     if( fixAccessMux( p_stream, &psz_mux, &psz_access, psz_url ) )
         goto end;
@@ -354,14 +360,10 @@ end:
 /*****************************************************************************
  * Close:
  *****************************************************************************/
-static void Close( vlc_object_t * p_this )
+static void Close( sout_stream_t *p_stream )
 {
-    sout_stream_t     *p_stream = (sout_stream_t*)p_this;
     sout_stream_sys_t *p_sys    = p_stream->p_sys;
     sout_access_out_t *p_access = p_sys->p_mux->p_access;
-
-    if( p_sys->p_session != NULL )
-        sout_AnnounceUnRegister( p_stream, p_sys->p_session );
 
     sout_MuxDelete( p_sys->p_mux );
     sout_AccessOutDelete( p_access );

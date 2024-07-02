@@ -16,10 +16,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick          2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts  1.11
-import QtQml.Models     2.2
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import QtQml.Models
 
 import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
@@ -31,60 +31,17 @@ Widgets.PageLoader {
     id: root
 
     //---------------------------------------------------------------------------------------------
-    // Aliases
-    //---------------------------------------------------------------------------------------------
-
-    property bool isViewMultiView: true
-
-    property var model
-    property var sortModel
-
-    //---------------------------------------------------------------------------------------------
     // Settings
     //---------------------------------------------------------------------------------------------
 
     pageModel: [{
         name: "all",
+        default: true,
         component: componentAll
     }, {
         name: "list",
         component: componentList
     }]
-
-    loadDefaultView: function () {
-        History.update(["mc", "video", "playlists", "all"])
-        loadPage("all")
-    }
-
-    //---------------------------------------------------------------------------------------------
-    // Events
-    //---------------------------------------------------------------------------------------------
-
-    onCurrentItemChanged: {
-        model     = currentItem.model;
-        sortModel = currentItem.sortModel;
-
-        isViewMultiView = (currentItem.isViewMultiView === undefined
-                           ||
-                           currentItem.isViewMultiView);
-    }
-
-    //---------------------------------------------------------------------------------------------
-    // Functions
-    //---------------------------------------------------------------------------------------------
-    // Private
-
-    function _updateHistoryList(index) {
-        History.update(["mc", "video", "playlists", "all", { "initialIndex": index }]);
-    }
-
-    function _updateHistoryPlaylist(playlist) {
-        History.update(["mc", "video", "playlists", "list", {
-                            "currentIndex": playlist.currentIndex,
-                            "parentId"   : playlist.parentId,
-                            "name" : playlist.name
-                        }]);
-    }
 
     //---------------------------------------------------------------------------------------------
     // Childs
@@ -94,14 +51,24 @@ Widgets.PageLoader {
         id: componentAll
 
         PlaylistMediaList {
+            id: playlistView
+
+            header: Widgets.ViewHeader {
+                view: playlistView
+
+                text: qsTr("Playlists")
+            }
 
             isMusic: false
 
-            onCurrentIndexChanged: _updateHistoryList(currentIndex)
+            searchPattern: MainCtx.search.pattern
+            sortOrder: MainCtx.sort.order
+            sortCriteria: MainCtx.sort.criteria
 
-            onShowList: {
-                History.push(["mc", "video", "playlists", "list",
-                             { parentId: model.id, name: model.name }]);
+            onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
+
+            onShowList: (model, reason) => {
+                History.push([...root.pagePrefix, "list"], { parentId: model.id, name: model.name }, reason)
             }
         }
     }
@@ -114,9 +81,11 @@ Widgets.PageLoader {
 
             isMusic: false
 
-            onCurrentIndexChanged: _updateHistoryPlaylist(playlist)
-            onParentIdChanged    : _updateHistoryPlaylist(playlist)
-            onNameChanged        : _updateHistoryPlaylist(playlist)
+            searchPattern: MainCtx.search.pattern
+            sortOrder: MainCtx.sort.order
+            sortCriteria: MainCtx.sort.criteria
+
+            onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
         }
     }
 }

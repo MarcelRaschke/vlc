@@ -35,11 +35,13 @@
 
 #include "screen.h"
 
+#include <windows.h>
 
-static void screen_CloseCapture(screen_data_t *);
+
+static void screen_CloseCapture(void *);
 static block_t *screen_Capture(demux_t *);
 
-struct screen_data_t
+typedef struct
 {
     HDC hdc_src;
     HDC hdc_dst;
@@ -47,6 +49,7 @@ struct screen_data_t
     HGDIOBJ hgdi_backup;
     POINT ptl;             /* Coordinates of the primary display's top left, when the origin
                             * is taken to be the top left of the entire virtual screen */
+    size_t pitch;
 
     int i_fragment_size;
     int i_fragment;
@@ -55,7 +58,7 @@ struct screen_data_t
 #ifdef SCREEN_MOUSE
     filter_t *p_blend;
 #endif
-};
+} screen_data_t;
 
 #if defined(SCREEN_SUBSCREEN) || defined(SCREEN_MOUSE)
 /*
@@ -122,17 +125,22 @@ int screen_InitCaptureGDI( demux_t *p_demux )
     }
 
     i_bits_per_pixel = GetDeviceCaps( p_data->hdc_src, BITSPIXEL );
+
+    if (i_bits_per_pixel == 8)
+        /*
+         * We don't handle 256 color palettes, so let BitBlt() perform the
+         * conversion from 256 color palettes for us.
+         */
+        i_bits_per_pixel = 24;
+
     switch( i_bits_per_pixel )
     {
-    case 8: /* FIXME: set the palette */
-        i_chroma = VLC_CODEC_RGB8; break;
-    case 15:
     case 16:    /* Yes it is really 15 bits (when using BI_RGB) */
-        i_chroma = VLC_CODEC_RGB15; break;
+        i_chroma = VLC_CODEC_RGB555LE; break;
     case 24:
         i_chroma = VLC_CODEC_RGB24; break;
     case 32:
-        i_chroma = VLC_CODEC_RGB32; break;
+        i_chroma = VLC_CODEC_BGRX; break;
     default:
         msg_Err( p_demux, "unknown screen depth %i", i_bits_per_pixel );
         DeleteDC( p_data->hdc_dst );
@@ -141,38 +149,15 @@ int screen_InitCaptureGDI( demux_t *p_demux )
         return VLC_EGENERIC;
     }
 
+    int screen_width  = GetSystemMetrics( SM_CXVIRTUALSCREEN );
+    int screen_height = GetSystemMetrics( SM_CYVIRTUALSCREEN );
     es_format_Init( &p_sys->fmt, VIDEO_ES, i_chroma );
-    p_sys->fmt.video.i_visible_width  =
-    p_sys->fmt.video.i_width          = GetSystemMetrics( SM_CXVIRTUALSCREEN );
-    p_sys->fmt.video.i_visible_height =
-    p_sys->fmt.video.i_height         = GetSystemMetrics( SM_CYVIRTUALSCREEN );
-    p_sys->fmt.video.i_bits_per_pixel = i_bits_per_pixel;
-    p_sys->fmt.video.i_sar_num = p_sys->fmt.video.i_sar_den = 1;
-    p_sys->fmt.video.i_chroma         = i_chroma;
+    video_format_Setup( &p_sys->fmt.video, i_chroma, screen_width, screen_height,
+                        screen_width, screen_width, 1, 1 );
     p_sys->fmt.video.transfer         = TRANSFER_FUNC_SRGB;
     p_sys->fmt.video.color_range      = COLOR_RANGE_FULL;
 
-    switch( i_chroma )
-    {
-    case VLC_CODEC_RGB15:
-        p_sys->fmt.video.i_rmask = 0x7c00;
-        p_sys->fmt.video.i_gmask = 0x03e0;
-        p_sys->fmt.video.i_bmask = 0x001f;
-        break;
-    case VLC_CODEC_RGB24:
-        p_sys->fmt.video.i_rmask = 0x00ff0000;
-        p_sys->fmt.video.i_gmask = 0x0000ff00;
-        p_sys->fmt.video.i_bmask = 0x000000ff;
-        break;
-    case VLC_CODEC_RGB32:
-        p_sys->fmt.video.i_rmask = 0x00ff0000;
-        p_sys->fmt.video.i_gmask = 0x0000ff00;
-        p_sys->fmt.video.i_bmask = 0x000000ff;
-        break;
-    default:
-        msg_Warn( p_demux, "Unknown RGB masks" );
-        break;
-    }
+    p_data->pitch = ( ( ( screen_width * i_bits_per_pixel ) + 31 ) & ~31 ) >> 3;
 
     p_data->ptl.x = - GetSystemMetrics( SM_XVIRTUALSCREEN );
     p_data->ptl.y = - GetSystemMetrics( SM_YVIRTUALSCREEN );
@@ -185,8 +170,9 @@ int screen_InitCaptureGDI( demux_t *p_demux )
     return VLC_SUCCESS;
 }
 
-void screen_CloseCapture( screen_data_t *p_data )
+void screen_CloseCapture( void *opaque )
 {
+    screen_data_t *p_data = opaque;
     if( p_data->p_block ) block_Release( p_data->p_block );
 
     if( p_data->hgdi_backup)
@@ -215,7 +201,8 @@ struct block_sys_t
 
 static void CaptureBlockRelease( block_t *p_block )
 {
-    DeleteObject( ((struct block_sys_t *)p_block)->hbmp );
+    struct block_sys_t *p_sys = container_of(p_block, struct block_sys_t, self);
+    DeleteObject( p_sys->hbmp );
     free( p_block );
 }
 
@@ -241,7 +228,7 @@ static block_t *CaptureBlockNew( demux_t *p_demux )
         p_data->bmi.bmiHeader.biWidth         = p_sys->fmt.video.i_width;
         p_data->bmi.bmiHeader.biHeight        = - p_sys->fmt.video.i_height;
         p_data->bmi.bmiHeader.biPlanes        = 1;
-        p_data->bmi.bmiHeader.biBitCount      = p_sys->fmt.video.i_bits_per_pixel;
+        p_data->bmi.bmiHeader.biBitCount      = p_data->pitch * 8 / p_sys->fmt.video.i_width;
         p_data->bmi.bmiHeader.biCompression   = BI_RGB;
         p_data->bmi.bmiHeader.biSizeImage     = 0;
         p_data->bmi.bmiHeader.biXPelsPerMeter = 0;
@@ -287,9 +274,7 @@ static block_t *CaptureBlockNew( demux_t *p_demux )
         goto error;
 
     /* Fill all fields */
-    int i_stride =
-        ( ( ( ( p_sys->fmt.video.i_width * p_sys->fmt.video.i_bits_per_pixel ) + 31 ) & ~31 ) >> 3 );
-    i_buffer = i_stride * p_sys->fmt.video.i_height;
+    i_buffer = p_data->pitch * p_sys->fmt.video.i_height;
     block_Init( &p_block->self, &CaptureBlockCallbacks, p_buffer, i_buffer );
     p_block->hbmp            = hbmp;
 
@@ -313,8 +298,7 @@ static void RenderCursor( demux_t *p_demux, int i_x, int i_y,
         return;
 
     /* Bitmaps here created by CreateDIBSection: stride rounded up to the nearest DWORD */
-    p_sys->dst.p[ 0 ].i_pitch = p_sys->dst.p[ 0 ].i_visible_pitch =
-        ( ( ( ( p_sys->fmt.video.i_width * p_sys->fmt.video.i_bits_per_pixel ) + 31 ) & ~31 ) >> 3 );
+    p_sys->dst.p[ 0 ].i_pitch = p_sys->dst.p[ 0 ].i_visible_pitch = p_data->pitch;
 
     if( !p_data->p_blend )
     {

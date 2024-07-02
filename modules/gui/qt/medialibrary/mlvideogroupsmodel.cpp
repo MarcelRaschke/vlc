@@ -29,6 +29,7 @@
 
 // Util includes
 #include "util/covergenerator.hpp"
+#include "util/vlctick.hpp"
 
 // MediaLibrary includes
 #include "mlcustomcover.hpp"
@@ -64,9 +65,15 @@ QHash<int, QByteArray> MLVideoGroupsModel::roleNames() const /* override */
 {
     QHash<int, QByteArray> hash = MLVideoModel::roleNames();
 
-    hash.insert(GROUP_IS_VIDEO, "isVideo");
-    hash.insert(GROUP_DATE,     "date");
-    hash.insert(GROUP_COUNT,    "count");
+    const QHash<int, QByteArray> groupRoles =
+    {
+        {GROUP_IS_VIDEO, "isVideo"},
+        {GROUP_TITLE_FIRST_SYMBOL, "group_title_first_symbol"},
+        {GROUP_DATE, "date"},
+        {GROUP_COUNT, "count"},
+    };
+
+    hash.insert(groupRoles);
 
     return hash;
 }
@@ -102,6 +109,8 @@ QVariant MLVideoGroupsModel::itemRoleData(MLItem * item, const int role) const /
                 return QVariant::fromValue(group->getDuration());
             case GROUP_IS_VIDEO:
                 return false;
+            case GROUP_TITLE_FIRST_SYMBOL:
+                return QVariant::fromValue( getFirstSymbol(group->getTitle() ));
             case GROUP_DATE:
                 return QVariant::fromValue(group->getDate());
             case GROUP_COUNT:
@@ -118,6 +127,10 @@ QVariant MLVideoGroupsModel::itemRoleData(MLItem * item, const int role) const /
         {
             case Qt::DisplayRole:
                 return QVariant::fromValue(video->getTitle());
+            case GROUP_TITLE_FIRST_SYMBOL:
+                // videos and groups are shown mixed, force this item into a group
+                // for grouping the data must be sorted by title
+                return QVariant::fromValue( getFirstSymbol(video->getTitle() ));
             case GROUP_IS_VIDEO:
                 return true;
             case GROUP_DATE:
@@ -157,9 +170,9 @@ QByteArray MLVideoGroupsModel::criteriaToName(vlc_ml_sorting_criteria_t criteria
     return criterias.key(criteria, "");
 }
 
-std::unique_ptr<MLBaseModel::BaseLoader> MLVideoGroupsModel::createLoader() const /* override */
+std::unique_ptr<MLListCacheLoader> MLVideoGroupsModel::createMLLoader() const /* override */
 {
-    return std::make_unique<Loader>(*this);
+    return std::make_unique<MLListCacheLoader>(m_mediaLib, std::make_shared<MLVideoGroupsModel::Loader>(*this));
 }
 
 void MLVideoGroupsModel::onVlcMlEvent(const MLEvent & event) /* override */
@@ -217,23 +230,16 @@ void MLVideoGroupsModel::onVlcMlEvent(const MLEvent & event) /* override */
 // Loader
 //=================================================================================================
 
-MLVideoGroupsModel::Loader::Loader(const MLVideoGroupsModel & model)
-    : MLBaseModel::BaseLoader(model) {}
-
-size_t MLVideoGroupsModel::Loader::count(vlc_medialibrary_t* ml) const /* override */
+size_t MLVideoGroupsModel::Loader::count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const /* override */
 {
-    vlc_ml_query_params_t params = getParams().toCQueryParams();
-
-    return vlc_ml_count_groups(ml, &params);
+    return vlc_ml_count_groups(ml, queryParams);
 }
 
 std::vector<std::unique_ptr<MLItem>>
 MLVideoGroupsModel::Loader::load(vlc_medialibrary_t* ml,
-                                 size_t index, size_t count) const /* override */
+                                const vlc_ml_query_params_t* queryParams) const /* override */
 {
-    vlc_ml_query_params_t params = getParams(index, count).toCQueryParams();
-
-    ml_unique_ptr<vlc_ml_group_list_t> list(vlc_ml_list_groups(ml, &params));
+    ml_unique_ptr<vlc_ml_group_list_t> list(vlc_ml_list_groups(ml, queryParams));
 
     if (list == nullptr)
         return {};
@@ -245,9 +251,7 @@ MLVideoGroupsModel::Loader::load(vlc_medialibrary_t* ml,
         // NOTE: When it's a group of one we convert it to a MLVideo.
         if (group.i_nb_total_media == 1)
         {
-            vlc_ml_query_params_t query;
-
-            memset(&query, 0, sizeof(vlc_ml_query_params_t));
+            vlc_ml_query_params_t query = vlc_ml_query_params_create();
 
             ml_unique_ptr<vlc_ml_media_list_t> list(vlc_ml_list_group_media(ml,
                                                                             &query, group.i_id));

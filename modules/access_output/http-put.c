@@ -23,12 +23,13 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 #include <vlc_block.h>
 #include <vlc_strings.h>
-#include "connmgr.h"
-#include "outfile.h"
+#include "../access/http/connmgr.h"
+#include "../access/http/outfile.h"
 
 #define SOUT_CFG_PREFIX "sout-http-put-"
 

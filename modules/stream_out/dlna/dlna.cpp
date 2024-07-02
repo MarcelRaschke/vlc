@@ -32,6 +32,7 @@
 #include <sstream>
 #include <iomanip>
 
+#include <vlc_configuration.h>
 #include <vlc_cxx_helpers.hpp>
 #include <vlc_dialog.h>
 #include <vlc_rand.h>
@@ -51,6 +52,7 @@ namespace DLNA
 struct sout_stream_id_sys_t
 {
     es_format_t           fmt;
+    const char            *es_id;
     sout_stream_id_sys_t  *p_sub_id;
 };
 
@@ -193,7 +195,7 @@ bool sout_stream_sys_t::startSoutChain(sout_stream_t *p_stream,
     {
         sout_stream_id_sys_t *p_sys_id = *it;
         p_sys_id->p_sub_id = static_cast<sout_stream_id_sys_t *>(
-                sout_StreamIdAdd( p_out, &p_sys_id->fmt ) );
+            sout_StreamIdAdd( p_out, &p_sys_id->fmt, p_sys_id->es_id ) );
         if ( p_sys_id->p_sub_id == nullptr )
         {
             msg_Err( p_stream, "can't handle %4.4s stream",
@@ -765,7 +767,8 @@ int MediaRenderer::SetAVTransportURI(const char* uri, const protocol_info_t& pro
     return VLC_SUCCESS;
 }
 
-static void *Add(sout_stream_t *p_stream, const es_format_t *p_fmt)
+static void *
+Add(sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id)
 {
     sout_stream_sys_t *p_sys = static_cast<sout_stream_sys_t *>( p_stream->p_sys );
 
@@ -779,6 +782,7 @@ static void *Add(sout_stream_t *p_stream, const es_format_t *p_fmt)
     if(p_sys_id != nullptr)
     {
         es_format_Copy(&p_sys_id->fmt, p_fmt);
+        p_sys_id->es_id = es_id;
         p_sys_id->p_sub_id = nullptr;
         p_sys->streams.push_back(p_sys_id);
         p_sys->es_changed = true;
@@ -854,9 +858,24 @@ static void Del(sout_stream_t *p_stream, void *_id)
     }
 }
 
-static const struct sout_stream_operations ops = {
-    Add, Del, Send, NULL, Flush, NULL,
-};
+static void CloseSout( sout_stream_t *p_stream )
+{
+    sout_stream_sys_t *p_sys = static_cast<sout_stream_sys_t *>( p_stream->p_sys );
+
+    p_sys->renderer->ConnectionComplete();
+    p_sys->p_upnp->release();
+    delete p_sys;
+}
+
+static const struct sout_stream_operations ops = [] {
+    struct sout_stream_operations ops {};
+    ops.add = Add;
+    ops.del = Del;
+    ops.send = Send;
+    ops.flush = Flush;
+    ops.close = CloseSout;
+    return ops;
+}();
 
 int OpenSout( vlc_object_t *p_this )
 {
@@ -911,16 +930,6 @@ error:
     free(device_url);
     delete p_sys;
     return VLC_EGENERIC;
-}
-
-void CloseSout( vlc_object_t *p_this)
-{
-    sout_stream_t *p_stream = reinterpret_cast<sout_stream_t*>( p_this );
-    sout_stream_sys_t *p_sys = static_cast<sout_stream_sys_t *>( p_stream->p_sys );
-
-    p_sys->renderer->ConnectionComplete();
-    p_sys->p_upnp->release();
-    delete p_sys;
 }
 
 }

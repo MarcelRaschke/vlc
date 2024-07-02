@@ -25,6 +25,7 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_plugin.h>
 #include <vlc_modules.h>
 #include <vlc_codec.h>
@@ -103,7 +104,7 @@ static int           ParseImageAttachments( decoder_t *p_dec );
 
 static subpicture_t        *ParseText     ( decoder_t *, block_t * );
 static void                 ParseUSFHeader( decoder_t * );
-static subpicture_region_t *ParseUSFString( decoder_t *, char * );
+static void ParseUSFString( decoder_t *, char *, vlc_spu_regions * );
 static subpicture_region_t *LoadEmbeddedImage( decoder_t *p_dec, const char *psz_filename, int i_transparent_color );
 
 /*****************************************************************************
@@ -257,14 +258,16 @@ static subpicture_t *ParseText( decoder_t *p_dec, block_t *p_block )
     }
 
     /* Decode USF strings */
-    p_spu->p_region = ParseUSFString( p_dec, psz_subtitle );
+    ParseUSFString( p_dec, psz_subtitle, &p_spu->regions );
 
     p_spu->i_start = p_block->i_pts;
     p_spu->i_stop = p_block->i_pts + p_block->i_length;
-    p_spu->b_ephemer = (p_block->i_length == VLC_TICK_INVALID);
-    p_spu->b_absolute = false;
-    p_spu->i_original_picture_width = p_sys->i_original_width;
-    p_spu->i_original_picture_height = p_sys->i_original_height;
+    p_spu->b_ephemer = (p_block->i_length == 0);
+    if (p_sys->i_original_width > 0 && p_sys->i_original_height > 0)
+    {
+        p_spu->i_original_picture_width = p_sys->i_original_width;
+        p_spu->i_original_picture_height = p_sys->i_original_height;
+    }
 
     free( psz_subtitle );
 
@@ -388,6 +391,7 @@ static void SetupPositions( subpicture_region_t *p_region, char *psz_subtitle )
 
     i_mask = ParsePositionAttributeList( psz_subtitle, &i_align, &i_x, &i_y );
 
+    p_region->b_absolute = false;
     if( i_mask & ATTRIBUTE_ALIGNMENT )
         p_region->i_align = i_align;
 
@@ -408,70 +412,62 @@ static void SetupPositions( subpicture_region_t *p_region, char *psz_subtitle )
 
 static subpicture_region_t *CreateTextRegion( decoder_t *p_dec,
                                               char *psz_subtitle,
+                                              char *psz_plaintext,
                                               int i_sys_align )
 {
     decoder_sys_t        *p_sys = p_dec->p_sys;
     subpicture_region_t  *p_text_region;
-    video_format_t        fmt;
 
     /* Create a new subpicture region */
-    video_format_Init( &fmt, VLC_CODEC_TEXT );
-    fmt.i_width = fmt.i_height = 0;
-    fmt.i_x_offset = fmt.i_y_offset = 0;
-    p_text_region = subpicture_region_New( &fmt );
-    video_format_Clean( &fmt );
+    p_text_region = subpicture_region_NewText();
+    if( p_text_region == NULL )
+        return NULL;
 
-    if( p_text_region != NULL )
+    ssa_style_t  *p_ssa_style = NULL;
+
+    p_ssa_style = ParseStyle( p_sys, psz_subtitle );
+    if( !p_ssa_style )
     {
-        ssa_style_t  *p_ssa_style = NULL;
-
-        p_ssa_style = ParseStyle( p_sys, psz_subtitle );
-        if( !p_ssa_style )
+        for( int i = 0; i < p_sys->i_ssa_styles; i++ )
         {
-            for( int i = 0; i < p_sys->i_ssa_styles; i++ )
-            {
-                if( !strcasecmp( p_sys->pp_ssa_styles[i]->psz_stylename, "Default" ) )
-                    p_ssa_style = p_sys->pp_ssa_styles[i];
-            }
+            if( !strcasecmp( p_sys->pp_ssa_styles[i]->psz_stylename, "Default" ) )
+                p_ssa_style = p_sys->pp_ssa_styles[i];
         }
-
-        /* Set default or user align/margin.
-         * Style overridden if no user value. */
-        p_text_region->i_x = i_sys_align > 0 ? 20 : 0;
-        p_text_region->i_y = 10;
-        p_text_region->i_align = SUBPICTURE_ALIGN_BOTTOM |
-                                 ((i_sys_align > 0) ? i_sys_align : 0);
-
-        if( p_ssa_style )
-        {
-            msg_Dbg( p_dec, "style is: %s", p_ssa_style->psz_stylename );
-
-            /* TODO: Setup % based offsets properly, without adversely affecting
-             *       everything else in vlc. Will address with separate patch,
-             *       to prevent this one being any more complicated.
-
-                     * p_ssa_style->i_margin_percent_h;
-                     * p_ssa_style->i_margin_percent_v;
-             */
-            if( i_sys_align == -1 )
-            {
-                p_text_region->i_align     = p_ssa_style->i_align;
-                p_text_region->i_x         = p_ssa_style->i_margin_h;
-                p_text_region->i_y         = p_ssa_style->i_margin_v;
-            }
-            p_text_region->p_text = text_segment_NewInheritStyle( p_ssa_style->p_style );
-        }
-        else
-        {
-            p_text_region->p_text = text_segment_New( NULL );
-        }
-        /* Look for position arguments which may override the style-based
-         * defaults.
-         */
-        SetupPositions( p_text_region, psz_subtitle );
-
-        p_text_region->p_next = NULL;
     }
+
+    /* Set default or user align/margin.
+     * Style overridden if no user value. */
+    p_text_region->i_x = i_sys_align > 0 ? 20 : 0;
+    p_text_region->i_y = 10;
+    p_text_region->i_align = SUBPICTURE_ALIGN_BOTTOM |
+                             ((i_sys_align > 0) ? i_sys_align : 0);
+
+    if( p_ssa_style )
+    {
+        msg_Dbg( p_dec, "style is: %s", p_ssa_style->psz_stylename );
+
+        /* TODO: Setup % based offsets properly, without adversely affecting
+         *       everything else in vlc. Will address with separate patch,
+         *       to prevent this one being any more complicated.
+
+                 * p_ssa_style->i_margin_percent_h;
+                 * p_ssa_style->i_margin_percent_v;
+         */
+        if( i_sys_align == -1 )
+        {
+            p_text_region->i_align     = p_ssa_style->i_align;
+            p_text_region->i_x         = p_ssa_style->i_margin_h;
+            p_text_region->i_y         = p_ssa_style->i_margin_v;
+        }
+        p_text_region->p_text = text_segment_NewInheritStyle( p_ssa_style->p_style );
+    }
+    else
+    {
+        p_text_region->p_text = text_segment_New( NULL );
+    }
+
+    p_text_region->p_text->psz_text = psz_plaintext;
+
     return p_text_region;
 }
 
@@ -804,152 +800,114 @@ static void ParseUSFHeaderTags( decoder_t *p_dec, xml_reader_t *p_xml_reader )
 
 
 
-static subpicture_region_t *ParseUSFString( decoder_t *p_dec,
-                                            char *psz_subtitle )
+static void ParseUSFString( decoder_t *p_dec,
+                            char *psz_subtitle,
+                            vlc_spu_regions *regions )
 {
     decoder_sys_t        *p_sys = p_dec->p_sys;
-    subpicture_region_t  *p_region_first = NULL;
-    subpicture_region_t  *p_region_upto  = p_region_first;
 
-    while( *psz_subtitle )
+    for( ; *psz_subtitle; psz_subtitle++ )
     {
-        if( *psz_subtitle == '<' )
+        if( *psz_subtitle != '<' )
+            continue;
+
+        char *psz_end;
+        subpicture_region_t *p_region = NULL;
+
+        if(( !strncasecmp( psz_subtitle, "<karaoke ", 9 )) ||
+                ( !strncasecmp( psz_subtitle, "<karaoke>", 9 )))
         {
-            char *psz_end = NULL;
+            psz_end = strcasestr( psz_subtitle, "</karaoke>" );
 
-
-            if(( !strncasecmp( psz_subtitle, "<karaoke ", 9 )) ||
-                    ( !strncasecmp( psz_subtitle, "<karaoke>", 9 )))
-            {
-                psz_end = strcasestr( psz_subtitle, "</karaoke>" );
-
-                if( psz_end )
-                {
-                    subpicture_region_t  *p_text_region;
-
-                    char *psz_flat = NULL;
-                    char *psz_knodes = strndup( &psz_subtitle[9], psz_end - &psz_subtitle[9] );
-                    if( psz_knodes )
-                    {
-                        /* remove timing <k> tags */
-                        psz_flat = CreatePlainText( psz_knodes );
-                        free( psz_knodes );
-                        if( psz_flat )
-                        {
-                            p_text_region = CreateTextRegion( p_dec,
-                                                              psz_flat,
-                                                              p_sys->i_align );
-                            if( p_text_region )
-                            {
-                                free( p_text_region->p_text->psz_text );
-                                p_text_region->p_text->psz_text = psz_flat;
-                                if( !p_region_first )
-                                {
-                                    p_region_first = p_region_upto = p_text_region;
-                                }
-                                else if( p_text_region )
-                                {
-                                    p_region_upto->p_next = p_text_region;
-                                    p_region_upto = p_region_upto->p_next;
-                                }
-                            }
-                            else free( psz_flat );
-                        }
-                    }
-
-                    psz_end += strcspn( psz_end, ">" ) + 1;
-                }
-            }
-            else if(( !strncasecmp( psz_subtitle, "<image ", 7 )) ||
-                    ( !strncasecmp( psz_subtitle, "<image>", 7 )))
-            {
-                subpicture_region_t *p_image_region = NULL;
-
-                psz_end = strcasestr( psz_subtitle, "</image>" );
-                char *psz_content = strchr( psz_subtitle, '>' );
-                int   i_transparent = -1;
-
-                /* If a colorkey parameter is specified, then we have to map
-                 * that index in the picture through as transparent (it is
-                 * required by the USF spec but is also recommended that if the
-                 * creator really wants a transparent colour that they use a
-                 * type like PNG that properly supports it; this goes doubly
-                 * for VLC because the pictures are stored internally in YUV
-                 * and the resulting colour-matching may not produce the
-                 * desired results.)
-                 */
-                char *psz_tmp = GrabAttributeValue( "colorkey", psz_subtitle );
-                if( psz_tmp )
-                {
-                    if( *psz_tmp == '#' )
-                        i_transparent = strtol( psz_tmp + 1, NULL, 16 ) & 0x00ffffff;
-                    free( psz_tmp );
-                }
-                if( psz_content && ( psz_content < psz_end ) )
-                {
-                    char *psz_filename = strndup( &psz_content[1], psz_end - &psz_content[1] );
-                    if( psz_filename )
-                    {
-                        p_image_region = LoadEmbeddedImage( p_dec,
-                                            psz_filename, i_transparent );
-                        free( psz_filename );
-                    }
-                }
-
-                if( psz_end ) psz_end += strcspn( psz_end, ">" ) + 1;
-
-                if( p_image_region )
-                {
-                    SetupPositions( p_image_region, psz_subtitle );
-
-                    p_image_region->p_next   = NULL;
-                }
-                if( !p_region_first )
-                {
-                    p_region_first = p_region_upto = p_image_region;
-                }
-                else if( p_image_region )
-                {
-                    p_region_upto->p_next = p_image_region;
-                    p_region_upto = p_region_upto->p_next;
-                }
-            }
-            else
-            {
-                subpicture_region_t  *p_text_region;
-
-                psz_end = psz_subtitle + strlen( psz_subtitle );
-
-                p_text_region = CreateTextRegion( p_dec,
-                                                  psz_subtitle,
-                                                  p_sys->i_align );
-
-                if( p_text_region )
-                {
-                    free( p_text_region->p_text->psz_text );
-                    p_text_region->p_text->psz_text = CreatePlainText( psz_subtitle );
-                }
-
-                if( !p_region_first )
-                {
-                    p_region_first = p_region_upto = p_text_region;
-                }
-                else if( p_text_region )
-                {
-                    p_region_upto->p_next = p_text_region;
-                    p_region_upto = p_region_upto->p_next;
-                }
-            }
             if( psz_end )
-                psz_subtitle = psz_end - 1;
+            {
+                char *psz_knodes = strndup( &psz_subtitle[9], psz_end - &psz_subtitle[9] );
+                if( psz_knodes )
+                {
+                    /* remove timing <k> tags */
+                    char *psz_flat = CreatePlainText( psz_knodes );
+                    free( psz_knodes );
+                    if( psz_flat )
+                    {
+                        p_region = CreateTextRegion( p_dec,
+                                                     psz_flat,
+                                                     psz_flat,
+                                                     p_sys->i_align );
+                        if( !p_region )
+                            free( psz_flat );
+                    }
+                }
 
-            psz_subtitle += strcspn( psz_subtitle, ">" );
+                psz_end += strcspn( psz_end, ">" ) + 1;
+            }
+        }
+        else if(( !strncasecmp( psz_subtitle, "<image ", 7 )) ||
+                ( !strncasecmp( psz_subtitle, "<image>", 7 )))
+        {
+            psz_end = strcasestr( psz_subtitle, "</image>" );
+            char *psz_content = strchr( psz_subtitle, '>' );
+            int   i_transparent = -1;
+
+            /* If a colorkey parameter is specified, then we have to map
+             * that index in the picture through as transparent (it is
+             * required by the USF spec but is also recommended that if the
+             * creator really wants a transparent colour that they use a
+             * type like PNG that properly supports it; this goes doubly
+             * for VLC because the pictures are stored internally in YUV
+             * and the resulting colour-matching may not produce the
+             * desired results.)
+             */
+            char *psz_tmp = GrabAttributeValue( "colorkey", psz_subtitle );
+            if( psz_tmp )
+            {
+                if( *psz_tmp == '#' )
+                    i_transparent = strtol( psz_tmp + 1, NULL, 16 ) & 0x00ffffff;
+                free( psz_tmp );
+            }
+            if( psz_content && ( psz_content < psz_end ) )
+            {
+                char *psz_filename = strndup( &psz_content[1], psz_end - &psz_content[1] );
+                if( psz_filename )
+                {
+                    p_region = LoadEmbeddedImage( p_dec,
+                                        psz_filename, i_transparent );
+                    free( psz_filename );
+                }
+            }
+
+            if( psz_end ) psz_end += strcspn( psz_end, ">" ) + 1;
+        }
+        else
+        {
+            psz_end = psz_subtitle + strlen( psz_subtitle );
+
+            char *psz_flat = CreatePlainText( psz_subtitle );
+            if( psz_flat )
+            {
+                p_region = CreateTextRegion( p_dec,
+                                             psz_subtitle,
+                                             psz_flat,
+                                             p_sys->i_align );
+                if( !p_region )
+                    free( psz_flat );
+            }
         }
 
-        psz_subtitle++;
-    }
+        if( p_region )
+        {
+            vlc_spu_regions_push(regions, p_region);
 
-    return p_region_first;
+            /* Look for position arguments which may override the style-based
+            * defaults.
+            */
+            SetupPositions( p_region, psz_subtitle );
+        }
+
+        if( psz_end )
+            psz_subtitle = psz_end - 1;
+
+        psz_subtitle += strcspn( psz_subtitle, ">" );
+    }
 }
 
 /*****************************************************************************
@@ -1134,6 +1092,8 @@ static subpicture_region_t *LoadEmbeddedImage( decoder_t *p_dec,
         msg_Err( p_dec, "cannot allocate SPU region" );
         return NULL;
     }
+    p_region->i_x = 0;
+    p_region->i_y = 0;
     assert( p_pic->format.i_chroma == VLC_CODEC_YUVA );
     /* FIXME the copy is probably not needed anymore */
     picture_CopyPixels( p_region->p_picture, p_pic );
@@ -1154,10 +1114,9 @@ static subpicture_region_t *LoadEmbeddedImage( decoder_t *p_dec,
         int i_u =   ( ( -38 * i_r -  74 * i_g + 112 * i_b + 128 ) >> 8 ) + 128 ;
         int i_v =   ( ( 112 * i_r -  94 * i_g -  18 * i_b + 128 ) >> 8 ) + 128 ;
 
-        assert( p_region->fmt.i_chroma == VLC_CODEC_YUVA );
-        for( unsigned int y = 0; y < p_region->fmt.i_height; y++ )
+        for( unsigned int y = 0; y < fmt_out.i_height; y++ )
         {
-            for( unsigned int x = 0; x < p_region->fmt.i_width; x++ )
+            for( unsigned int x = 0; x < fmt_out.i_width; x++ )
             {
                 if( p_region->p_picture->Y_PIXELS[y*p_region->p_picture->Y_PITCH + x] != i_y ||
                     p_region->p_picture->U_PIXELS[y*p_region->p_picture->U_PITCH + x] != i_u ||

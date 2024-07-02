@@ -49,13 +49,10 @@ static void VoutViewpointMoved(void *sys, const vlc_viewpoint_t *vp)
     var_SetAddress(vout, "viewpoint-moved", (void*)vp);
 }
 
-/* Minimum number of display picture */
-#define DISPLAY_PICTURE_COUNT (1)
-
 /*****************************************************************************
  *
  *****************************************************************************/
-vout_display_t *vout_OpenWrapper(vout_thread_t *vout, vout_thread_private_t *sys,
+vout_display_t *vout_OpenWrapper(vout_thread_t *vout,
                      const char *splitter_name, const vout_display_cfg_t *cfg,
                      const video_format_t *fmt, vlc_video_context *vctx)
 {
@@ -81,39 +78,6 @@ vout_display_t *vout_OpenWrapper(vout_thread_t *vout, vout_thread_private_t *sys
     if (vd == NULL)
         return NULL;
 
-    sys->display_pool = NULL;
-
-    const unsigned private_picture  = 4; /* XXX 3 for filter, 1 for SPU */
-    const unsigned kept_picture     = 1; /* last displayed picture */
-    const unsigned reserved_picture = DISPLAY_PICTURE_COUNT +
-                                      private_picture +
-                                      kept_picture;
-
-    picture_pool_t *display_pool = vout_GetPool(vd, reserved_picture);
-    if (display_pool == NULL)
-        goto error;
-
-#ifndef NDEBUG
-    if ( picture_pool_GetSize(display_pool) < reserved_picture )
-        msg_Warn(vout, "Not enough display buffers in the pool, requested %u got %u",
-                 reserved_picture, picture_pool_GetSize(display_pool));
-#endif
-
-    if (!vout_IsDisplayFiltered(vd) &&
-        picture_pool_GetSize(display_pool) >= reserved_picture) {
-        sys->private_pool = picture_pool_Reserve(display_pool, private_picture);
-    } else {
-        sys->private_pool =
-            picture_pool_NewFromFormat(vd->source,
-                                       __MAX(VOUT_MAX_PICTURES,
-                                             reserved_picture - DISPLAY_PICTURE_COUNT));
-    }
-    if (sys->private_pool == NULL) {
-        picture_pool_Release(display_pool);
-        goto error;
-    }
-    sys->display_pool = display_pool;
-
 #ifdef _WIN32
     var_Create(vout, "video-wallpaper", VLC_VAR_BOOL|VLC_VAR_DOINHERIT);
     var_AddCallback(vout, "video-wallpaper", Forward, vd);
@@ -121,22 +85,13 @@ vout_display_t *vout_OpenWrapper(vout_thread_t *vout, vout_thread_private_t *sys
     var_SetBool(VLC_OBJECT(vout), "viewpoint-changeable",
                 vd->fmt->projection_mode != PROJECTION_MODE_RECTANGULAR);
     return vd;
-
-error:
-    vout_display_Delete(vd);
-    return NULL;
 }
 
 /*****************************************************************************
  *
  *****************************************************************************/
-void vout_CloseWrapper(vout_thread_t *vout, vout_thread_private_t *sys, vout_display_t *vd)
+void vout_CloseWrapper(vout_thread_t *vout, vout_display_t *vd)
 {
-    assert(sys->display_pool && sys->private_pool);
-
-    picture_pool_Release(sys->private_pool);
-    sys->display_pool = NULL;
-
 #ifdef _WIN32
     var_DelCallback(vout, "video-wallpaper", Forward, vd);
 #else

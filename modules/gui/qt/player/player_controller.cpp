@@ -23,6 +23,7 @@
 #include "dialogs/extensions/extensions_manager.hpp"
 #include "player_controller.hpp"
 #include "player_controller_p.hpp"
+#include "util/shared_input_item.hpp"
 
 #include <vlc_actions.h>           /* ACTION_ID */
 #include <vlc_url.h>            /* vlc_uri_decode */
@@ -37,23 +38,19 @@
 #include <QSignalMapper>
 #include <QThreadPool>
 
-#include <assert.h>
+#include <cassert>
 
 #define POSITION_MIN_UPDATE_INTERVAL VLC_TICK_FROM_MS(15)
 
 //PlayerController private implementation
 
-using InputItemPtr = vlc_shared_data_ptr_type(input_item_t,
-                                              input_item_Hold,
-                                              input_item_Release);
+using SharedEsId = vlc_shared_data_ptr_type(vlc_es_id_t,
+                                            vlc_es_id_Hold,
+                                            vlc_es_id_Release);
 
-using EsIdPtr = vlc_shared_data_ptr_type(vlc_es_id_t,
-                                         vlc_es_id_Hold,
-                                         vlc_es_id_Release);
-
-using TitleListPtr = vlc_shared_data_ptr_type(vlc_player_title_list,
-                                              vlc_player_title_list_Hold,
-                                              vlc_player_title_list_Release);
+using SharedTitleList = vlc_shared_data_ptr_type(vlc_player_title_list,
+                                                 vlc_player_title_list_Hold,
+                                                 vlc_player_title_list_Release);
 
 PlayerControllerPrivate::~PlayerControllerPrivate()
 {
@@ -284,7 +281,7 @@ static  void on_player_current_media_changed(vlc_player_t *, input_item_t *new_m
         return;
     }
 
-    InputItemPtr newMediaPtr = InputItemPtr( new_media );
+    SharedInputItem newMediaPtr = SharedInputItem( new_media );
     that->callAsync([that,newMediaPtr] () {
         PlayerController* q = that->q_func();
         that->UpdateName( newMediaPtr.get() );
@@ -318,7 +315,7 @@ static void on_player_state_changed(vlc_player_t *, enum vlc_player_state state,
         case VLC_PLAYER_STATE_PLAYING:
         {
             msg_Dbg( that->p_intf, "on_player_state_changed VLC_PLAYER_STATE_PLAYING");
-            PlayerController::AoutPtr aout = q->getAout();
+            SharedAOut aout = q->getAout();
             that->m_audioStereoMode.resetObject( aout.get() );
             that->m_audioMixMode.resetObject( aout.get() );
             that->m_audioVisualization.resetObject( aout.get() );
@@ -482,8 +479,8 @@ static void on_player_track_selection_changed(vlc_player_t *, vlc_es_id_t * unse
     PlayerControllerPrivate* that = static_cast<PlayerControllerPrivate*>(data);
     msg_Dbg( that->p_intf, "on_player_track_selection_changed");
 
-    EsIdPtr unselectedPtr = EsIdPtr(unselected);
-    EsIdPtr selectedPtr = EsIdPtr(selected);
+    SharedEsId unselectedPtr = SharedEsId(unselected);
+    SharedEsId selectedPtr = SharedEsId(selected);
 
     that->callAsync([that,unselectedPtr,selectedPtr] () {
         if (unselectedPtr)
@@ -524,10 +521,10 @@ static void on_player_titles_changed(vlc_player_t *, struct vlc_player_title_lis
     PlayerControllerPrivate* that = static_cast<PlayerControllerPrivate*>(data);
     msg_Dbg( that->p_intf, "on_player_title_array_changed");
 
-    TitleListPtr titleListPtr = TitleListPtr(titles);
+    SharedTitleList sharedTitleList = SharedTitleList(titles);
 
-    that->callAsync([that,titleListPtr] (){
-        struct vlc_player_title_list *titles = titleListPtr.get();
+    that->callAsync([that,sharedTitleList] (){
+        struct vlc_player_title_list *titles = sharedTitleList.get();
         that->m_chapterList.resetTitle(nullptr);
         that->m_titleList.resetTitles(titles);
 
@@ -655,7 +652,8 @@ static void on_player_category_delay_changed(vlc_player_t *,
                 that->m_subtitleDelay = new_delay;
                 emit that->q_func()->subtitleDelayChanged( new_delay );
                 break;
-            default: vlc_assert_unreachable();
+            default:
+                break;
         }
     });
 }
@@ -665,10 +663,10 @@ static void on_player_track_delay_changed(vlc_player_t *,
                                 void *data)
 {
     PlayerControllerPrivate* that = static_cast<PlayerControllerPrivate*>(data);
-    EsIdPtr esIdPtr = EsIdPtr(es_id);
+    SharedEsId sharedEsId = SharedEsId(es_id);
 
-    that->callAsync([that,esIdPtr,new_delay] (){
-        if (that->m_secondarySpuEsId == esIdPtr)
+    that->callAsync([that,sharedEsId,new_delay] (){
+        if (that->m_secondarySpuEsId == sharedEsId)
         {
             that->m_secondarySubtitleDelay = new_delay;
             emit that->q_func()->secondarySubtitleDelayChanged( new_delay );
@@ -748,21 +746,12 @@ static void on_player_atobloop_changed(vlc_player_t *, enum vlc_player_abloop st
     });
 }
 
-static void on_player_media_stopped_action_changed(vlc_player_t *, enum vlc_player_media_stopped_action new_action, void *data)
-{
-    PlayerControllerPrivate* that = static_cast<PlayerControllerPrivate*>(data);
-    that->callAsync([that,new_action] () {
-        that->m_mediaStopAction = static_cast<PlayerController::MediaStopAction>(new_action);
-        emit that->q_func()->mediaStopActionChanged(that->m_mediaStopAction);
-    });
-}
-
 static void on_player_media_meta_changed(vlc_player_t *, input_item_t *media, void *data)
 {
     PlayerControllerPrivate* that = static_cast<PlayerControllerPrivate*>(data);
     msg_Dbg( that->p_intf, "on_player_item_meta_changed");
 
-    InputItemPtr mediaPtr(media);
+    SharedInputItem mediaPtr(media);
     //call on object thread
     that->callAsync([that,mediaPtr] () {
         that->UpdateName(mediaPtr.get());
@@ -815,9 +804,9 @@ static void on_player_vout_changed(vlc_player_t *player, enum vlc_player_vout_ac
         }
         case SPU_ES:
         {
-            EsIdPtr esIdPtr = EsIdPtr(es_id);
-            that->callAsync([that,esIdPtr,order] () {
-                that->UpdateSpuOrder(esIdPtr.get(), order);
+            SharedEsId sharedEsId = SharedEsId(es_id);
+            that->callAsync([that,sharedEsId,order] () {
+                that->UpdateSpuOrder(sharedEsId.get(), order);
             });
             break;
         }
@@ -833,12 +822,12 @@ static void on_player_vout_fullscreen_changed(vout_thread_t* vout, bool is_fulls
     PlayerControllerPrivate* that = static_cast<PlayerControllerPrivate*>(data);
     msg_Dbg( that->p_intf, "on_player_vout_fullscreen_changed %s", is_fullscreen ? "fullscreen" : "windowed");
 
-    PlayerController::VoutPtr voutPtr = PlayerController::VoutPtr(vout);
-    that->callAsync([that,voutPtr,is_fullscreen] () {
+    SharedVOutThread vOutThread(vout);
+    that->callAsync([that,vOutThread,is_fullscreen] () {
         PlayerController* q = that->q_func();
-        const PlayerController::VoutPtrList voutList = q->getVouts();
-        if (voutPtr == nullptr //property sets for all vout
-            || (voutList.size() == 1 && voutPtr.get() == voutList[0].get()) ) //on the only vout
+        const PlayerController::VOutThreadList voutList = q->getVouts();
+        if (vOutThread == nullptr //property sets for all vout
+            || (voutList.size() == 1 && vOutThread.get() == voutList[0].get()) ) //on the only vout
         {
             that->m_fullscreen = is_fullscreen;
             emit q->fullscreenChanged(is_fullscreen);
@@ -851,12 +840,12 @@ static void on_player_vout_wallpaper_mode_changed(vout_thread_t* vout, bool enab
     PlayerControllerPrivate* that = static_cast<PlayerControllerPrivate*>(data);
     msg_Dbg( that->p_intf, "on_player_vout_wallpaper_mode_changed %s", enabled ? "enabled" : "disabled");
 
-    PlayerController::VoutPtr voutPtr = PlayerController::VoutPtr(vout);
-    that->callAsync([that,voutPtr, enabled] () {
+    SharedVOutThread vOutThread(vout);
+    that->callAsync([that,vOutThread, enabled] () {
         PlayerController* q = that->q_func();
-        const PlayerController::VoutPtrList voutList = q->getVouts();
-        if (voutPtr == nullptr  //property sets for all vout
-            || (voutList.size() == 1 && voutPtr.get() == voutList[0].get()) ) //on the only vout
+        const PlayerController::VOutThreadList voutList = q->getVouts();
+        if (vOutThread == nullptr  //property sets for all vout
+            || (voutList.size() == 1 && vOutThread.get() == voutList[0].get()) ) //on the only vout
         {
             that->m_wallpaperMode = enabled;
             emit q->wallpaperModeChanged(enabled);
@@ -906,6 +895,9 @@ static void on_player_timer_update(const struct vlc_player_timer_point *point,
                                    void *data)
 {
     PlayerControllerPrivate* that = static_cast<PlayerControllerPrivate*>(data);
+    if (that->seeking)
+        return;
+
     that->callAsync([that,point_copy = *point](){
         PlayerController* q = that->q_func();
 
@@ -976,6 +968,32 @@ static void on_player_timer_discontinuity(vlc_tick_t system_date, void *data)
     });
 }
 
+static void on_player_timer_seek(const struct vlc_player_timer_point *point,
+                                 void *data)
+{
+    PlayerControllerPrivate* that = static_cast<PlayerControllerPrivate*>(data);
+    if (point != NULL)
+    {
+        that->seeking = true;
+        that->callAsync([that,point_copy = *point](){
+            PlayerController* q = that->q_func();
+
+            that->m_player_time = point_copy;
+            if (that->m_player_time.position > 0)
+                that->m_position = that->m_player_time.position;
+            if (that->m_player_time.ts != VLC_TICK_INVALID)
+                that->m_time = that->m_player_time.ts - VLC_TICK_0;
+
+            q->updatePosition();
+            q->updateTime(VLC_TICK_INVALID, false);
+
+            that->m_position_timer.stop();
+            that->m_time_timer.stop();
+        });
+    }
+    else
+        that->seeking = false;
+}
 static void on_player_timer_smpte_update(const struct vlc_player_timer_smpte_timecode *tc,
                                          void *data)
 {
@@ -1022,13 +1040,14 @@ static const struct vlc_player_cbs player_cbs = {
     on_player_signal_changed,
     on_player_stats_changed,
     on_player_atobloop_changed,
-    on_player_media_stopped_action_changed,
     on_player_media_meta_changed,
     on_player_media_epg_changed,
     on_player_subitems_changed,
+    nullptr, // on_media_attachments_added: not used
     on_player_vout_changed,
     on_player_corks_changed,
-    on_player_playback_restore_queried
+    on_player_playback_restore_queried,
+    nullptr, // on_stopping_current_media: not used
 };
 
 static const vlc_player_vout_cbs player_vout_cbs = []{
@@ -1049,6 +1068,7 @@ static const vlc_player_timer_cbs player_timer_cbs = []{
     struct vlc_player_timer_cbs cbs {};
     cbs.on_update = on_player_timer_update;
     cbs.on_discontinuity = on_player_timer_discontinuity;
+    cbs.on_seek = on_player_timer_seek;
     return cbs;
 }();
 
@@ -1126,7 +1146,7 @@ PlayerController::PlayerController( qt_intf_t *_p_intf )
     connect( &d_ptr->m_position_timer, &QTimer::timeout, this, &PlayerController::updatePositionFromTimer );
     connect( &d_ptr->m_time_timer, &QTimer::timeout, this, &PlayerController::updateTimeFromTimer );
 
-    input_fetcher_cbs.on_art_fetch_ended = onArtFetchEnded_callback;
+    input_preparser_cbs.on_art_fetch_ended = onArtFetchEnded_callback;
 }
 
 PlayerController::~PlayerController()
@@ -1175,13 +1195,6 @@ void PlayerController::setRate( float new_rate )
     vlc_player_locker lock{ d->m_player };
     if ( vlc_player_CanChangeRate( d->m_player ) )
         vlc_player_ChangeRate( d->m_player, new_rate );
-}
-
-void PlayerController::setMediaStopAction(PlayerController::MediaStopAction action)
-{
-    Q_D(PlayerController);
-    vlc_player_locker lock{ d->m_player };
-    vlc_player_SetMediaStoppedAction( d->m_player, static_cast<vlc_player_media_stopped_action>(action) );
 }
 
 void PlayerController::slower()
@@ -1235,9 +1248,12 @@ void PlayerController::setTime(VLCTick new_time)
     vlc_player_SetTime( d->m_player, new_time );
 }
 
-void PlayerController::setPosition(float position)
+void PlayerController::setPosition(double position)
 {
     Q_D(PlayerController);
+    if (qFuzzyCompare(d->m_position, position))
+        return;
+
     vlc_player_locker lock{ d->m_player };
     if( !isCurrentItemSynced() )
         return;
@@ -1276,7 +1292,7 @@ void PlayerController::jumpToTime(VLCTick i_time)
     vlc_player_JumpTime( d->m_player, i_time );
 }
 
-void PlayerController::jumpToPos( float new_pos )
+void PlayerController::jumpToPos( double new_pos )
 {
     Q_D(PlayerController);
     {
@@ -1309,6 +1325,14 @@ void PlayerController::setAudioDelay(VLCTick delay)
     vlc_player_SetAudioDelay( d->m_player, delay, VLC_PLAYER_WHENCE_ABSOLUTE );
 }
 
+/*Q_INVOKABLE*/void PlayerController::addAudioDelay(VLCTick delay)
+{
+    Q_D(PlayerController);
+    vlc_player_locker lock{ d->m_player };
+    vlc_player_SetAudioDelay( d->m_player, delay, VLC_PLAYER_WHENCE_RELATIVE );
+    emit audioDelayChanged(delay);
+}
+
 void PlayerController::setSubtitleDelay(VLCTick delay)
 {
     Q_D(PlayerController);
@@ -1316,6 +1340,14 @@ void PlayerController::setSubtitleDelay(VLCTick delay)
     if(!isCurrentItemSynced() )
         return;
     vlc_player_SetSubtitleDelay( d->m_player, delay, VLC_PLAYER_WHENCE_ABSOLUTE );
+}
+
+/*Q_INVOKABLE*/void PlayerController::addSubtitleDelay(VLCTick delay)
+{
+    Q_D(PlayerController);
+    vlc_player_locker lock{ d->m_player };
+    vlc_player_SetSubtitleDelay( d->m_player, delay, VLC_PLAYER_WHENCE_RELATIVE);
+    emit subtitleDelayChanged(delay);
 }
 
 void PlayerController::setSecondarySubtitleDelay(VLCTick delay)
@@ -1327,6 +1359,17 @@ void PlayerController::setSecondarySubtitleDelay(VLCTick delay)
     if (d->m_secondarySpuEsId.get() != NULL)
         vlc_player_SetEsIdDelay(d->m_player, d->m_secondarySpuEsId.get(),
                                 delay, VLC_PLAYER_WHENCE_ABSOLUTE);
+}
+
+/*Q_INVOKABLE*/void PlayerController::addSecondarySubtitleDelay(VLCTick delay)
+{
+    Q_D(PlayerController);
+    vlc_player_locker lock{ d->m_player };
+    if (d->m_secondarySpuEsId.get() != NULL) {
+        vlc_player_SetEsIdDelay(d->m_player, d->m_secondarySpuEsId.get(),
+                                delay, VLC_PLAYER_WHENCE_RELATIVE);
+        emit secondarySubtitleDelayChanged(delay);
+    }
 }
 
 int PlayerController::getAudioDelayMS() const
@@ -1408,6 +1451,56 @@ void PlayerController::sectionMenu()
         return;
     if( vlc_player_IsStarted( d->m_player ) )
         vlc_player_Navigate( d->m_player, VLC_PLAYER_NAV_MENU );
+}
+
+void PlayerController::navigateUp()
+{
+    Q_D(PlayerController);
+    vlc_player_locker lock{ d->m_player };
+    if( !isCurrentItemSynced() )
+        return;
+    if( vlc_player_IsStarted( d->m_player ) )
+        vlc_player_Navigate( d->m_player, VLC_PLAYER_NAV_UP);
+}
+
+void PlayerController::navigateDown()
+{
+    Q_D(PlayerController);
+    vlc_player_locker lock{ d->m_player };
+    if( !isCurrentItemSynced() )
+        return;
+    if( vlc_player_IsStarted( d->m_player ) )
+        vlc_player_Navigate( d->m_player, VLC_PLAYER_NAV_DOWN);
+}
+
+void PlayerController::navigateLeft()
+{
+    Q_D(PlayerController);
+    vlc_player_locker lock{ d->m_player };
+    if( !isCurrentItemSynced() )
+        return;
+    if( vlc_player_IsStarted( d->m_player ) )
+        vlc_player_Navigate( d->m_player, VLC_PLAYER_NAV_LEFT);
+}
+
+void PlayerController::navigateRight()
+{
+    Q_D(PlayerController);
+    vlc_player_locker lock{ d->m_player };
+    if( !isCurrentItemSynced() )
+        return;
+    if( vlc_player_IsStarted( d->m_player ) )
+        vlc_player_Navigate( d->m_player, VLC_PLAYER_NAV_RIGHT);
+}
+
+void PlayerController::navigateActivate()
+{
+    Q_D(PlayerController);
+    vlc_player_locker lock{ d->m_player };
+    if( !isCurrentItemSynced() )
+        return;
+    if( vlc_player_IsStarted( d->m_player ) )
+        vlc_player_Navigate( d->m_player, VLC_PLAYER_NAV_ACTIVATE);
 }
 
 void PlayerController::chapterNext()
@@ -1497,41 +1590,41 @@ void PlayerController::setTeletextTransparency( bool transparent )
 
 //VOUT PROPERTIES
 
-PlayerController::VoutPtrList PlayerController::getVouts() const
+PlayerController::VOutThreadList PlayerController::getVouts() const
 {
     Q_D(const PlayerController);
     vout_thread_t **pp_vout;
-    VoutPtrList VoutList;
+    VOutThreadList VoutList;
     size_t i_vout;
     {
         vlc_player_locker lock{ d->m_player };
         if( !vlc_player_IsStarted( d->m_player ) )
-            return VoutPtrList{};
+            return VOutThreadList{};
         i_vout = 0;
         pp_vout = vlc_player_vout_HoldAll( d->m_player, &i_vout );
         if ( i_vout <= 0 )
-            return VoutPtrList{};
+            return VOutThreadList{};
     }
     VoutList.reserve( i_vout );
     for( size_t i = 0; i < i_vout; i++ )
     {
         assert( pp_vout[i] );
         //pass ownership
-        VoutList.append(VoutPtr(pp_vout[i], false));
+        VoutList.append(SharedVOutThread(pp_vout[i], false));
     }
     free( pp_vout );
 
     return VoutList;
 }
 
-PlayerController::VoutPtr PlayerController::getVout()
+SharedVOutThread PlayerController::getVout()
 {
     Q_D(PlayerController);
     vlc_player_locker lock{ d->m_player };
     vout_thread_t* vout = vlc_player_vout_Hold( d->m_player );
     if( vout == NULL )
-        return VoutPtr{};
-    return VoutPtr{vout, false};
+        return SharedVOutThread{};
+    return SharedVOutThread{vout, false};
 }
 
 void PlayerController::setFullscreen( bool new_val )
@@ -1569,11 +1662,11 @@ void PlayerController::setAutoscale( bool new_val )
 
 //AOUT PROPERTIES
 
-PlayerController::AoutPtr PlayerController::getAout()
+SharedAOut PlayerController::getAout()
 {
     Q_D(PlayerController);
     vlc_player_locker lock{ d->m_player };
-    return AoutPtr( vlc_player_aout_Hold( d->m_player ), false );
+    return SharedAOut( vlc_player_aout_Hold( d->m_player ), false );
 }
 
 void PlayerController::setVolume(float volume)
@@ -1621,7 +1714,7 @@ bool PlayerController::hasAudioVisualization() const
 
 void PlayerController::menusUpdateAudio( const QString& data )
 {
-    AoutPtr aout = getAout();
+    SharedAOut aout = getAout();
     if( aout )
         aout_DeviceSet( aout.get(), qtu(data) );
 }
@@ -1657,7 +1750,8 @@ void PlayerController::updateTime(vlc_tick_t system_now, bool forceUpdate)
         d->m_remainingTime = VLC_TICK_INVALID;
     emit remainingTimeChanged(d->m_remainingTime);
 
-    if (d->m_player_time.system_date != VLC_TICK_MAX
+    if (system_now != VLC_TICK_INVALID
+     && d->m_player_time.system_date != VLC_TICK_MAX
      && (forceUpdate || !d->m_time_timer.isActive()))
     {
         // Tell the timer to wait until the next second is reached.
@@ -1803,7 +1897,7 @@ void PlayerController::setRecording( bool recording )
 
 void PlayerController::snapshot()
 {
-    VoutPtr vout = getVout();
+    SharedVOutThread vout = getVout();
     if (vout)
     {
         /* Passing a lambda directly would require Qt 5.15:
@@ -1811,8 +1905,8 @@ void PlayerController::snapshot()
          */
         struct SnapshotTask : public QRunnable
         {
-            VoutPtr vout;
-            SnapshotTask(VoutPtr vout) : vout(std::move(vout)) {}
+            SharedVOutThread vout;
+            SnapshotTask(SharedVOutThread vout) : vout(std::move(vout)) {}
             void run() override
             {
                 var_TriggerCallback(vout.get(), "video-snapshot");
@@ -1850,10 +1944,10 @@ void PlayerController::requestArtUpdate( input_item_t *p_item, bool b_forced )
             if ( status & ( ITEM_ART_NOTFOUND|ITEM_ART_FETCHED ) )
                 return;
         }
-        libvlc_ArtRequest( vlc_object_instance(d->p_intf), p_item,
-                           (b_forced) ? META_REQUEST_OPTION_FETCH_ANY
-                                      : META_REQUEST_OPTION_FETCH_LOCAL,
-                           &input_fetcher_cbs, this );
+        libvlc_MetadataRequest( vlc_object_instance(d->p_intf), p_item,
+                                (b_forced) ? META_REQUEST_OPTION_FETCH_ANY
+                                           : META_REQUEST_OPTION_FETCH_LOCAL,
+                                &input_preparser_cbs, this, 0, NULL );
     }
 }
 
@@ -1970,7 +2064,7 @@ PRIMITIVETYPE_GETTER(PlayerController::PlayingState, getPlayingState, m_playing_
 PRIMITIVETYPE_GETTER(QString, getName, m_name)
 PRIMITIVETYPE_GETTER(VLCTick, getTime, m_time)
 PRIMITIVETYPE_GETTER(VLCTick, getRemainingTime, m_remainingTime)
-PRIMITIVETYPE_GETTER(float, getPosition, m_position)
+PRIMITIVETYPE_GETTER(double, getPosition, m_position)
 PRIMITIVETYPE_GETTER(VLCTick, getLength, m_length)
 PRIMITIVETYPE_GETTER(VLCTick, getAudioDelay, m_audioDelay)
 PRIMITIVETYPE_GETTER(VLCTick, getSubtitleDelay, m_subtitleDelay)
@@ -1983,7 +2077,6 @@ PRIMITIVETYPE_GETTER(bool, canRestorePlayback, m_canRestorePlayback);
 PRIMITIVETYPE_GETTER(float, getSubtitleFPS, m_subtitleFPS)
 PRIMITIVETYPE_GETTER(bool, hasVideoOutput, m_hasVideo)
 PRIMITIVETYPE_GETTER(float, getBuffering, m_buffering)
-PRIMITIVETYPE_GETTER(PlayerController::MediaStopAction, getMediaStopAction, m_mediaStopAction)
 PRIMITIVETYPE_GETTER(float, getVolume, m_volume)
 PRIMITIVETYPE_GETTER(bool, isMuted, m_muted)
 PRIMITIVETYPE_GETTER(bool, isFullscreen, m_fullscreen)

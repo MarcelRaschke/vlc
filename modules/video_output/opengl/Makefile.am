@@ -1,6 +1,5 @@
 OPENGL_COMMONSOURCES = \
        video_output/opengl/filter.c \
-       video_output/opengl/filter.h \
        video_output/opengl/filter_priv.h \
        video_output/opengl/filters.c \
        video_output/opengl/filters.h \
@@ -68,14 +67,15 @@ libglinterop_sw_plugin_la_CPPFLAGS += -DUSE_OPENGL_ES2
 endif
 endif
 
-if HAVE_DARWIN
-vout_LTLIBRARIES += libglinterop_sw_plugin.la
+
 if HAVE_OSX
+vout_LTLIBRARIES += libglinterop_sw_plugin.la
 libglinterop_sw_plugin_la_LIBADD = libvlc_opengl.la
-else
+endif
+if HAVE_IOS_OR_TVOS
+vout_LTLIBRARIES += libglinterop_sw_plugin.la
 libglinterop_sw_plugin_la_LIBADD = libvlc_opengles.la
 libglinterop_sw_plugin_la_CPPFLAGS += -DUSE_OPENGL_ES2
-endif
 endif
 
 if HAVE_ANDROID
@@ -113,20 +113,22 @@ libglfilter_draw_plugin_la_LIBADD = libvlc_opengl.la $(GL_LIBS)
 vout_LTLIBRARIES += libglfilter_draw_plugin.la
 endif
 
-if HAVE_DARWIN
-vout_LTLIBRARIES += libglfilter_draw_plugin.la
 if HAVE_OSX
+vout_LTLIBRARIES += libglfilter_draw_plugin.la
 libglfilter_draw_plugin_la_LIBADD = libvlc_opengl.la
-else
+endif
+if HAVE_IOS_OR_TVOS
+vout_LTLIBRARIES += libglfilter_draw_plugin.la
 libglfilter_draw_plugin_la_LIBADD = libvlc_opengles.la $(GLES2_LIBS)
 libglfilter_draw_plugin_la_CFLAGS = -DUSE_OPENGL_ES2=1
-endif
 endif
 
-if HAVE_ANDROID
+if !HAVE_GL
+if HAVE_GLES2
 libglfilter_draw_plugin_la_LIBADD = libvlc_opengles.la $(GLES2_LIBS)
 libglfilter_draw_plugin_la_CFLAGS = -DUSE_OPENGL_ES2=1
 vout_LTLIBRARIES += libglfilter_draw_plugin.la
+endif
 endif
 
 libglfilter_mock_plugin_la_SOURCES = video_output/opengl/filter_mock.c
@@ -137,7 +139,7 @@ libglfilter_mock_plugin_la_LIBADD += libvlc_opengl.la $(GL_LIBS)
 noinst_LTLIBRARIES += libglfilter_mock_plugin.la
 endif
 
-if HAVE_IOS
+if HAVE_IOS_OR_TVOS
 libglfilter_mock_plugin_la_LIBADD += libvlc_opengles.la $(GLES2_LIBS)
 libglfilter_mock_plugin_la_CFLAGS = -DUSE_OPENGL_ES2=1
 noinst_LTLIBRARIES += libglfilter_mock_plugin.la
@@ -148,14 +150,16 @@ libglfilter_mock_plugin_la_LIBADD += libvlc_opengl.la
 noinst_LTLIBRARIES += libglfilter_mock_plugin.la
 endif
 
-if HAVE_ANDROID
+if !HAVE_GL
+if HAVE_GLES2
 libglfilter_mock_plugin_la_LIBADD += libvlc_opengles.la $(GLES2_LIBS)
 libglfilter_mock_plugin_la_CFLAGS = -DUSE_OPENGL_ES2=1
 noinst_LTLIBRARIES += libglfilter_mock_plugin.la
 endif
+endif
 
 if HAVE_LIBPLACEBO
-if HAVE_LIBPLACEBO_SCALE
+if HAVE_LIBPLACEBO_GL
 
 libpl_scale_plugin_la_SOURCES = video_output/opengl/pl_scale.c
 libpl_scale_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) $(LIBPLACEBO_CFLAGS)
@@ -165,20 +169,22 @@ libpl_scale_plugin_la_LIBADD += libvlc_opengl.la
 video_filter_LTLIBRARIES += libpl_scale_plugin.la
 endif
 
-if HAVE_DARWIN
-video_filter_LTLIBRARIES += libpl_scale_plugin.la
 if HAVE_OSX
+video_filter_LTLIBRARIES += libpl_scale_plugin.la
 libpl_scale_plugin_la_LIBADD += libvlc_opengl.la
-else
+endif
+if HAVE_IOS_OR_TVOS
+video_filter_LTLIBRARIES += libpl_scale_plugin.la
 libpl_scale_plugin_la_LIBADD += libvlc_opengles.la
 libpl_scale_plugin_la_CPPFLAGS += -DUSE_OPENGL_ES2=1
-endif
 endif
 
-if HAVE_ANDROID
+if !HAVE_GL
+if HAVE_GLES2
 libpl_scale_plugin_la_LIBADD += libvlc_opengles.la
 libpl_scale_plugin_la_CPPFLAGS += -DUSE_OPENGL_ES2=1
 video_filter_LTLIBRARIES += libpl_scale_plugin.la
+endif
 endif
 
 endif
@@ -209,15 +215,18 @@ libegl_pbuffer_filter_plugin_la_SOURCES = video_filter/egl_pbuffer.c \
 libegl_pbuffer_filter_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) $(EGL_FLAGS)
 libegl_pbuffer_filter_plugin_la_LIBADD = $(EGL_LIBS)
 
+if !HAVE_EMSCRIPTEN
 if HAVE_EGL
 if HAVE_GL
 libegl_pbuffer_filter_plugin_la_LIBADD += libvlc_opengl.la $(GL_LIBS)
 vout_LTLIBRARIES += libegl_pbuffer_filter_plugin.la
-endif
-if HAVE_ANDROID
+else
+if HAVE_GLES2
 libegl_pbuffer_filter_plugin_la_LIBADD += libvlc_opengles.la $(GLES2_LIBS)
 libegl_pbuffer_filter_plugin_la_CPPFLAGS += -DUSE_OPENGL_ES2=1
 vout_LTLIBRARIES += libegl_pbuffer_filter_plugin.la
+endif
+endif
 endif
 endif
 

@@ -22,9 +22,9 @@
 # include "config.h"
 #endif
 
-#include "vlc_player.h"
+#include <vlc_common.h>
+#include <vlc_tick.h>
 #include <vlc_cxx_helpers.hpp>
-#include <vlc_input_item.h>
 #include <vlc_playlist.h>
 #include <QExplicitlySharedDataPointer>
 #include <QUrl>
@@ -34,14 +34,14 @@
 //namespace vlc {
 //  namespace playlist {
 
-using PlaylistItemPtr = vlc_shared_data_ptr_type(vlc_playlist_item_t,
-                                                 vlc_playlist_item_Hold,
-                                                 vlc_playlist_item_Release);
+using SharedPlaylistItem = vlc_shared_data_ptr_type(vlc_playlist_item_t,
+                                                    vlc_playlist_item_Hold,
+                                                    vlc_playlist_item_Release);
 
 /**
  * Playlist item wrapper.
  *
- * It contains both the PlaylistItemPtr and cached data saved while the playlist
+ * It contains both the SharedPlaylistItem and cached data saved while the playlist
  * is locked, so that the fields may be read without synchronization or race
  * conditions.
  */
@@ -64,6 +64,13 @@ public:
         return d ? d->item.get() : nullptr;
     }
 
+    input_item_t *inputItem() const {
+        if (const auto item = raw())
+            return vlc_playlist_item_GetMedia(item);
+        else
+            return nullptr;
+    }
+
     bool isSelected() const;
     void setSelected(bool selected);
 
@@ -84,7 +91,7 @@ public:
 
 private:
     struct Data : public QSharedData {
-        PlaylistItemPtr item;
+        SharedPlaylistItem item;
 
         bool selected = false;
 
@@ -107,7 +114,5 @@ static_assert(sizeof(PlaylistItem) == sizeof(void *), "invalid size of PlaylistI
 
 //  } // namespace playlist
 //} // namespace vlc
-
-Q_DECLARE_METATYPE(PlaylistItem)
 
 #endif

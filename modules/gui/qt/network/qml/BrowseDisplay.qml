@@ -15,32 +15,26 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQml.Models 2.2
-import QtQml 2.11
+import QtQuick
+import QtQuick.Controls
+import QtQml.Models
+import QtQml
 
 import org.videolan.vlc 0.1
 
 import "qrc:///widgets/" as Widgets
+import "qrc:///util/Helpers.js" as Helpers
 import "qrc:///style/"
 
 Widgets.PageLoader {
     id: root
 
-    // Properties
-
-    property var sortModel
-    property var contentModel
-    property bool isViewMultiView: true
-
-    property Component localMenuDelegate
-
     // Settings
 
     pageModel: [{
         name: "home",
-        url: "qrc:///network/BrowseHomeDisplay.qml"
+        default: true,
+        component: browseHome
     }, {
         name: "folders",
         component: browseFolders,
@@ -53,67 +47,70 @@ Widgets.PageLoader {
         guard: function (prop) { return !!prop.tree }
     }]
 
-    loadDefaultView: function() {
-        History.update(["mc", "network", "home"])
-        loadPage("home")
+    localMenuDelegate: (pageName !== "home") ? componentBar : null
+
+    Accessible.role: Accessible.Client
+    Accessible.name: qsTr("Browse view")
+
+    //functions
+
+    function _showBrowseNode(tree, reason) {
+        History.push([...root.pagePrefix, "browse"], { tree: tree }, reason)
     }
 
-    // Events
-    onCurrentItemChanged: {
-        sortModel = currentItem.sortModel;
-        contentModel = currentItem.model;
-
-        isViewMultiView = (currentItem.isViewMultiView === undefined
-                           ||
-                           currentItem.isViewMultiView);
-
-        if (view.name === "home")
-            localMenuDelegate = null
-        else
-            localMenuDelegate = componentBar
+    function _showHome(reason) {
+        History.push([...root.pagePrefix, "home"], reason)
     }
 
-    // Connections
-    Connections {
-        target: (stackView.currentItem instanceof BrowseHomeDisplay) ? stackView.currentItem
-                                                                     : null
 
-        onSeeAll: {
-            if (sd_source === -1)
-                History.push(["mc", "network", "folders", { title: title }])
-            else
-                History.push(["mc", "network", "device", { title: title, sd_source: sd_source }])
-
-            stackView.currentItem.setCurrentItemFocus(reason)
-        }
+    function _showBrowseFolder(title, reason) {
+        History.push([...root.pagePrefix, "folders"], { title: title }, reason)
     }
 
-    Connections {
-        target: stackView.currentItem
-
-        onBrowse: {
-            History.push(["mc", "network", "browse", { tree: tree }])
-
-            stackView.currentItem.setCurrentItemFocus(reason)
-        }
+    function _showBrowseDevices(title, sd_source, reason) {
+        History.push([...root.pagePrefix, "device"], { title: title, sd_source: sd_source }, reason)
     }
 
     // Children
+    Component {
+        id: browseHome
+
+        BrowseHomeDisplay {
+            onSeeAllDevices: (title, sd_source, reason) => {
+                root._showBrowseDevices(title, sd_source, reason)
+            }
+
+            onSeeAllFolders:(title, reason) => {
+                root._showBrowseFolder(title, reason)
+            }
+
+            onBrowse: (tree, reason) => {
+                root._showBrowseNode(tree, reason)
+            }
+        }
+    }
+
 
     Component {
         id: browseFolders
 
         BrowseDeviceView {
             property var sortModel: [
-                { text: I18n.qtr("Alphabetic"), criteria: "name" },
-                { text: I18n.qtr("Url"),        criteria: "mrl"  }
+                { text: qsTr("Alphabetic"), criteria: "name" },
+                { text: qsTr("Url"),        criteria: "mrl"  }
             ]
 
             displayMarginEnd: g_mainDisplay.displayMargin
 
-            model: modelFilter
+            model: StandardPathModel {
+                sortCriteria: MainCtx.sort.criteria
+                sortOrder: MainCtx.sort.order
+                searchPattern: MainCtx.search.pattern
+            }
 
-            sourceModel: StandardPathModel {}
+            onBrowse: (tree, reason) => { root._showBrowseNode(tree, reason) }
+
+            onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
         }
     }
 
@@ -123,23 +120,32 @@ Widgets.PageLoader {
         BrowseDeviceView {
             id: viewDevice
 
-            property var sd_source
+            //@type {NetworkDeviceModel.SDCatType}
+            required property int sd_source
 
             property var sortModel: [
-                { text: I18n.qtr("Alphabetic"), criteria: "name" },
-                { text: I18n.qtr("Url"),        criteria: "mrl"  }
+                { text: qsTr("Alphabetic"), criteria: "name" },
+                { text: qsTr("Url"),        criteria: "mrl"  }
             ]
 
             displayMarginEnd: g_mainDisplay.displayMargin
 
-            model: modelFilter
-
-            sourceModel: NetworkDeviceModel {
+            model: NetworkDeviceModel {
                 ctx: MainCtx
 
                 sd_source: viewDevice.sd_source
                 source_name: "*"
+
+                sortCriteria: MainCtx.sort.criteria
+                sortOrder: MainCtx.sort.order
+                searchPattern: MainCtx.search.pattern
             }
+
+            onBrowse: (tree, reason) => {
+                root._showBrowseNode(tree, reason)
+            }
+
+            onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
         }
     }
 
@@ -147,19 +153,32 @@ Widgets.PageLoader {
         id: browseComponent
 
         BrowseTreeDisplay {
-            providerModel: NetworkMediaModel {
+
+            property alias tree: mediaModel.tree
+
+            model: NetworkMediaModel {
+                id: mediaModel
+
                 ctx: MainCtx
+
+                sortCriteria: MainCtx.sort.criteria
+                sortOrder: MainCtx.sort.order
+                searchPattern: MainCtx.search.pattern
             }
 
             contextMenu: NetworkMediaContextMenu {
-                model: providerModel
+                model: mediaModel
             }
 
             Navigation.cancelAction: function() {
-                History.previous()
-
-                stackView.currentItem.setCurrentItemFocus(Qt.BacktabFocusReason)
+                History.previous(Qt.BacktabFocusReason)
             }
+
+            onBrowse: (tree, reason) => {
+                root._showBrowseNode(tree, reason)
+            }
+
+            onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
         }
     }
 
@@ -167,19 +186,11 @@ Widgets.PageLoader {
         id: componentBar
 
         NetworkAddressbar {
-            path: view.name === "browse" ? root.stackView.currentItem.providerModel.path : []
+            path: root.pageName === "browse" ? root.currentItem.model.path : []
 
-            onHomeButtonClicked: {
-                History.push(["mc", "network", "home"])
+            onHomeButtonClicked: reason => root._showHome(reason)
 
-                stackView.currentItem.setCurrentItemFocus(reason)
-            }
-
-            onBrowse: {
-                History.push(["mc", "network", "browse", { "tree": tree }])
-
-                stackView.currentItem.setCurrentItemFocus(reason)
-            }
+            onBrowse:  (tree, reason) => { root._showBrowseNode(tree, reason) }
         }
     }
 }

@@ -164,6 +164,8 @@ public:
 
     QString errorString() const override
     {
+        if (m_result.isNull() && m_error.isEmpty())
+            return QStringLiteral("Unspecified error.");
         return m_error;
     }
 
@@ -187,12 +189,6 @@ private:
     QImage m_result;
     QString m_error;
 };
-}
-
-SVGColorImageImageProvider::SVGColorImageImageProvider(qt_intf_t* p_intf)
-    : QQuickAsyncImageProvider()
-    , m_intf(p_intf)
-{
 }
 
 QQuickImageResponse* SVGColorImageImageProvider::requestImageResponse(const QString& id, const QSize& requestedSize)

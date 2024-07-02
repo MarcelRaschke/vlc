@@ -1,7 +1,7 @@
 /*****************************************************************************
  * input_decoder.h: test for input_decoder state machine
  *****************************************************************************
- * Copyright (C) 2022 VideoLabs
+ * Copyright (C) 2022-2023 VideoLabs
  *
  * Author: Alexandre Janniaux <ajanni@videolabs.io>
  *
@@ -27,18 +27,29 @@
 
 typedef struct vout_display_t vout_display_t;
 typedef struct intf_thread_t intf_thread_t;
+typedef struct decoder_cc_desc_t decoder_cc_desc_t;
 
 struct input_decoder_scenario {
+    const char *name;
     const char *source;
-    const char *sout;
+    const char *item_option;
+    const vlc_fourcc_t *subpicture_chromas;
     void (*decoder_setup)(decoder_t *);
     void (*decoder_destroy)(decoder_t *);
     int (*decoder_decode)(decoder_t *, picture_t *);
+    void (*cc_decoder_setup)(decoder_t *);
+    void (*cc_decoder_destroy)(decoder_t *);
+    int (*cc_decoder_decode)(decoder_t *, vlc_frame_t *in);
+    vlc_frame_t * (*packetizer_getcc)(decoder_t *, decoder_cc_desc_t *);
     void (*decoder_flush)(decoder_t *);
     void (*display_prepare)(vout_display_t *vd, picture_t *pic);
+    void (*text_renderer_render)(filter_t *filter, const subpicture_region_t *region_in);
+    void (*player_setup_before_start)(vlc_player_t *);
     void (*interface_setup)(intf_thread_t *intf);
     int (*sout_filter_send)(sout_stream_t *stream, void *id, block_t *block);
     void (*sout_filter_flush)(sout_stream_t *stream, void *id);
+    void (*on_track_list_changed)(enum vlc_player_list_action action,
+                                  const struct vlc_player_track *track);
 };
 
 

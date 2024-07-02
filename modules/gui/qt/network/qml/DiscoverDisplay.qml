@@ -15,10 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQml.Models 2.2
-import QtQml 2.11
+import QtQuick
+import QtQuick.Controls
+import QtQml.Models
+import QtQml
 
 import org.videolan.vlc 0.1
 
@@ -29,38 +29,29 @@ import "qrc:///style/"
 Widgets.PageLoader {
     id: root
 
-    property var sortModel
-    property var contentModel
-    property bool isViewMultiView: false
-
     pageModel: [{
-            displayText: I18n.qtr("Services"),
+            displayText: qsTr("Services"),
+            default: true,
             name: "services",
             url: "qrc:///network/ServicesHomeDisplay.qml"
         }, {
-            displayText: I18n.qtr("URL"),
+            displayText: qsTr("URL"),
             name: "url",
             url: "qrc:///network/DiscoverUrlDisplay.qml"
         }
     ]
 
-    loadDefaultView: function () {
-        History.update(["mc", "discover", "services"])
-        loadPage("services")
-    }
+    localMenuDelegate: menuDelegate
 
-    onCurrentItemChanged: {
-        sortModel = currentItem.sortModel
-        contentModel = currentItem.model
-        localMenuDelegate = !!currentItem.localMenuDelegate ? currentItem.localMenuDelegate : menuDelegate
-        isViewMultiView = currentItem.isViewMultiView === undefined || currentItem.isViewMultiView
-    }
-
+    Accessible.role: Accessible.Client
+    Accessible.name: qsTr("Discover view")
 
     function loadIndex(index) {
-        History.push(["mc", "discover", root.pageModel[index].name])
+        const pageName = root.pageModel[index].name
+        if (root.isDefaulLoadedForPath([pageName]))
+            return
+        History.push([...root.pagePrefix, pageName])
     }
-
 
     property ListModel tabModel: ListModel {
         Component.onCompleted: {
@@ -73,16 +64,14 @@ Widgets.PageLoader {
         }
     }
 
-    property Component localMenuDelegate: menuDelegate
-
     Component {
         id: menuDelegate
 
         Widgets.LocalTabBar {
-            currentView: root.view
+            currentView: root.pageName
             model: tabModel
 
-            onClicked: root.loadIndex(index)
+            onClicked: (index) => root.loadIndex(index)
         }
     }
 }

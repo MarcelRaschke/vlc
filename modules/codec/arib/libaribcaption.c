@@ -48,14 +48,7 @@ typedef struct
     /* The following fields of decoder_sys_t are shared between decoder and spu units */
     vlc_atomic_rc_t    rc;
 
-    int                i_cfg_rendering_backend;
-    char*              psz_cfg_font_name;
-    bool               b_cfg_replace_drcs;
-    bool               b_cfg_force_stroke_text;
-    bool               b_cfg_ignore_background;
-    bool               b_cfg_ignore_ruby;
     bool               b_cfg_fadeout;
-    float              f_cfg_stroke_width;
 
     aribcc_context_t  *p_context;
     aribcc_decoder_t  *p_decoder;
@@ -69,8 +62,6 @@ typedef struct
 {
     decoder_sys_t         *p_dec_sys;
     vlc_tick_t             i_pts;
-    unsigned               i_render_area_width;
-    unsigned               i_render_area_height;
     aribcc_render_result_t render_result;
 } libaribcaption_spu_updater_sys_t;
 
@@ -99,50 +90,12 @@ static void DecSysRelease(decoder_sys_t *p_sys)
 /****************************************************************************
  *
  ****************************************************************************/
-static int SubpictureValidate(subpicture_t *p_subpic,
-                              bool b_src_changed, const video_format_t *p_src_format,
-                              bool b_dst_changed, const video_format_t *p_dst_format,
-                              vlc_tick_t i_ts)
-{
-    libaribcaption_spu_updater_sys_t *p_spusys = p_subpic->updater.p_sys;
-    decoder_sys_t *p_sys = p_spusys->p_dec_sys;
-
-    if (b_src_changed || b_dst_changed) {
-        const video_format_t *fmt = p_dst_format;
-        /* don't let library freely scale using either the min of width or height ratio */
-        p_spusys->i_render_area_width = fmt->i_visible_width;
-        p_spusys->i_render_area_height = p_src_format->i_visible_height * fmt->i_visible_width /
-                                         p_src_format->i_visible_width;
-        aribcc_renderer_set_frame_size(p_sys->p_renderer, p_spusys->i_render_area_width,
-                                                          p_spusys->i_render_area_height);
-    }
-
-    const vlc_tick_t i_stream_date = p_spusys->i_pts + (i_ts - p_subpic->i_start);
-
-    aribcc_render_status_t status = aribcc_renderer_render(p_sys->p_renderer,
-                                                           MS_FROM_VLC_TICK(i_stream_date),
-                                                           &p_spusys->render_result);
-    if (status == ARIBCC_RENDER_STATUS_ERROR) {
-        return VLC_SUCCESS;
-    }
-
-    bool b_changed = (status != ARIBCC_RENDER_STATUS_GOT_IMAGE_UNCHANGED);
-
-    if (!b_changed && !b_src_changed && !b_dst_changed &&
-        (p_spusys->render_result.images != NULL) == (p_subpic->p_region != NULL)) {
-        aribcc_render_result_cleanup(&p_spusys->render_result);
-        return VLC_SUCCESS;
-    }
-
-    return VLC_EGENERIC;
-}
-
-static void CopyImageToRegion(subpicture_region_t *p_region, const aribcc_image_t *image)
+static void CopyImageToRegion(picture_t *dst_pic, const aribcc_image_t *image)
 {
     if(image->pixel_format != ARIBCC_PIXELFORMAT_RGBA8888)
         return;
 
-    plane_t *p_dstplane = &p_region->p_picture->p[0];
+    plane_t *p_dstplane = &dst_pic->p[0];
     plane_t srcplane;
     srcplane.i_lines = image->height;
     srcplane.i_pitch = image->stride;
@@ -154,36 +107,65 @@ static void CopyImageToRegion(subpicture_region_t *p_region, const aribcc_image_
 }
 
 static void SubpictureUpdate(subpicture_t *p_subpic,
-                             const video_format_t *p_src_format,
-                             const video_format_t *p_dst_format,
+                             const video_format_t *prev_src, const video_format_t *p_src_format,
+                             const video_format_t *prev_dst, const video_format_t *p_dst_format,
                              vlc_tick_t i_ts)
 {
-    VLC_UNUSED(p_src_format); VLC_UNUSED(p_dst_format); VLC_UNUSED(i_ts);
+    libaribcaption_spu_updater_sys_t *p_spusys = p_subpic->updater.sys;
+    decoder_sys_t *p_sys = p_spusys->p_dec_sys;
 
-    libaribcaption_spu_updater_sys_t *p_spusys = p_subpic->updater.p_sys;
+    bool b_src_changed = p_src_format->i_visible_width  != prev_src->i_visible_width ||
+                         p_src_format->i_visible_height != prev_src->i_visible_height;
+    bool b_dst_changed = !video_format_IsSimilar(prev_dst, p_dst_format);
 
-    video_format_t  fmt = *p_dst_format;
-    fmt.i_chroma         = VLC_CODEC_RGBA;
-    fmt.i_bits_per_pixel = 0;
-    fmt.i_x_offset       = 0;
-    fmt.i_y_offset       = 0;
+    unsigned i_render_area_width  = p_dst_format->i_visible_width;
+    unsigned i_render_area_height = p_src_format->i_visible_height * p_dst_format->i_visible_width /
+                                    p_src_format->i_visible_width;
+    if (b_src_changed || b_dst_changed) {
+        /* don't let library freely scale using either the min of width or height ratio */
+        aribcc_renderer_set_frame_size(p_sys->p_renderer, i_render_area_width,
+                                                          i_render_area_height);
+    }
+
+    const vlc_tick_t i_stream_date = p_spusys->i_pts + (i_ts - p_subpic->i_start);
+
+    /* Retrieve the expected render status for detecting whether the subtitle image changed */
+    aribcc_render_status_t status = aribcc_renderer_try_render(p_sys->p_renderer,
+                                                               MS_FROM_VLC_TICK(i_stream_date));
+    if (status == ARIBCC_RENDER_STATUS_GOT_IMAGE_UNCHANGED) {
+        /* Skip rendering since images were not changed */
+        if (!b_src_changed && !b_dst_changed) {
+            return;
+        }
+    }
+
+    status = aribcc_renderer_render(p_sys->p_renderer,
+                                    MS_FROM_VLC_TICK(i_stream_date),
+                                    &p_spusys->render_result);
+    if (status == ARIBCC_RENDER_STATUS_ERROR) {
+        return;
+    }
+
+    vlc_spu_regions_Clear( &p_subpic->regions );
 
     aribcc_image_t *p_images = p_spusys->render_result.images;
     uint32_t        i_image_count = p_spusys->render_result.image_count;
-
-    p_subpic->i_original_picture_width = p_spusys->i_render_area_width;
-    p_subpic->i_original_picture_height = p_spusys->i_render_area_height;
 
     if (!p_images || i_image_count == 0) {
         return;
     }
 
-    /* Allocate the regions and draw them */
-    subpicture_region_t **pp_region_last = &p_subpic->p_region;
+    p_subpic->i_original_picture_width = i_render_area_width;
+    p_subpic->i_original_picture_height = i_render_area_height;
 
+    video_format_t fmt_region = *p_dst_format;
+    fmt_region.i_chroma       = VLC_CODEC_RGBA;
+    fmt_region.i_x_offset     = 0;
+    fmt_region.i_y_offset     = 0;
+
+    /* Allocate the regions and draw them */
     for (uint32_t i = 0; i < i_image_count; i++) {
         aribcc_image_t *image = &p_images[i];
-        video_format_t  fmt_region = fmt;
 
         fmt_region.i_width =
         fmt_region.i_visible_width  = image->width;
@@ -196,14 +178,14 @@ static void SubpictureUpdate(subpicture_t *p_subpic,
         if (!region)
             break;
 
+        region->b_absolute = true;
         region->i_x = image->dst_x;
         region->i_y = image->dst_y;
         region->i_align = SUBPICTURE_ALIGN_TOP | SUBPICTURE_ALIGN_LEFT;
 
-        CopyImageToRegion(region, image);
+        CopyImageToRegion(region->p_picture, image);
 
-        *pp_region_last = region;
-        pp_region_last = &region->p_next;
+        vlc_spu_regions_push(&p_subpic->regions, region);
     }
 
     aribcc_render_result_cleanup(&p_spusys->render_result);
@@ -211,7 +193,7 @@ static void SubpictureUpdate(subpicture_t *p_subpic,
 
 static void SubpictureDestroy(subpicture_t *p_subpic)
 {
-    libaribcaption_spu_updater_sys_t *p_spusys = p_subpic->updater.p_sys;
+    libaribcaption_spu_updater_sys_t *p_spusys = p_subpic->updater.sys;
     DecSysRelease(p_spusys->p_dec_sys);
     free(p_spusys);
 }
@@ -259,11 +241,15 @@ static int Decode(decoder_t *p_dec, block_t *p_block)
     p_spusys->i_pts = p_block->i_pts;
     memset(&p_spusys->render_result, 0, sizeof(p_spusys->render_result));
 
+    static const struct vlc_spu_updater_ops spu_ops =
+    {
+        .update   = SubpictureUpdate,
+        .destroy  = SubpictureDestroy,
+    };
+
     subpicture_updater_t updater = {
-        .pf_validate = SubpictureValidate,
-        .pf_update   = SubpictureUpdate,
-        .pf_destroy  = SubpictureDestroy,
-        .p_sys       = p_spusys,
+        .sys = p_spusys,
+        .ops = &spu_ops,
     };
 
     subpicture_t *p_spu = decoder_NewSubpicture(p_dec, &updater);
@@ -275,7 +261,6 @@ static int Decode(decoder_t *p_dec, block_t *p_block)
     }
     p_spu->i_start = p_block->i_pts;
     p_spu->i_stop = p_block->i_pts;
-    p_spu->b_absolute = true;
     p_spu->b_fade = p_sys->b_cfg_fadeout;
 
     if (caption.wait_duration == ARIBCC_DURATION_INDEFINITE) {
@@ -351,14 +336,7 @@ static int Open(vlc_object_t *p_this)
 
     vlc_atomic_rc_init(&p_sys->rc);
 
-    p_sys->i_cfg_rendering_backend = var_InheritInteger(p_this, ARIBCAPTION_CFG_PREFIX "rendering-backend");
-    p_sys->psz_cfg_font_name = var_InheritString(p_this, ARIBCAPTION_CFG_PREFIX "font");
-    p_sys->b_cfg_replace_drcs = var_InheritBool(p_this, ARIBCAPTION_CFG_PREFIX "replace-drcs");
-    p_sys->b_cfg_force_stroke_text = var_InheritBool(p_this, ARIBCAPTION_CFG_PREFIX "force-stroke-text");
-    p_sys->b_cfg_ignore_background = var_InheritBool(p_this, ARIBCAPTION_CFG_PREFIX "ignore-background");
-    p_sys->b_cfg_ignore_ruby = var_InheritBool(p_this, ARIBCAPTION_CFG_PREFIX "ignore-ruby");
     p_sys->b_cfg_fadeout = var_InheritBool(p_this, ARIBCAPTION_CFG_PREFIX "fadeout");
-    p_sys->f_cfg_stroke_width = var_InheritFloat(p_this, ARIBCAPTION_CFG_PREFIX "stroke-width");
 
     vlc_mutex_init(&p_sys->dec_lock);
     p_sys->p_dec = p_dec;
@@ -407,25 +385,39 @@ static int Open(vlc_object_t *p_this)
         return VLC_EGENERIC;
     }
 
+    int i_cfg_rendering_backend =
+        var_InheritInteger(p_this, ARIBCAPTION_CFG_PREFIX "rendering-backend");
     b_succ = aribcc_renderer_initialize(p_renderer,
                                         ARIBCC_CAPTIONTYPE_CAPTION,
                                         ARIBCC_FONTPROVIDER_TYPE_AUTO,
-                                        (aribcc_textrenderer_type_t)p_sys->i_cfg_rendering_backend);
+                                        (aribcc_textrenderer_type_t)i_cfg_rendering_backend);
     if (!b_succ) {
         msg_Err(p_dec, "libaribcaption renderer initialization failed");
         DecSysRelease(p_sys);
         return VLC_EGENERIC;
     }
-    aribcc_renderer_set_storage_policy(p_renderer, ARIBCC_CAPTION_STORAGE_POLICY_MINIMUM, 0);
-    aribcc_renderer_set_replace_drcs(p_renderer, p_sys->b_cfg_replace_drcs);
-    aribcc_renderer_set_force_stroke_text(p_renderer, p_sys->b_cfg_force_stroke_text);
-    aribcc_renderer_set_force_no_background(p_renderer, p_sys->b_cfg_ignore_background);
-    aribcc_renderer_set_force_no_ruby(p_renderer, p_sys->b_cfg_ignore_ruby);
-    aribcc_renderer_set_stroke_width(p_renderer, p_sys->f_cfg_stroke_width);
 
-    if (p_sys->psz_cfg_font_name && strlen(p_sys->psz_cfg_font_name) > 0) {
-        const char* font_families[] = { p_sys->psz_cfg_font_name };
-        aribcc_renderer_set_default_font_family(p_renderer, font_families, 1, true);
+    aribcc_renderer_set_storage_policy(p_renderer, ARIBCC_CAPTION_STORAGE_POLICY_MINIMUM, 0);
+
+    bool b_cfg_replace_drcs = var_InheritBool(p_this, ARIBCAPTION_CFG_PREFIX "replace-drcs");
+    bool b_cfg_force_stroke_text = var_InheritBool(p_this, ARIBCAPTION_CFG_PREFIX "force-stroke-text");
+    bool b_cfg_ignore_background = var_InheritBool(p_this, ARIBCAPTION_CFG_PREFIX "ignore-background");
+    bool b_cfg_ignore_ruby = var_InheritBool(p_this, ARIBCAPTION_CFG_PREFIX "ignore-ruby");
+    float f_cfg_stroke_width = var_InheritFloat(p_this, ARIBCAPTION_CFG_PREFIX "stroke-width");
+    aribcc_renderer_set_replace_drcs(p_renderer, b_cfg_replace_drcs);
+    aribcc_renderer_set_force_stroke_text(p_renderer, b_cfg_force_stroke_text);
+    aribcc_renderer_set_force_no_background(p_renderer, b_cfg_ignore_background);
+    aribcc_renderer_set_force_no_ruby(p_renderer, b_cfg_ignore_ruby);
+    aribcc_renderer_set_stroke_width(p_renderer, f_cfg_stroke_width);
+
+    char *psz_cfg_font_name = var_InheritString(p_this, ARIBCAPTION_CFG_PREFIX "font");
+    if (psz_cfg_font_name) {
+        const char* font_families[] = { psz_cfg_font_name };
+        aribcc_renderer_set_default_font_family(p_renderer,
+                                                font_families,
+                                                ARRAY_SIZE(font_families),
+                                                true);
+        free(psz_cfg_font_name);
     }
 
     p_dec->p_sys = p_sys;

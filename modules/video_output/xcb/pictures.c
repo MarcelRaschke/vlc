@@ -24,6 +24,7 @@
 # include <config.h>
 #endif
 
+#include <stdbit.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <errno.h>
@@ -63,19 +64,19 @@ bool vlc_xcb_VisualToFormat(const xcb_setup_t *setup, uint_fast8_t depth,
         /* Check that VLC supports the TrueColor visual. */
         switch (depth)
         {
-            /* TODO: 32 bits RGBA */
             /* TODO: 30 bits HDR RGB */
+            case 32:
             case 24:
-                if (vlc_popcount(vt->red_mask) == 8
-                 && vlc_popcount(vt->green_mask) == 8
-                 && vlc_popcount(vt->red_mask) == 8)
+                if (stdc_count_ones(vt->red_mask) == 8
+                 && stdc_count_ones(vt->green_mask) == 8
+                 && stdc_count_ones(vt->red_mask) == 8)
                     break; /* 32-bits ARGB or 24-bits RGB */
                 return false;
             case 16:
             case 15:
-                if (vlc_popcount(vt->red_mask) == 5
-                 && vlc_popcount(vt->green_mask) == (depth - 10)
-                 && vlc_popcount(vt->red_mask) == 5)
+                if (stdc_count_ones(vt->red_mask) == 5
+                 && stdc_count_ones(vt->green_mask) == (depth - 10u)
+                 && stdc_count_ones(vt->red_mask) == 5)
                     break; /* 16-bits or 15-bits RGB */
                 return false;
             case 8:
@@ -91,42 +92,127 @@ bool vlc_xcb_VisualToFormat(const xcb_setup_t *setup, uint_fast8_t depth,
         if (depth != 8)
             return false;
     }
+    else
+        return false; /* unsupported visual class */
 
     const xcb_format_t *fmt = vlc_xcb_DepthToPixmapFormat(setup, depth);
     if (unlikely(fmt == NULL))
         return false;
 
-    /* Byte sex is a non-issue for 8-bits. It can be worked around with
-     * RGB masks for 24-bits. Too bad for 15-bits and 16-bits. */
-    if (fmt->bits_per_pixel == 16 && setup->image_byte_order != ORDER)
-        return false;
-
     /* Check that VLC supports the pixel format. */
     switch (fmt->depth)
     {
+        case 32:
+            if (fmt->bits_per_pixel != 32)
+                return false;
+            /* fallthrough */
         case 24:
             if (fmt->bits_per_pixel == 32)
-                f->i_chroma = VLC_CODEC_RGB32;
+            {
+                if (vt->red_mask   == 0x00ff0000 &&
+                    vt->green_mask == 0x0000ff00 &&
+                    vt->blue_mask  == 0x000000ff)
+                {
+                    f->i_chroma = setup->image_byte_order == XCB_IMAGE_ORDER_MSB_FIRST ?
+                                  VLC_CODEC_XRGB : VLC_CODEC_BGRX;
+                }
+                else
+                if (vt->red_mask   == 0x000000ff &&
+                    vt->green_mask == 0x0000ff00 &&
+                    vt->blue_mask  == 0x00ff0000)
+                {
+                    f->i_chroma = setup->image_byte_order == XCB_IMAGE_ORDER_MSB_FIRST ?
+                                  VLC_CODEC_XBGR : VLC_CODEC_RGBX;
+                }
+                else
+                if (vt->red_mask   == 0xff000000 &&
+                    vt->green_mask == 0x00ff0000 &&
+                    vt->blue_mask  == 0x0000ff00)
+                {
+                    f->i_chroma = setup->image_byte_order == XCB_IMAGE_ORDER_MSB_FIRST ?
+                                  VLC_CODEC_RGBX : VLC_CODEC_XBGR;
+                }
+                else
+                if (vt->red_mask   == 0x0000ff00 &&
+                    vt->green_mask == 0x00ff0000 &&
+                    vt->blue_mask  == 0xff000000)
+                {
+                    f->i_chroma = setup->image_byte_order == XCB_IMAGE_ORDER_MSB_FIRST ?
+                                  VLC_CODEC_BGRX : VLC_CODEC_XRGB;
+                }
+                else
+                    return false;
+            }
             else if (fmt->bits_per_pixel == 24)
-                f->i_chroma = VLC_CODEC_RGB24;
+            {
+                if (vt->red_mask   == 0xff0000 &&
+                    vt->green_mask == 0x00ff00 &&
+                    vt->blue_mask  == 0x0000ff)
+                {
+                    f->i_chroma = setup->image_byte_order == XCB_IMAGE_ORDER_MSB_FIRST ?
+                                  VLC_CODEC_RGB24 : VLC_CODEC_BGR24;
+                }
+                else
+                if (vt->red_mask   == 0x0000ff &&
+                    vt->green_mask == 0x00ff00 &&
+                    vt->blue_mask  == 0xff0000)
+                {
+                    f->i_chroma = setup->image_byte_order == XCB_IMAGE_ORDER_MSB_FIRST ?
+                                  VLC_CODEC_BGR24 : VLC_CODEC_RGB24;
+                }
+                else
+                    return false;
+            }
             else
                 return false;
             break;
         case 16:
             if (fmt->bits_per_pixel != 16)
                 return false;
-            f->i_chroma = VLC_CODEC_RGB16;
+            if (vt->red_mask   == 0xf800 &&
+                vt->green_mask == 0x07e0 &&
+                vt->blue_mask  == 0x001f)
+            {
+                f->i_chroma = setup->image_byte_order == XCB_IMAGE_ORDER_MSB_FIRST ?
+                              VLC_CODEC_RGB565BE : VLC_CODEC_RGB565LE;
+            }
+            else
+            if (vt->red_mask   == 0x001f &&
+                vt->green_mask == 0x07e0 &&
+                vt->blue_mask  == 0xf800)
+            {
+                f->i_chroma = setup->image_byte_order == XCB_IMAGE_ORDER_MSB_FIRST ?
+                              VLC_CODEC_BGR565BE : VLC_CODEC_BGR565LE;
+            }
+            else
+                return false;
             break;
         case 15:
             if (fmt->bits_per_pixel != 16)
                 return false;
-            f->i_chroma = VLC_CODEC_RGB15;
+            if (vt->red_mask   == 0x7c00 &&
+                vt->green_mask == 0x03e0 &&
+                vt->blue_mask  == 0x001f)
+            {
+                f->i_chroma = setup->image_byte_order == XCB_IMAGE_ORDER_MSB_FIRST ?
+                              VLC_CODEC_RGB555BE : VLC_CODEC_RGB555LE;
+            }
+            else
+            if (vt->red_mask   == 0x001f &&
+                vt->green_mask == 0x03e0 &&
+                vt->blue_mask  == 0x7c00)
+            {
+                f->i_chroma = setup->image_byte_order == XCB_IMAGE_ORDER_MSB_FIRST ?
+                              VLC_CODEC_BGR555BE : VLC_CODEC_BGR555LE;
+            }
+            else
+                return false;
             break;
         case 8:
             if (fmt->bits_per_pixel != 8)
                 return false;
             if (vt->_class == XCB_VISUAL_CLASS_TRUE_COLOR)
-                f->i_chroma = VLC_CODEC_RGB8;
+                f->i_chroma = VLC_CODEC_RGB233;
             else
                 f->i_chroma = VLC_CODEC_GREY;
             break;
@@ -134,9 +220,6 @@ bool vlc_xcb_VisualToFormat(const xcb_setup_t *setup, uint_fast8_t depth,
             vlc_assert_unreachable();
     }
 
-    f->i_rmask = vt->red_mask;
-    f->i_gmask = vt->green_mask;
-    f->i_bmask = vt->blue_mask;
     return true;
 }
 

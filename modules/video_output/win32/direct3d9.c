@@ -52,9 +52,7 @@
 
 #include <windows.h>
 #include <d3d9.h>
-#ifdef HAVE_D3DX9EFFECT_H
 #include <d3dx9effect.h>
-#endif
 #include "../../video_chroma/d3d9_fmt.h"
 #include <dxvahd.h>
 
@@ -119,19 +117,8 @@ static const vlc_fourcc_t d3d_subpicture_chromas[] = {
     0
 };
 
-typedef struct
-{
-    const char   *name;
-    D3DFORMAT    format;    /* D3D format */
-    vlc_fourcc_t fourcc;    /* VLC fourcc */
-    uint32_t     rmask;
-    uint32_t     gmask;
-    uint32_t     bmask;
-} d3d9_format_t;
-
 typedef struct vout_display_sys_t
 {
-    vout_display_sys_win32_t sys;       /* only use if sys.event is not NULL */
     display_win32_area_t     area;
 
     bool allow_hw_yuv;    /* Should we use hardware YUV->RGB conversions */
@@ -279,17 +266,31 @@ static void orientationVertexOrder(video_orientation_t orientation, int vertex_o
 }
 
 static void  Direct3D9SetupVertices(CUSTOMVERTEX *vertices,
-                                  const RECT *full_texture, const RECT *visible_texture,
-                                  const RECT *rect_in_display,
+                                  const RECT *full_texture, const video_format_t *src_fmt,
+                                  const vout_display_place_t *place_in_display,
                                   int alpha,
                                   video_orientation_t orientation)
 {
+    RECT rect_in_display = {
+        .left   = place_in_display->x,
+        .right  = place_in_display->x + place_in_display->width,
+        .top    = place_in_display->y,
+        .bottom = place_in_display->y + place_in_display->height,
+    };
+
+    RECT visible_texture = {
+        .left   = src_fmt->i_x_offset,
+        .right  = src_fmt->i_x_offset + src_fmt->i_visible_width,
+        .top    = src_fmt->i_y_offset,
+        .bottom = src_fmt->i_y_offset + src_fmt->i_visible_height,
+    };
+
     /* Vertices of the dst rectangle in the unrotated (clockwise) order. */
     const int vertices_coords[4][2] = {
-        { rect_in_display->left,  rect_in_display->top    },
-        { rect_in_display->right, rect_in_display->top    },
-        { rect_in_display->right, rect_in_display->bottom },
-        { rect_in_display->left,  rect_in_display->bottom },
+        { rect_in_display.left,  rect_in_display.top    },
+        { rect_in_display.right, rect_in_display.top    },
+        { rect_in_display.right, rect_in_display.bottom },
+        { rect_in_display.left,  rect_in_display.bottom },
     };
 
     /* Compute index remapping necessary to implement the rotation. */
@@ -301,10 +302,10 @@ static void  Direct3D9SetupVertices(CUSTOMVERTEX *vertices,
         vertices[i].y  = vertices_coords[vertex_order[i]][1];
     }
 
-    float texture_right  = (float)visible_texture->right / (float)full_texture->right;
-    float texture_left   = (float)visible_texture->left  / (float)full_texture->right;
-    float texture_top    = (float)visible_texture->top    / (float)full_texture->bottom;
-    float texture_bottom = (float)visible_texture->bottom / (float)full_texture->bottom;
+    float texture_right  = (float)visible_texture.right / (float)full_texture->right;
+    float texture_left   = (float)visible_texture.left  / (float)full_texture->right;
+    float texture_top    = (float)visible_texture.top    / (float)full_texture->bottom;
+    float texture_bottom = (float)visible_texture.bottom / (float)full_texture->bottom;
 
     vertices[0].tu = texture_left;
     vertices[0].tv = texture_top;
@@ -411,14 +412,8 @@ static int Direct3D9ImportPicture(vout_display_t *vd,
 
     /* */
     region->texture = sys->sceneTexture;
-    RECT rect_in_display = {
-        .left   = sys->area.place.x,
-        .right  = sys->area.place.x + sys->area.place.width,
-        .top    = sys->area.place.y,
-        .bottom = sys->area.place.y + sys->area.place.height,
-    };
-    Direct3D9SetupVertices(region->vertex, &texture_visible_rect, &source_visible_rect,
-                           &rect_in_display, 255, vd->source->orientation);
+    Direct3D9SetupVertices(region->vertex, &texture_visible_rect, vd->source,
+                           &sys->area.place, 255, vd->source->orientation);
     return VLC_SUCCESS;
 }
 
@@ -668,7 +663,6 @@ static int Direct3D9CreateScene(vout_display_t *vd, const video_format_t *fmt)
     return VLC_SUCCESS;
 }
 
-#ifdef HAVE_D3DX9EFFECT_H
 static int Direct3D9CompileShader(vout_display_t *vd, const char *shader_source, size_t source_length)
 {
     vout_display_sys_t *sys = vd->sys;
@@ -722,9 +716,6 @@ static int Direct3D9CompileShader(vout_display_t *vd, const char *shader_source,
     }
     return VLC_SUCCESS;
 }
-#else
-# define Direct3D9CompileShader(a,b,c)  VLC_EGENERIC
-#endif
 
 #define MAX_SHADER_FILE_SIZE  (1024*1024)
 
@@ -879,13 +870,12 @@ static int Direct3D9Reset(vout_display_t *vd, const video_format_t *fmtp)
 
 static void Direct3D9ImportSubpicture(vout_display_t *vd,
                                      size_t *count_ptr, d3d_region_t **region,
-                                     subpicture_t *subpicture)
+                                     const vlc_render_subpicture *subpicture)
 {
     vout_display_sys_t *sys = vd->sys;
 
-    size_t count = 0;
-    for (subpicture_region_t *r = subpicture->p_region; r; r = r->p_next)
-        count++;
+    size_t count = subpicture->regions.size;
+    const struct subpicture_region_rendered *r;
 
     *count_ptr = count;
     *region    = calloc(count, sizeof(**region));
@@ -895,7 +885,7 @@ static void Direct3D9ImportSubpicture(vout_display_t *vd,
     }
 
     int i = 0;
-    for (subpicture_region_t *r = subpicture->p_region; r; r = r->p_next, i++) {
+    vlc_vector_foreach(r, &subpicture->regions) {
         d3d_region_t *d3dr = &(*region)[i];
         HRESULT hr;
 
@@ -904,17 +894,18 @@ static void Direct3D9ImportSubpicture(vout_display_t *vd,
             d3d_region_t *cache = &sys->d3dregion[j];
             if (cache->texture &&
                 cache->format == sys->d3dregion_format &&
-                cache->width  == r->fmt.i_width &&
-                cache->height == r->fmt.i_height) {
+                cache->width  == r->p_picture->format.i_width &&
+                cache->height == r->p_picture->format.i_height) {
                 *d3dr = *cache;
                 memset(cache, 0, sizeof(*cache));
+                sys->clear_scene = true;
                 break;
             }
         }
         if (!d3dr->texture) {
             d3dr->format = sys->d3dregion_format;
-            d3dr->width  = r->fmt.i_width;
-            d3dr->height = r->fmt.i_height;
+            d3dr->width  = r->p_picture->format.i_width;
+            d3dr->height = r->p_picture->format.i_height;
             hr = IDirect3DDevice9_CreateTexture(sys->d3d9_device->d3ddev.dev,
                                                 d3dr->width, d3dr->height,
                                                 1,
@@ -927,11 +918,12 @@ static void Direct3D9ImportSubpicture(vout_display_t *vd,
                 d3dr->texture = NULL;
                 msg_Err(vd, "Failed to create %dx%d texture for OSD (hr=0x%lX)",
                         d3dr->width, d3dr->height, hr);
+                i++;
                 continue;
             }
 #ifndef NDEBUG
             msg_Dbg(vd, "Created %dx%d texture for OSD",
-                    r->fmt.i_width, r->fmt.i_height);
+                    r->p_picture->format.i_width, r->p_picture->format.i_height);
 #endif
         }
 
@@ -943,18 +935,18 @@ static void Direct3D9ImportSubpicture(vout_display_t *vd,
             uint8_t  *src_data   = r->p_picture->p->p_pixels;
             int       src_pitch  = r->p_picture->p->i_pitch;
 
-            if (d3dr->format == D3DFMT_A8B8G8R8) {
+            if (d3dr->format == D3DFMT_A8B8G8R8 /*|| d3dr->format == D3DFMT_A8R8G8B8*/) {
                 if (dst_pitch == r->p_picture->p->i_pitch) {
-                    memcpy(dst_data, src_data, r->fmt.i_height * dst_pitch);
+                    memcpy(dst_data, src_data, r->p_picture->format.i_height * dst_pitch);
                 } else {
                     int copy_pitch = __MIN(dst_pitch, r->p_picture->p->i_pitch);
-                    for (unsigned y = 0; y < r->fmt.i_height; y++) {
+                    for (unsigned y = 0; y < r->p_picture->format.i_height; y++) {
                         memcpy(&dst_data[y * dst_pitch], &src_data[y * src_pitch], copy_pitch);
                     }
                 }
             } else {
                 int copy_pitch = __MIN(dst_pitch, r->p_picture->p->i_pitch);
-                for (unsigned y = 0; y < r->fmt.i_height; y++) {
+                for (unsigned y = 0; y < r->p_picture->format.i_height; y++) {
                     for (int x = 0; x < copy_pitch; x += 4) {
                         dst_data[y * dst_pitch + x + 0] = src_data[y * src_pitch + x + 2];
                         dst_data[y * dst_pitch + x + 1] = src_data[y * src_pitch + x + 1];
@@ -971,34 +963,15 @@ static void Direct3D9ImportSubpicture(vout_display_t *vd,
         }
 
         /* Map the subpicture to sys->sys.sys.place */
-        const float scale_w = (float)(sys->area.place.width)  / subpicture->i_original_picture_width;
-        const float scale_h = (float)(sys->area.place.height) / subpicture->i_original_picture_height;
-
-        RECT rect_in_display;
-        rect_in_display.left   =            scale_w * r->i_x,
-        rect_in_display.right  = rect_in_display.left + scale_w * r->fmt.i_visible_width,
-        rect_in_display.top    =            scale_h * r->i_y,
-        rect_in_display.bottom = rect_in_display.top  + scale_h * r->fmt.i_visible_height;
-
-        rect_in_display.left   += sys->area.place.x;
-        rect_in_display.right  += sys->area.place.x;
-        rect_in_display.top    += sys->area.place.y;
-        rect_in_display.bottom += sys->area.place.y;
-
         RECT texture_rect;
         texture_rect.left   = 0;
-        texture_rect.right  = r->fmt.i_width;
+        texture_rect.right  = r->p_picture->format.i_width;
         texture_rect.top    = 0;
-        texture_rect.bottom = r->fmt.i_height;
+        texture_rect.bottom = r->p_picture->format.i_height;
 
-        RECT texture_visible_rect;
-        texture_visible_rect.left   = r->fmt.i_x_offset;
-        texture_visible_rect.right  = r->fmt.i_x_offset + r->fmt.i_visible_width;
-        texture_visible_rect.top    = r->fmt.i_y_offset;
-        texture_visible_rect.bottom = r->fmt.i_y_offset + r->fmt.i_visible_height;
-
-        Direct3D9SetupVertices(d3dr->vertex, &texture_rect, &texture_visible_rect,
-                              &rect_in_display, subpicture->i_alpha * r->i_alpha / 255, ORIENT_NORMAL);
+        Direct3D9SetupVertices(d3dr->vertex, &texture_rect, &r->p_picture->format,
+                              &r->place, r->i_alpha, ORIENT_NORMAL);
+        i++;
     }
 }
 
@@ -1089,7 +1062,7 @@ static void Direct3D9RenderScene(vout_display_t *vd,
     if (sys->startEndRenderingCb && !sys->startEndRenderingCb( sys->outside_opaque, true ))
         return;
 
-    if (sys->clear_scene) {
+    if (sys->clear_scene || sys->d3dregion_count != subpicture_count) {
         /* Clear the backbuffer and the zbuffer */
         hr = IDirect3DDevice9_Clear(d3ddev, 0, NULL, D3DCLEAR_TARGET,
                                   D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
@@ -1128,7 +1101,7 @@ static void Direct3D9RenderScene(vout_display_t *vd,
 }
 
 static void Prepare(vout_display_t *vd, picture_t *picture,
-                    subpicture_t *subpicture, vlc_tick_t date)
+                    const vlc_render_subpicture *subpicture, vlc_tick_t date)
 {
     VLC_UNUSED(date);
     vout_display_sys_t *sys = vd->sys;
@@ -1139,7 +1112,7 @@ static void Prepare(vout_display_t *vd, picture_t *picture,
         RECT rect;
         UINT width, height;
 
-        GetClientRect(p_sys->sys.hvideownd, &rect);
+        GetClientRect(CommonVideoHWND(&sys->area), &rect);
         width  = RECTWidth(rect);
         height = RECTHeight(rect);
 
@@ -1198,6 +1171,11 @@ static void Prepare(vout_display_t *vd, picture_t *picture,
 
         picture_t fake_pic = *picture;
         picture_UpdatePlanes(&fake_pic, d3drect.pBits, d3drect.Pitch);
+
+        /* The dx/d3d buffer is always allocated as YV12 */
+        if (fake_pic.format.i_chroma == VLC_CODEC_I420)
+            picture_SwapUV( &fake_pic );
+
         picture_CopyPixels(&fake_pic, picture);
         IDirect3DSurface9_UnlockRect(surface);
     }
@@ -1263,9 +1241,9 @@ static void Swap(vout_display_t *vd)
 
     HRESULT hr;
     if (sys->d3d9_device->hd3d.use_ex) {
-        hr = IDirect3DDevice9Ex_PresentEx(p_d3d9_dev->devex, &src, &src, sys->sys.hvideownd, NULL, 0);
+        hr = IDirect3DDevice9Ex_PresentEx(p_d3d9_dev->devex, &src, &src, CommonVideoHWND(&sys->area), NULL, 0);
     } else {
-        hr = IDirect3DDevice9_Present(p_d3d9_dev->dev, &src, &src, sys->sys.hvideownd, NULL);
+        hr = IDirect3DDevice9_Present(p_d3d9_dev->dev, &src, &src, CommonVideoHWND(&sys->area), NULL);
     }
     if (FAILED(hr)) {
         msg_Dbg(vd, "Failed Present: 0x%lX", hr);
@@ -1330,25 +1308,24 @@ static int Direct3D9CheckConversion(vout_display_t *vd, D3DFORMAT src)
 
 static const d3d9_format_t d3d_formats[] = {
     /* YV12 is always used for planar 420, the planes are then swapped in Lock() */
-    { "YV12",       MAKEFOURCC('Y','V','1','2'),    VLC_CODEC_YV12,  0,0,0 },
-    { "YV12",       MAKEFOURCC('Y','V','1','2'),    VLC_CODEC_I420,  0,0,0 },
-    { "YV12",       MAKEFOURCC('Y','V','1','2'),    VLC_CODEC_J420,  0,0,0 },
-    { "NV12",       MAKEFOURCC('N','V','1','2'),    VLC_CODEC_NV12,  0,0,0 },
-    { "DXA9",       MAKEFOURCC('N','V','1','2'),    VLC_CODEC_D3D9_OPAQUE,  0,0,0 },
-    { "DXA9_422",   MAKEFOURCC('Y','U','Y','2'),    VLC_CODEC_D3D9_OPAQUE,  0,0,0 },
-    { "DXA9_444",   MAKEFOURCC('A','Y','U','V'),    VLC_CODEC_D3D9_OPAQUE,  0,0,0 },
-    { "DXA9_10",    MAKEFOURCC('P','0','1','0'),    VLC_CODEC_D3D9_OPAQUE_10B, 0,0,0 },
-    { "DXA9_10_422", MAKEFOURCC('Y','2','1','0'),   VLC_CODEC_D3D9_OPAQUE_10B, 0,0,0 },
-    { "DXA9_10_444", MAKEFOURCC('Y','4','1','0'),   VLC_CODEC_D3D9_OPAQUE_10B, 0,0,0 },
-    { "UYVY",       D3DFMT_UYVY,    VLC_CODEC_UYVY,  0,0,0 },
-    { "YUY2",       D3DFMT_YUY2,    VLC_CODEC_YUYV,  0,0,0 },
-    { "X8R8G8B8",   D3DFMT_X8R8G8B8,VLC_CODEC_RGB32, 0xff0000, 0x00ff00, 0x0000ff },
-    { "A8R8G8B8",   D3DFMT_A8R8G8B8,VLC_CODEC_RGB32, 0xff0000, 0x00ff00, 0x0000ff },
-    { "8G8B8",      D3DFMT_R8G8B8,  VLC_CODEC_RGB24, 0xff0000, 0x00ff00, 0x0000ff },
-    { "R5G6B5",     D3DFMT_R5G6B5,  VLC_CODEC_RGB16, 0x1f<<11, 0x3f<<5,  0x1f<<0 },
-    { "X1R5G5B5",   D3DFMT_X1R5G5B5,VLC_CODEC_RGB15, 0x1f<<10, 0x1f<<5,  0x1f<<0 },
+    { "YV12",       MAKEFOURCC('Y','V','1','2'),    VLC_CODEC_YV12 },
+    { "YV12",       MAKEFOURCC('Y','V','1','2'),    VLC_CODEC_I420 },
+    { "NV12",       MAKEFOURCC('N','V','1','2'),    VLC_CODEC_NV12 },
+    { "DXA9",       MAKEFOURCC('N','V','1','2'),    VLC_CODEC_D3D9_OPAQUE },
+    { "DXA9_422",   MAKEFOURCC('Y','U','Y','2'),    VLC_CODEC_D3D9_OPAQUE },
+    { "DXA9_444",   MAKEFOURCC('A','Y','U','V'),    VLC_CODEC_D3D9_OPAQUE },
+    { "DXA9_10",    MAKEFOURCC('P','0','1','0'),    VLC_CODEC_D3D9_OPAQUE_10B },
+    { "DXA9_10_422", MAKEFOURCC('Y','2','1','0'),   VLC_CODEC_D3D9_OPAQUE_10B },
+    { "DXA9_10_444", MAKEFOURCC('Y','4','1','0'),   VLC_CODEC_D3D9_OPAQUE_10B },
+    { "UYVY",       D3DFMT_UYVY,    VLC_CODEC_UYVY },
+    { "YUY2",       D3DFMT_YUY2,    VLC_CODEC_YUYV },
+    { "X8R8G8B8",   D3DFMT_X8R8G8B8,VLC_CODEC_BGRX },
+    { "A8R8G8B8",   D3DFMT_A8R8G8B8,VLC_CODEC_BGRA },
+    { "R8G8B8",     D3DFMT_R8G8B8,  VLC_CODEC_BGR24 },
+    { "R5G6B5",     D3DFMT_R5G6B5,  VLC_CODEC_RGB565LE },
+    { "X1R5G5B5",   D3DFMT_X1R5G5B5,VLC_CODEC_RGB555LE },
 
-    { NULL, 0, 0, 0,0,0}
+    { NULL, 0, 0 }
 };
 
 static const d3d9_format_t *FindBufferFormat(D3DFORMAT fmt)
@@ -1397,7 +1374,7 @@ static const d3d9_format_t *Direct3DFindFormat(vout_display_t *vd, const video_f
             for (unsigned j = 0; d3d_formats[j].name; j++) {
                 const d3d9_format_t *format = &d3d_formats[j];
 
-                if (format->fourcc != list[i])
+                if (format->vlc_chroma != list[i])
                     continue;
                 if (decoder_format != D3DFMT_UNKNOWN && format->format != decoder_format)
                     continue; // not the Hardware format we prefer
@@ -1435,7 +1412,7 @@ static void SetupProcessorInput(vout_display_t *vd, const video_format_t *fmt, c
         .right  = vd->source->i_x_offset + vd->source->i_visible_width,
         .top    = vd->source->i_y_offset,
         .bottom = vd->source->i_y_offset + vd->source->i_visible_height,
-    };;
+    };
     IDXVAHD_VideoProcessor_SetVideoProcessStreamState( sys->processor.proc, 0, DXVAHD_STREAM_STATE_SOURCE_RECT, sizeof(srcRect), &srcRect );
 
     DXVAHD_BLT_STATE_TARGET_RECT_DATA dstRect;
@@ -1633,8 +1610,9 @@ static int Direct3D9Open(vout_display_t *vd, video_format_t *fmt, vlc_video_cont
     msg_Dbg(vd, "found input surface format %s for source %4.4s", d3dfmt->name, (const char *)&vd->source->i_chroma);
 
     bool force_dxva_hd = var_InheritBool(vd, "direct3d9-dxvahd");
-    if (force_dxva_hd || (dst_format && vd->source->color_range != COLOR_RANGE_FULL && dst_format->rmask && !d3dfmt->rmask &&
-                          sys->d3d9_device->d3ddev.identifier.VendorId == GPU_MANUFACTURER_NVIDIA))
+    if (force_dxva_hd || (dst_format && vd->source->color_range != COLOR_RANGE_FULL &&
+                          sys->d3d9_device->d3ddev.identifier.VendorId == GPU_MANUFACTURER_NVIDIA &&
+                          !vlc_fourcc_IsYUV(dst_format->vlc_chroma) && vlc_fourcc_IsYUV(d3dfmt->vlc_chroma)))
     {
         // NVIDIA bug, YUV to RGB internal conversion in StretchRect always converts from limited to limited range
         msg_Dbg(vd, "init DXVA-HD processor from %s to %s", d3dfmt->name, dst_format?dst_format->name:"unknown");
@@ -1659,10 +1637,7 @@ static int Direct3D9Open(vout_display_t *vd, video_format_t *fmt, vlc_video_cont
 
     /* */
     *fmt = *vd->source;
-    fmt->i_chroma = d3dfmt->fourcc;
-    fmt->i_rmask  = d3dfmt->rmask;
-    fmt->i_gmask  = d3dfmt->gmask;
-    fmt->i_bmask  = d3dfmt->bmask;
+    fmt->i_chroma = d3dfmt->vlc_chroma;
     sys->sw_texture_fmt = d3dfmt;
 
     if (Direct3D9CreateResources(vd, fmt)) {
@@ -1688,7 +1663,7 @@ static void Direct3D9Close(vout_display_t *vd)
 static int Control(vout_display_t *vd, int query)
 {
     vout_display_sys_t *sys = vd->sys;
-    CommonControl(vd, &sys->area, &sys->sys, query);
+    CommonControl(vd, &sys->area, query);
     return VLC_SUCCESS;
 }
 
@@ -1784,7 +1759,7 @@ static int Open(vout_display_t *vd,
     if (!sys)
         return VLC_ENOMEM;
 
-    CommonInit(&sys->area);
+    CommonInit(&sys->area, vd->source);
 
     sys->outside_opaque = var_InheritAddress( vd, "vout-cb-opaque" );
     sys->updateOutputCb      = var_InheritAddress( vd, "vout-cb-update-output" );
@@ -1794,7 +1769,7 @@ static int Open(vout_display_t *vd,
     if ( sys->swapCb == NULL || sys->startEndRenderingCb == NULL || sys->updateOutputCb == NULL )
     {
         /* use our own callbacks, since there isn't any external ones */
-        if (CommonWindowInit(vd, &sys->area, &sys->sys, false))
+        if (CommonWindowInit(vd, &sys->area, false))
             goto error;
 
         sys->outside_opaque = vd;
@@ -1802,6 +1777,8 @@ static int Open(vout_display_t *vd,
         sys->swapCb              = LocalSwapchainSwap;
         sys->startEndRenderingCb = NULL;
     }
+
+    CommonPlacePicture(vd, &sys->area);
 
     sys->dec_device = context ? vlc_video_context_HoldDevice(context) : NULL;
     sys->d3d9_device = GetD3D9OpaqueDevice(sys->dec_device);
@@ -1830,9 +1807,6 @@ static int Open(vout_display_t *vd,
                 sys->d3d9_device->d3ddev.caps.MaxTextureHeight);
         goto error;
     }
-
-    if (sys->swapCb == LocalSwapchainSwap)
-        CommonPlacePicture(vd, &sys->area);
 
     sys->hxdll = Direct3D9LoadShaderLibrary();
     if (!sys->hxdll)
@@ -1872,7 +1846,7 @@ static int Open(vout_display_t *vd,
     return VLC_SUCCESS;
 error:
     Direct3D9Close(vd);
-    CommonWindowClean(&sys->sys);
+    CommonWindowClean(&sys->area);
     Direct3D9Destroy(sys);
     free(vd->sys);
     return VLC_EGENERIC;
@@ -1887,7 +1861,7 @@ static void Close(vout_display_t *vd)
 
     Direct3D9Close(vd);
 
-    CommonWindowClean(&sys->sys);
+    CommonWindowClean(&sys->area);
 
     Direct3D9Destroy(sys);
 

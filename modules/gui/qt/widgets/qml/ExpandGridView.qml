@@ -15,9 +15,12 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQml.Models 2.11
-import QtQuick.Controls 2.4
+
+import QtQuick
+import QtQuick.Window
+import QtQuick.Controls
+
+import QtQml.Models
 
 import org.videolan.vlc 0.1
 
@@ -54,7 +57,12 @@ FocusScope {
 
     readonly property int rowHeight: cellHeight + verticalSpacing
 
-    property int rowX: 0
+    // This property enables you to reuse items that are instantiated for
+    // different indexes when particular index goes out of view
+    // not setting may result in large performance penalty
+    // default is true
+    property bool reuseItems: true
+
     property int horizontalSpacing: VLCStyle.column_spacing
     property int verticalSpacing: VLCStyle.column_spacing
 
@@ -68,7 +76,10 @@ FocusScope {
 
     readonly property int _contentWidth: width - rightMargin - leftMargin
 
-    property Util.SelectableDelegateModel selectionDelegateModel
+    property ListSelectionModel selectionModel: ListSelectionModel {
+        model: root.model
+    }
+
     property QtAbstractItemModel model
 
     property int currentIndex: 0
@@ -88,12 +99,33 @@ FocusScope {
 
     property int _currentFocusReason: Qt.OtherFocusReason
 
-    //delegate to display the extended item
-    property Component delegate: Item{}
+    // The delegate provides a template defining each item instantiated by the view.
+    // 'delegate' must have following properties defined -
+    // 'var model'
+    //      - set by ExpandGridView, this defines model data associated with item
+    //        index data can be accesses by the model roles
+    // 'int index'
+    //      - set by ExpandGridView, this defines the index to which this delegate
+    //        is associated to
+    // 'bool selected'
+    //      - set by ExpandGridView, this defines if the associated index is selected
+    //        in selectionModel
+    //
+    // optional properties -
+    // 'bool delayRemove'
+    //      - if defined and set, item will not be removed when it goes out of view
+    //        ExpandGridView will never modify this value
+    //
+    property Component delegate: Item {
+        property var model: null
+        property int index: - 1
+        property bool selected: false
+    }
 
     property var _idChildrenList: []
     property var _unusedItemList: []
     property var _currentRange: [0,0]
+    property var _delayedChildrenMap: ({})
 
     // Aliases
 
@@ -122,13 +154,32 @@ FocusScope {
 
     // Settings
 
+    contentWidth: {
+        const size = _effectiveCellWidth * nbItemPerRow - horizontalSpacing
+
+        return leftMargin + size + rightMargin
+    }
+
+    contentHeight: {
+        const size = getItemPos(_count - 1)[1] + rowHeight + _expandItemVerticalSpace
+
+        // NOTE: topMargin and headerHeight are included in root.getItemPos.
+        if (footerItem)
+            return size + footerItem.height + bottomMargin
+        else
+            return size + bottomMargin
+    }
+
     Accessible.role: Accessible.Table
 
     activeFocusOnTab: true
 
     // Events
 
-    Component.onCompleted: flickable.layout(true)
+    Component.onCompleted: {
+        if (_initialize())
+            flickable.layout(true)
+    }
 
     onHeightChanged: flickable.layout(false)
 
@@ -153,10 +204,17 @@ FocusScope {
         flickable.layout(true)
     }
 
+    onReuseItemsChanged: {
+        if (!reuseItems) {
+            _unusedItemList.forEach((item) => { item.destroy() })
+            _unusedItemList = []
+        }
+    }
+
     // Keys
 
-    Keys.onPressed: {
-        var newIndex = -1
+    Keys.onPressed: (event) => {
+        let newIndex = -1
         if (KeyHelper.matchRight(event)) {
             if ((currentIndex + 1) % nbItemPerRow !== 0) {//are we not at the end of line
                 newIndex = Math.min(_count - 1, currentIndex + 1)
@@ -166,7 +224,7 @@ FocusScope {
                 newIndex = Math.max(0, currentIndex - 1)
             }
         } else if (KeyHelper.matchDown(event)) {
-            var lastIndex = _count - 1
+            const lastIndex = _count - 1
             // we are not on the last line
             if (Math.floor(currentIndex / nbItemPerRow)
                 !==
@@ -195,9 +253,9 @@ FocusScope {
         if (newIndex !== -1 && newIndex !== currentIndex) {
             event.accepted = true;
 
-            var oldIndex = currentIndex;
+            const oldIndex = currentIndex;
             currentIndex = newIndex;
-            selectionDelegateModel.updateSelection(event.modifiers, oldIndex, newIndex)
+            selectionModel.updateSelection(event.modifiers, oldIndex, newIndex)
 
             // NOTE: We make sure we have the proper visual focus on components.
             if (oldIndex < currentIndex)
@@ -211,13 +269,13 @@ FocusScope {
         }
     }
 
-    Keys.onReleased: {
+    Keys.onReleased: (event) => {
         if (!_releaseActionButtonPressed)
             return
 
         if (event.matches(StandardKey.SelectAll)) {
             event.accepted = true
-            selectionDelegateModel.select(model.index(0, 0), ItemSelectionModel.Select | ItemSelectionModel.Columns)
+            selectionModel.selectAll()
         } else if ( KeyHelper.matchOk(event) ) {
             event.accepted = true
             actionAtIndex(currentIndex)
@@ -229,44 +287,52 @@ FocusScope {
 
     Connections {
         target: model
-        onDataChanged: {
-            var iMin = topLeft.row
-            var iMax = bottomRight.row + 1 // [] => [)
-            var f_l = _currentRange
+        function onDataChanged(topLeft, bottomRight, roles) {
+            const iMin = topLeft.row
+            const iMax = bottomRight.row + 1 // [] => [)
+            const f_l = _currentRange
+
+            _refreshDelayedChildData(iMin, iMax)
+
             if (iMin < f_l[1] && f_l[0] < iMax) {
                 _refreshData(iMin, iMax)
             }
         }
-        onRowsInserted: _onModelCountChanged()
-        onRowsRemoved: _onModelCountChanged()
-        onModelReset: _onModelCountChanged()
+        function onRowsInserted() { _onModelCountChanged() }
+        function onRowsRemoved() { _onModelCountChanged() }
+        function onModelReset() { _onModelCountChanged() }
 
         // NOTE: This is useful for SortFilterProxyModel(s).
-        onLayoutChanged: _onModelCountChanged()
+        function onLayoutChanged() { _onModelCountChanged() }
     }
 
     Connections {
-        target: selectionDelegateModel
+        target: selectionModel
 
-        onSelectionChanged: {
-            var i
-            for (i = 0; i < selected.length; ++i) {
+        function onSelectionChanged(selected, deselected) {
+            for (let i = 0; i < selected.length; ++i) {
                 _updateSelectedRange(selected[i].topLeft, selected[i].bottomRight, true)
             }
 
-            for (i = 0; i < deselected.length; ++i) {
+            for (let i = 0; i < deselected.length; ++i) {
                 _updateSelectedRange(deselected[i].topLeft, deselected[i].bottomRight, false)
             }
         }
 
         function _updateSelectedRange(topLeft, bottomRight, select) {
-            var iMin = topLeft.row
-            var iMax = bottomRight.row + 1 // [] => [)
+            let iMin = topLeft.row
+            let iMax = bottomRight.row + 1 // [] => [)
+
+            // delayed children can be out of currentRange
+            _updateDelayedChildSelected(iMin, iMax, select)
+
             if (iMin < root._currentRange[1] && root._currentRange[0] < iMax) {
+                // only update item in the view
                 iMin = Math.max(iMin, root._currentRange[0])
                 iMax = Math.min(iMax, root._currentRange[1])
-                for (var j = iMin; j < iMax; j++) {
-                    var item = root._getItem(j)
+
+                for (let j = iMin; j < iMax; j++) {
+                    const item = root._getItem(j)
                     console.assert(item)
                     item.selected = select
                 }
@@ -276,7 +342,7 @@ FocusScope {
 
     Connections {
         target: MainCtx
-        onIntfScaleFactorChanged: flickable.layout(true)
+        function onIntfScaleFactorChanged() { flickable.layout(true) }
     }
 
     // Animations
@@ -289,17 +355,45 @@ FocusScope {
 
     // Functions
 
+    // NOTE: This function is useful to set the currentItem without losing the visual focus.
+    function setCurrentItem(index) {
+        if (currentIndex === index)
+            return
+
+        let reason
+
+        let item = _getItem(index)
+
+        if (item)
+            reason = item.focusReason
+        else
+            reason = _currentFocusReason
+
+        currentIndex = index
+
+        item = _getItem(index)
+
+        if (reason !== Qt.OtherFocusReason) {
+            if (item)
+                Helpers.enforceFocus(item, reason)
+            else
+                setCurrentItemFocus(reason)
+        }
+    }
+
     function setCurrentItemFocus(reason) {
 
         // NOTE: Saving the focus reason for later.
         _currentFocusReason = reason;
 
-        if (!model || model.count === 0 || currentIndex === -1) {
+        if (!model || model.count === 0) {
             // NOTE: By default we want the focus on the flickable.
             flickable.forceActiveFocus(reason);
-
             return;
         }
+
+        if (currentIndex === -1)
+            currentIndex = 0
 
         if (_containsItem(currentIndex))
             Helpers.enforceFocus(_getItem(currentIndex), reason);
@@ -340,17 +434,17 @@ FocusScope {
     }
 
     function getItemRowCol(id) {
-        var rowId = Math.floor(id / nbItemPerRow)
-        var colId = id % nbItemPerRow
+        const rowId = Math.floor(id / nbItemPerRow)
+        const colId = id % nbItemPerRow
         return [colId, rowId]
     }
 
     function getItemPos(id) {
-        var rowCol = getItemRowCol(id);
+        const rowCol = getItemRowCol(id);
 
-        var x = rowCol[0] * _effectiveCellWidth + contentLeftMargin;
+        const x = rowCol[0] * _effectiveCellWidth + contentLeftMargin;
 
-        var y = rowCol[1] * rowHeight + headerHeight + topMargin;
+        const y = rowCol[1] * rowHeight + headerHeight + topMargin;
 
         // NOTE: Position needs to be integer based if we want to avoid visual artifacts like
         //       wrong alignments or blurry texture rendering.
@@ -365,30 +459,18 @@ FocusScope {
             index < 0 || index >= _count)
             return
 
-        var itemTopY = getItemPos(index)[1]
-        var itemBottomY = itemTopY + rowHeight
-
-        var viewTopY = flickable.contentY
-        var viewBottomY = viewTopY + flickable.height
-
-        var newContentY
-
-        if (itemTopY < viewTopY)
-             //item above view
-            newContentY = itemTopY - topMargin
-        else if (itemBottomY > viewBottomY)
-             //item below view
-            newContentY = itemBottomY + bottomMargin - flickable.height
-        else
-            newContentY = flickable.contentY
+        const newContentY = Helpers.flickablePositionContaining(flickable,
+                                                                getItemPos(index)[1]
+                                                                , rowHeight
+                                                                , topMargin, bottomMargin)
 
         if (newContentY !== flickable.contentY)
             animateFlickableContentY(newContentY)
     }
 
     function leftClickOnItem(modifier, index) {
-        selectionDelegateModel.updateSelection(modifier, currentIndex, index)
-        if (selectionDelegateModel.isSelected(model.index(index, 0)))
+        selectionModel.updateSelection(modifier, currentIndex, index)
+        if (selectionModel.isSelected(index))
             currentIndex = index
         else if (currentIndex === index) {
             if (_containsItem(currentIndex))
@@ -401,7 +483,7 @@ FocusScope {
     }
 
     function rightClickOnItem(index) {
-        if (!selectionDelegateModel.isSelected(model.index(index, 0))) {
+        if (!selectionModel.isSelected(index)) {
             leftClickOnItem(Qt.NoModifier, index)
         }
     }
@@ -415,87 +497,102 @@ FocusScope {
 
     // Private
 
+    // returns true if this requires forceLayout
     function _initialize() {
         if (_isInitialised)
             return;
 
-        if (flickable.width === 0 || flickable.height === 0)
-            return;
-        if (currentIndex !== 0)
-            positionViewAtIndex(currentIndex, ItemView.Contain)
         _isInitialised = true;
+        if (flickable.width === 0 || flickable.height === 0)
+            return false;
+
+        if (currentIndex !== 0) {
+            positionViewAtIndex(currentIndex, ItemView.Contain)
+            return false; // positionViewAtIndex will cause layout
+        }
+
+        return true
     }
 
     function _calculateCurrentRange() {
-        var myContentY = flickable.contentY
-        var contentYWithoutExpand = myContentY
-        var heightWithoutExpand = flickable.height + displayMarginEnd
+        const myContentY = flickable.contentY
+        let contentYWithoutExpand = myContentY
+        let heightWithoutExpand = flickable.height + displayMarginEnd
 
         if (expandIndex !== -1) {
-            var expandItemY = getItemPos(flickable.getExpandItemGridId())[1]
+            const expandItemY = getItemPos(flickable.getExpandItemGridId())[1]
 
             if (myContentY >= expandItemY && myContentY < expandItemY + _expandItemVerticalSpace)
                 contentYWithoutExpand = expandItemY
             if (myContentY >= expandItemY + _expandItemVerticalSpace)
                 contentYWithoutExpand = myContentY - _expandItemVerticalSpace
 
-            var expandYStart = Math.max(myContentY, expandItemY)
-            var expandYEnd = Math.min(myContentY + height, expandItemY + _expandItemVerticalSpace)
-            var expandDisplayedHeight = Math.max(expandYEnd - expandYStart, 0)
+            const expandYStart = Math.max(myContentY, expandItemY)
+            const expandYEnd = Math.min(myContentY + height, expandItemY + _expandItemVerticalSpace)
+            const expandDisplayedHeight = Math.max(expandYEnd - expandYStart, 0)
             heightWithoutExpand -= expandDisplayedHeight
         }
 
-        var onlyGridContentY = contentYWithoutExpand - headerHeight - topMargin
-        var rowId = Math.floor(onlyGridContentY / rowHeight)
-        var firstId = Math.max(rowId * nbItemPerRow, 0)
+        const onlyGridContentY = contentYWithoutExpand - headerHeight - topMargin
+        const firstRowId = Math.floor(onlyGridContentY / rowHeight)
+        const firstId = Math.max(firstRowId * nbItemPerRow, 0)
 
-        rowId = Math.ceil((onlyGridContentY + heightWithoutExpand) / rowHeight)
-        var lastId = Math.min(rowId * nbItemPerRow, _count)
+        const lastRowId = Math.ceil((onlyGridContentY + heightWithoutExpand) / rowHeight)
+        const lastId = Math.min(lastRowId * nbItemPerRow, _count)
 
         return [firstId, lastId]
     }
 
     function _getItem(id) {
-        var i = id - _currentRange[0]
+        const i = id - _currentRange[0]
         return _idChildrenList[i]
     }
 
     function _setItem(id, item) {
-        var i = id - _currentRange[0]
+        const i = id - _currentRange[0]
         _idChildrenList[i] = item
     }
 
     function _containsItem(id) {
-        var i = id - _currentRange[0]
-        var childrenList = _idChildrenList
+        const i = id - _currentRange[0]
+        const childrenList = _idChildrenList
         return i >= 0 && i < childrenList.length && typeof childrenList[i] !== "undefined"
     }
 
     function _indexToZ(id) {
-        var rowCol = getItemRowCol(id)
+        const rowCol = getItemRowCol(id)
         return rowCol[0] % 2 + 2 * (rowCol[1] % 2)
     }
 
-    function _repositionItem(id, x, y) {
-        var item = _getItem(id)
-        console.assert(item !== undefined, "wrong child: " + id)
-
+    function _updatePosition(id, item, x, y) {
         //theses properties are always defined in Item
         item.x = x
         item.y = y
         item.z = _indexToZ(id)
-        item.selected = selectionDelegateModel.isSelected(model.index(id, 0))
+    }
 
+    function _repositionItem(id, x, y) {
+        const item = _getItem(id)
+        console.assert(item !== undefined, "wrong child: " + id)
+
+        _updatePosition(id, item, x, y)
+        return item
+    }
+
+    function _repositionDelayedItem(id, x, y) {
+        const item = _delayedChildrenMap[id]
+
+        _updatePosition(id, item, x, y)
         return item
     }
 
     function _recycleItem(id, x, y) {
-        var item = _unusedItemList.pop()
+        const item = _unusedItemList.pop()
         console.assert(item !== undefined, "incorrect _recycleItem call, id" + id + " ununsedItemList size" + _unusedItemList.length)
 
         item.index = id
         item.model = model.getDataAt(id)
-        item.selected = selectionDelegateModel.isSelected(model.index(id, 0))
+        item.selected = selectionModel.isSelected(id)
         item.x = x
         item.y = y
         item.z = _indexToZ(id)
@@ -507,8 +604,8 @@ FocusScope {
     }
 
     function _createItem(id, x, y) {
-        var item = delegate.createObject( flickable.contentItem, {
-                        selected: selectionDelegateModel.isSelected(model.index(id, 0)),
+        const item = delegate.createObject( flickable.contentItem, {
+                        selected: selectionModel.isSelected(id),
                         index: id,
                         model: model.getDataAt(id),
                         x: x,
@@ -523,17 +620,63 @@ FocusScope {
         return item
     }
 
-    function _setupChild(id, ydelta) {
-        var pos = getItemPos(id)
+    function _takeDelayedChild(id) {
+        const item = _delayedChildrenMap[id]
+        console.assert(typeof item !== "undefined")
+        delete _delayedChildrenMap[id]
+        return item
+    }
 
-        var item;
+    function _shouldDelayRemove(item) {
+        return item?.delayRemove ??false
+    }
+
+    function _delayRemove(id, item) {
+        _delayedChildrenMap[id] = item
+
+        item.delayRemoveChanged.connect(() => {
+            if (id in _delayedChildrenMap && !item.delayRemove) {
+                const removed = _takeDelayedChild(id)
+                console.assert(removed === item)
+                item.destroy()
+            }
+        })
+    }
+
+    function _refreshDelayedChildData(iMin, iMax) {
+        for (let i = iMin; i < iMax; ++i) {
+            if (!(i in _delayedChildrenMap))
+                continue
+
+            const item =  _delayedChildrenMap[i]
+            item.model = model.getDataAt(i)
+        }
+    }
+
+    function _updateDelayedChildSelected(iMin, iMax, select) {
+        for (let i = iMin; i < iMax; ++i) {
+            if (!(i in _delayedChildrenMap))
+                continue
+
+            const item =  _delayedChildrenMap[i]
+            item.selected = select
+        }
+    }
+
+    function _setupChild(id, ydelta) {
+        const pos = getItemPos(id)
+        pos[1] += ydelta
+
+        let item;
 
         if (_containsItem(id))
-            item = _repositionItem(id, pos[0], pos[1] + ydelta)
-        else if (_unusedItemList.length > 0)
-            item = _recycleItem(id, pos[0], pos[1] + ydelta)
+            item = _repositionItem(id, pos[0], pos[1])
+        else if (id in _delayedChildrenMap)
+            item = _repositionDelayedItem(id, pos[0], pos[1])
+        else if (_unusedItemList.length > 0) // if reuseItems is false, _unusedItemList is always empty
+            item = _recycleItem(id, pos[0], pos[1])
         else
-            item = _createItem(id, pos[0], pos[1] + ydelta)
+            item = _createItem(id, pos[0], pos[1])
 
         // NOTE: This makes sure we have the proper focus reason on the GridItem.
         if (activeFocus && currentIndex === item.index && expandIndex === -1)
@@ -543,14 +686,14 @@ FocusScope {
     }
 
     function _refreshData( iMin, iMax ) {
-        var f_l = _currentRange
+        const f_l = _currentRange
         if (!iMin || iMin < f_l[0])
             iMin = f_l[0]
         if (!iMax || iMax > f_l[1])
             iMax= f_l[1]
 
-        for (var id  = iMin; id < iMax; id++) {
-            var item = _getItem(id)
+        for (let id  = iMin; id < iMax; id++) {
+            const item = _getItem(id)
             item.model = model.getDataAt(id)
         }
 
@@ -560,7 +703,7 @@ FocusScope {
     }
 
     function _onModelCountChanged() {
-        _count = model ? model.rowCount() : 0
+        _count = model?.rowCount() ?? 0
         if (!_isInitialised)
             return
 
@@ -580,33 +723,37 @@ FocusScope {
         colorSet: ColorContext.View
     }
 
-    //Gridview visible above the expanded item
+
     Flickable {
         id: flickable
 
-        flickableDirection: Flickable.VerticalFlick
+        flickableDirection: Flickable.AutoFlickIfNeeded
+
+        boundsBehavior: Flickable.StopAtBounds
 
         ScrollBar.vertical: ScrollBar {
             id: flickableScrollBar
         }
 
-        MouseEventFilter {
-            target: flickable
+        MouseArea {
+            anchors.fill: parent
+            z: -1
 
-            onMouseButtonPress: {
-                if (buttons & (Qt.LeftButton | Qt.RightButton)) {
-                    Helpers.enforceFocus(flickable, Qt.MouseFocusReason)
+            preventStealing: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
 
-                    if (!(modifiers & (Qt.ShiftModifier | Qt.ControlModifier))) {
-                        if (selectionDelegateModel)
-                            selectionDelegateModel.clear()
-                    }
+            onPressed: (mouse) => {
+                Helpers.enforceFocus(flickable, Qt.MouseFocusReason)
+
+                if (!(mouse.modifiers & (Qt.ShiftModifier | Qt.ControlModifier))) {
+                    if (selectionModel)
+                        selectionModel.clearSelection()
                 }
             }
 
-            onMouseButtonRelease: {
-                if (button & Qt.RightButton) {
-                    root.showContextMenu(globalPos)
+            onReleased: (mouse) => {
+                if (mouse.button & Qt.RightButton) {
+                    root.showContextMenu(mapToGlobal(mouse.x, mouse.y))
                 }
             }
         }
@@ -645,11 +792,11 @@ FocusScope {
                 animateFlickableContentY(0)
             }
 
-            onHeightChanged: {
+            function onHeightChanged() {
                 flickable.layout(true)
             }
 
-            onActiveFocusChanged: {
+            function onActiveFocusChanged() {
                 // when header loads because of setting headerItem.focus == true, it will suddenly attain the active focus
                 // but then a queued flickable.layout() may take away it's focus and assign it to current item,
                 // using Qt.callLater we save unnecessary scrolling
@@ -659,7 +806,7 @@ FocusScope {
 
         Connections {
             target: footerItem
-            onHeightChanged: {
+            function onHeightChanged() {
                 if (flickable.contentY + flickable.height > footerItemLoader.y + footerItemLoader.height)
                     flickable.contentY = footerItemLoader.y + footerItemLoader.height - flickable.height
                 flickable.layout(false)
@@ -685,19 +832,17 @@ FocusScope {
         onContentYChanged: { Qt.callLater(flickable.layout, false) }
 
         function getExpandItemGridId() {
-            var ret
             if (root.expandIndex !== -1) {
-                var rowCol = root.getItemRowCol(root.expandIndex)
-                var rowId = rowCol[1] + 1
-                ret = rowId * root.nbItemPerRow
+                const rowCol = root.getItemRowCol(root.expandIndex)
+                const rowId = rowCol[1] + 1
+                return rowId * root.nbItemPerRow
             } else {
-                ret = root._count
+                return root._count
             }
-            return ret
         }
 
         function _setupIndexes(force, range, yDelta) {
-            for (var i = range[0]; i < range[1]; i++) {
+            for (let i = range[0]; i < range[1]; i++) {
                 if (!force && root._containsItem(i))
                     continue
                 _setupChild(i, yDelta)
@@ -712,28 +857,47 @@ FocusScope {
 
         function _updateChildrenMap(first, last) {
             if (first >= last) {
-                root._idChildrenList.forEach(function(item) { item.visible = false; })
-                root._unusedItemList = root._idChildrenList
+                if (root.reuseItems) {
+                    root._idChildrenList.forEach((item) => { item.visible = false; })
+                    root._unusedItemList = root._idChildrenList
+                } else {
+                    root._idChildrenList.forEach((item) => { item.destroy() })
+                }
+
                 root._idChildrenList = []
                 root._currentRange = [0, 0]
                 return
             }
 
-            var overlapped = _overlappedInterval([first, last], root._currentRange)
+            const overlapped = _overlappedInterval([first, last], root._currentRange)
 
-            var i
-            var newList = new Array(last - first)
+            const newList = new Array(last - first)
 
-            for (i = overlapped[0]; i < overlapped[1]; ++i) {
+            // move items from currentRange still in view
+            for (let i = overlapped[0]; i < overlapped[1]; ++i) {
                 newList[i - first] = root._getItem(i)
                 root._setItem(i, undefined)
             }
 
-            for (i = root._currentRange[0]; i < root._currentRange[1]; ++i) {
-                var item = root._getItem(i)
+            for (let id in _delayedChildrenMap) {
+                if (id >= first && id < last) {
+                    newList[id - first] = _takeDelayedChild(id)
+                }
+            }
+
+            // handle item from current range which are not in view
+            for (let i = root._currentRange[0]; i < root._currentRange[1]; ++i) {
+                const item = root._getItem(i)
                 if (typeof item !== "undefined") {
-                    item.visible = false
-                    root._unusedItemList.push(item)
+                    if (_shouldDelayRemove(item)) {
+                        _delayRemove(i, item)
+                    } else if (root.reuseItems) {
+                        item.visible = false
+                        root._unusedItemList.push(item)
+                    } else {
+                        item.destroy()
+                    }
+
                     //  root._setItem(i, undefined) // not needed the list will be reset following this loop
                 }
             }
@@ -746,18 +910,16 @@ FocusScope {
             if (flickable.width === 0 || flickable.height === 0)
                 return
             else if (!root._isInitialised)
-                root._initialize()
+                return
 
-            root.rowX = getItemPos(0)[0]
+            const expandItemGridId = getExpandItemGridId()
 
-            var expandItemGridId = getExpandItemGridId()
+            const f_l = _calculateCurrentRange()
+            const nbItems = f_l[1] - f_l[0]
+            const firstId = f_l[0]
+            const lastId = f_l[1]
 
-            var f_l = _calculateCurrentRange()
-            var nbItems = f_l[1] - f_l[0]
-            var firstId = f_l[0]
-            var lastId = f_l[1]
-
-            var topGridEndId = Math.max(Math.min(expandItemGridId, lastId), firstId)
+            const topGridEndId = Math.max(Math.min(expandItemGridId, lastId), firstId)
 
             if (!forceRelayout && root._currentRange[0] === firstId && root._currentRange[1] === lastId)
                 return;
@@ -768,7 +930,7 @@ FocusScope {
             _setupIndexes(forceRelayout, [firstId, topGridEndId], 0)
 
             if (root.expandIndex !== -1) {
-                var expandItemPos = root.getItemPos(expandItemGridId)
+                const expandItemPos = root.getItemPos(expandItemGridId)
                 expandItem.y = expandItemPos[1]
                 if (!expandItemLoader.visible)
                     expandItemLoader.visible = true
@@ -777,19 +939,30 @@ FocusScope {
             // Place the delegates after the expandItem
             _setupIndexes(forceRelayout, [topGridEndId, lastId], root._expandItemVerticalSpace)
 
-            // update contentWidth and contentHeight
-            var gridContentWidth = root._effectiveCellWidth * root.nbItemPerRow - root.horizontalSpacing
-            contentWidth = root.leftMargin + gridContentWidth + root.rightMargin
+            // handle delayedRemoveChildren
+            if (forceRelayout) {
+                for (let id in _delayedChildrenMap) {
+                    // check invariant: delayedRemove child must be reused when they come in view
+                    console.assert((id < root._currentRange[0]) || (id >= root._currentRange[1]))
 
-            var gridContentHeight = root.getItemPos(root._count - 1)[1] + root.rowHeight + root._expandItemVerticalSpace
-            contentHeight = gridContentHeight
-                    + (footerItemLoader.item ? footerItemLoader.item.height : 0)
-                    + root.bottomMargin // topMargin and headerHeight is included in root.getItemPos
+                    if (id >= root._count) {
+                        // index is no longer valid
+                        const item = _takeDelayedChild(id)
+                        item.destroy()
+                    } else {
+                        const yDelta = (id >= topGridEndId) ? root._expandItemVerticalSpace : 0
+                        _setupChild(id, yDelta)
+                    }
+                }
+            }
+
+            if (!root.reuseItems) // check invariant: correct cleanup if reuseItems is not set
+                console.assert(_unusedItemList.length == 0)
         }
 
         Connections {
             target: expandItem
-            onImplicitHeightChanged: {
+            function onImplicitHeightChanged() {
                 /* This is the only event we have after the expandItem height content was resized.
                    We can trigger here the expand animation with the right final height. */
                 if (root.expandIndex !== -1)
@@ -811,7 +984,7 @@ FocusScope {
             if (root.expandIndex === -1)
                 return
 
-            var expandItemHeight = expandItem.implicitHeight + root.verticalSpacing
+            const expandItemHeight = expandItem.implicitHeight + root.verticalSpacing
 
             // Expand animation
 
@@ -823,8 +996,8 @@ FocusScope {
             animateExpandItem.start()
 
             // Sliding animation
-            var currentItemYPos = root.getItemPos(root.expandIndex)[1]
-            currentItemYPos += root.rowHeight / 2
+            const currentItemYPos = root.getItemPos(root.expandIndex)[1]
+                                    + root.rowHeight / 2
             animateFlickableContentY(currentItemYPos)
         }
 

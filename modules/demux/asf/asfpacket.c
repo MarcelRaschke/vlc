@@ -155,12 +155,12 @@ static void ParsePayloadExtensions( asf_packet_sys_t *p_packetsys,
 
         if ( guidcmp( &p_ext->i_extension_id, &mfasf_sampleextension_outputcleanpoint_guid ) )
         {
-            if ( i_payload_extensions_size != sizeof(uint8_t) ) goto sizeerror;
+            if ( i_payload_extensions_size != 1 ) goto sizeerror;
             *b_keyframe |= *p_data;
         }
         else if ( guidcmp( &p_ext->i_extension_id, &asf_dvr_sampleextension_videoframe_guid ) )
         {
-            if ( i_payload_extensions_size != sizeof(uint32_t) ) goto sizeerror;
+            if ( i_payload_extensions_size != 4U ) goto sizeerror;
 
             uint32_t i_val = GetDWLE( p_data );
             /* Valid keyframe must be a split frame start fragment */
@@ -175,7 +175,7 @@ static void ParsePayloadExtensions( asf_packet_sys_t *p_packetsys,
         else if ( guidcmp( &p_ext->i_extension_id, &mfasf_sampleextension_pixelaspectratio_guid ) &&
                   p_packetsys->pf_setaspectratio )
         {
-            if ( i_payload_extensions_size != sizeof(uint16_t) ) goto sizeerror;
+            if ( i_payload_extensions_size != 2U ) goto sizeerror;
 
             p_packetsys->pf_setaspectratio( p_packetsys, p_tkinfo->p_sp->i_stream_number,
                                             p_data[0], p_data[1] );

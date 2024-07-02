@@ -6,7 +6,9 @@ X264_GITURL := https://code.videolan.org/videolan/x264.git
 
 ifdef BUILD_ENCODERS
 ifdef GPL
+ifndef HAVE_WINSTORE # FIXME x264 build system claims it needs MSVC to build for WinRT
 PKGS += x264
+endif
 endif
 endif
 
@@ -28,12 +30,6 @@ X264CONF = \
 	--disable-opencl
 ifndef HAVE_WIN32
 X264CONF += --enable-pic
-else
-ifdef HAVE_WINSTORE
-X264CONF += --enable-win32thread
-else
-X264CONF += --disable-win32thread
-endif
 endif
 ifdef HAVE_CROSS_COMPILE
 ifndef HAVE_DARWIN_OS
@@ -58,14 +54,18 @@ $(TARBALLS)/x264-$(X264_VERSION).tar.xz:
 
 x264 x26410b: %: x264-$(X264_VERSION).tar.xz .sum-%
 	$(UNPACK)
-	$(UPDATE_AUTOCONFIG)
+	$(call update_autoconfig,.)
 	$(APPLY) $(SRC)/x264/x264-winstore.patch
+	$(APPLY) $(SRC)/x264/0001-osdep-use-direct-path-to-internal-x264.h.patch
+	$(APPLY) $(SRC)/x264/0001-configure-set-_FILE_OFFSET_BITS-to-detect-fseeko.patch
 	$(MOVE)
 
 .x264: x264
 	$(REQUIRE_GPL)
 	$(MAKEBUILDDIR)
 	$(MAKECONFIGURE) $(X264CONF)
+	# make dummy dependency file
+	touch $(BUILD_DIR)/.depend
 	+$(MAKEBUILD)
 	+$(MAKEBUILD) install
 	touch $@

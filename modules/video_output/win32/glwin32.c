@@ -62,29 +62,30 @@ vlc_module_end()
  *****************************************************************************/
 typedef struct vout_display_sys_t
 {
-    vout_display_sys_win32_t sys;
     display_win32_area_t     area;
 
     vlc_gl_t              *gl;
     vout_display_opengl_t *vgl;
-
-    /* Sensors */
-    void *p_sensors;
+    vlc_viewpoint_t       viewpoint;
 } vout_display_sys_t;
 
-static void           Prepare(vout_display_t *, picture_t *, subpicture_t *, vlc_tick_t);
+static void           Prepare(vout_display_t *, picture_t *, const vlc_render_subpicture *, vlc_tick_t);
 static void           Display(vout_display_t *, picture_t *);
 
 static int SetViewpoint(vout_display_t *vd, const vlc_viewpoint_t *vp)
 {
     vout_display_sys_t *sys = vd->sys;
-    return vout_display_opengl_SetViewpoint(sys->vgl, vp);
+    int ret = vout_display_opengl_SetViewpoint(sys->vgl, vp);
+    if (ret != VLC_SUCCESS)
+        return ret;
+    sys->viewpoint = *vp;
+    return VLC_SUCCESS;
 }
 
 static int Control(vout_display_t *vd, int query)
 {
     vout_display_sys_t *sys = vd->sys;
-    CommonControl(vd, &sys->area, &sys->sys, query);
+    CommonControl(vd, &sys->area, query);
     return VLC_SUCCESS;
 }
 
@@ -101,9 +102,35 @@ static vlc_window_t *EmbedVideoWindow_Create(vout_display_t *vd)
         return NULL;
 
     wnd->type = VLC_WINDOW_TYPE_HWND;
-    wnd->handle.hwnd = sys->sys.hvideownd;
+    wnd->handle.hwnd = CommonVideoHWND(&sys->area);
     wnd->ops = &embedVideoWindow_Ops;
     return wnd;
+}
+
+static int
+UpdateFormat(vout_display_t *vd, const video_format_t *fmt,
+             vlc_video_context *vctx)
+{
+    vout_display_sys_t *sys = vd->sys;
+
+    int ret = vlc_gl_MakeCurrent(sys->gl);
+    if (ret != VLC_SUCCESS)
+        return ret;
+
+    ret = vout_display_opengl_UpdateFormat(sys->vgl, fmt, vctx);
+
+    // /* Force to recompute the viewport on next picture */
+    sys->area.place_changed = true;
+
+    /* Restore viewpoint */
+    int vp_ret = vout_display_opengl_SetViewpoint(sys->vgl, &sys->viewpoint);
+    /* The viewpoint previously applied is necessarily valid */
+    assert(vp_ret == VLC_SUCCESS);
+    (void) vp_ret;
+
+    vlc_gl_ReleaseCurrent(sys->gl);
+
+    return ret;
 }
 
 static const struct vlc_display_operations ops = {
@@ -112,6 +139,7 @@ static const struct vlc_display_operations ops = {
     .display = Display,
     .control = Control,
     .set_viewpoint = SetViewpoint,
+    .update_format = UpdateFormat,
 };
 
 /**
@@ -132,13 +160,11 @@ static int Open(vout_display_t *vd,
         return VLC_ENOMEM;
 
     /* */
-    CommonInit(&sys->area);
-    if (CommonWindowInit(vd, &sys->area, &sys->sys,
+    CommonInit(&sys->area, vd->source);
+    if (CommonWindowInit(vd, &sys->area,
                    vd->source->projection_mode != PROJECTION_MODE_RECTANGULAR))
         goto error;
-
-    if (vd->source->projection_mode != PROJECTION_MODE_RECTANGULAR)
-        sys->p_sensors = HookWindowsSensors(vd, sys->sys.hvideownd);
+    CommonPlacePicture(vd, &sys->area);
 
     vlc_window_SetTitle(vd->cfg->window, VOUT_TITLE " (OpenGL output)");
 
@@ -166,6 +192,8 @@ static int Open(vout_display_t *vd,
     vlc_gl_ReleaseCurrent (sys->gl);
     if (!sys->vgl)
         goto error;
+
+    sys->viewpoint = vd->cfg->viewpoint;
 
     /* Setup vout_display now that everything is fine */
     vd->info.subpicture_chromas = subpicture_chromas;
@@ -200,14 +228,14 @@ static void Close(vout_display_t *vd)
         vlc_object_delete(surface);
     }
 
-    UnhookWindowsSensors(sys->p_sensors);
-    CommonWindowClean(&sys->sys);
+    CommonWindowClean(&sys->area);
 
     free(sys);
 }
 
 /* */
-static void Prepare(vout_display_t *vd, picture_t *picture, subpicture_t *subpicture,
+static void Prepare(vout_display_t *vd, picture_t *picture,
+                    const vlc_render_subpicture *subpicture,
                     vlc_tick_t date)
 {
     VLC_UNUSED(date);
@@ -217,22 +245,15 @@ static void Prepare(vout_display_t *vd, picture_t *picture, subpicture_t *subpic
         return;
     if (sys->area.place_changed)
     {
-        struct vout_display_placement place_cfg = vd->cfg->display;
         vout_display_place_t place;
 
+        vout_display_PlacePicture(&place, vd->source, &vd->cfg->display);
         /* Reverse vertical alignment as the GL tex are Y inverted */
-        if (place_cfg.align.vertical == VLC_VIDEO_ALIGN_TOP)
-            place_cfg.align.vertical = VLC_VIDEO_ALIGN_BOTTOM;
-        else if (place_cfg.align.vertical == VLC_VIDEO_ALIGN_BOTTOM)
-            place_cfg.align.vertical = VLC_VIDEO_ALIGN_TOP;
+        place.y = vd->cfg->display.height - (place.y + place.height);
 
-        vout_display_PlacePicture(&place, vd->source, &place_cfg);
-
-        const int width  = place.width;
-        const int height = place.height;
-        vlc_gl_Resize (sys->gl, width, height);
-        vout_display_opengl_SetOutputSize(sys->vgl, width, height);
-        vout_display_opengl_Viewport(sys->vgl, place.x, place.y, width, height);
+        vlc_gl_Resize (sys->gl, place.width, place.height);
+        vout_display_opengl_SetOutputSize(sys->vgl, vd->cfg->display.width, vd->cfg->display.height);
+        vout_display_opengl_Viewport(sys->vgl, place.x, place.y, place.width, place.height);
         sys->area.place_changed = false;
     }
     vout_display_opengl_Prepare (sys->vgl, picture, subpicture);

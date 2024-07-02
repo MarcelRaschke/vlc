@@ -15,11 +15,12 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQml.Models 2.2
-import QtQuick.Layouts 1.11
-import QtGraphicalEffects 1.0
+import QtQuick
+import QtQuick.Controls
+import QtQml.Models
+import QtQuick.Layouts
+import Qt5Compat.GraphicalEffects
+
 import org.videolan.vlc 0.1
 
 import "qrc:///util/" as Util
@@ -34,12 +35,18 @@ FocusScope {
 
     property var sortModel: []
 
-    property Component tableHeaderDelegate: Widgets.CaptionLabel {
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
+    property Component tableHeaderDelegate:  TableHeaderDelegate {
+        Widgets.CaptionLabel {
+            horizontalAlignment: Text.AlignLeft
+            verticalAlignment: Text.AlignVCenter
 
-        text: model.text || ""
-        color: parent.colorContext.fg.secondary
+            anchors.fill: parent
+
+            Accessible.ignored: true
+
+            text: parent.colModel.text ?? ""
+            color: parent.colorContext.fg.secondary
+        }
     }
 
     // NOTE: We want edge to edge backgrounds in our delegate and header, so we implement our own
@@ -58,25 +65,25 @@ FocusScope {
     readonly property int contentRightMargin: extraMargin + rightMargin
 
     readonly property real usedRowSpace: {
-        var size = leftMargin + rightMargin
+        let size = leftMargin + rightMargin
 
-        for (var i in sortModel)
+        for (let i in sortModel)
             size += VLCStyle.colWidth(sortModel[i].size)
 
         return size + Math.max(VLCStyle.column_spacing * (sortModel.length - 1), 0)
     }
 
-    property Component header: Item{}
-    property Item headerItem: view.headerItem ? view.headerItem.loadedHeader : null
+    property Component header: null
+    property Item headerItem: view.headerItem?.loadedHeader ?? null
     property color headerColor: colorContext.bg.primary
     property int headerTopPadding: 0
 
-    property Util.SelectableDelegateModel selectionDelegateModel
+
     property real rowHeight: VLCStyle.tableRow_height
 
     property real availableRowWidth: 0
 
-    property Item dragItem
+    property Widgets.DragItem dragItem: null
     property bool acceptDrop: false
 
     // Private
@@ -95,11 +102,15 @@ FocusScope {
     property alias spacing: view.spacing
 
     property alias model: view.model
+    property alias selectionModel: view.selectionModel
 
     property alias delegate: view.delegate
 
     property alias contentY     : view.contentY
     property alias contentHeight: view.contentHeight
+
+    property alias originX: view.originX
+    property alias originY: view.originY
 
     property alias interactive: view.interactive
 
@@ -115,15 +126,11 @@ FocusScope {
     property alias footerItem: view.footerItem
     property alias footer: view.footer
 
-    property alias backgroundColor: view.backgroundColor
-    property alias fadeSize: view.fadeSize
-    property alias enableBeginningFade: view.enableBeginningFade
-    property alias enableEndFade: view.enableEndFade
+    property alias fadingEdge: view.fadingEdge
 
     property alias add:       view.add
     property alias displaced: view.displaced
 
-    property alias listScrollBar: view.listScrollBar
     property alias listView: view
 
     property alias displayMarginEnd: view.displayMarginEnd
@@ -145,10 +152,6 @@ FocusScope {
     signal dropExited(Item delegate, int index,  var drag, bool before)
     signal dropEvent(Item delegate, int index,  var drag, var drop, bool before)
 
-    // Settings
-
-    Accessible.role: Accessible.Table
-
     // Events
 
     Component.onCompleted: {
@@ -157,11 +160,13 @@ FocusScope {
         availableRowWidthUpdater.enqueueUpdate()
     }
 
-    Component.onDestruction: _qtAvoidSectionUpdate()
-
     on_CurrentAvailableRowWidthChanged: if (_ready) availableRowWidthUpdater.enqueueUpdate()
 
     // Functions
+
+    function setCurrentItem(index) {
+        view.setCurrentItem(index)
+    }
 
     function setCurrentItemFocus(reason) {
         view.setCurrentItemFocus(reason);
@@ -176,7 +181,7 @@ FocusScope {
     }
 
     function getItemY(index) {
-        var size = index * rowHeight + topMargin
+        let size = index * rowHeight + topMargin
 
         if (tableHeaderItem)
             size += tableHeaderItem.height
@@ -185,31 +190,6 @@ FocusScope {
     }
 
     // Private
-
-    function _qtAvoidSectionUpdate() {
-        // Qt SEG. FAULT WORKAROUND
-
-        // There exists a Qt bug that tries to access null
-        // pointer while updating sections. Qt does not
-        // check if `QQmlEngine::contextForObject(sectionItem)->parentContext()`
-        // is null and when it's null which might be the case for
-        // views during destruction it causes segmentation fault.
-
-        // As a workaround, when section delegate is set to null
-        // during destruction, Qt does not proceed with updating
-        // the sections so null pointer access is avoided. Updating
-        // sections during destruction should not make sense anyway.
-
-        // Setting section delegate to null seems to has no
-        // negative impact and safely could be used as a fix.
-        // However, the problem lying beneath prevails and
-        // should be taken care of sooner than later.
-
-        // Affected Qt versions are 5.11.3, and 5.15.2 (not
-        // limited).
-
-        section.delegate = null
-    }
 
     // Childs
 
@@ -232,7 +212,7 @@ FocusScope {
             // updating availableRowWidth is expensive because of property bindings in sortModel
             // and availableRowWidth is dependent on root.width which can update in a burst
             // so try to maintain a minimum time gap between subsequent availableRowWidth updates
-            var sinceLastUpdate = Date.now() - root._availabeRowWidthLastUpdateTime
+            const sinceLastUpdate = Date.now() - root._availabeRowWidthLastUpdateTime
             if ((root.availableRowWidth === 0) || (sinceLastUpdate > 128 && !availableRowWidthUpdater.running)) {
                 _update()
             } else if (!availableRowWidthUpdater.running) {
@@ -257,18 +237,10 @@ FocusScope {
 
         Navigation.parentItem: root
 
-        onSelectAll: selectionDelegateModel.selectAll()
-        onSelectionUpdated: selectionDelegateModel.updateSelection( keyModifiers, oldIndex, newIndex )
-        onActionAtIndex: root.actionForSelection( selectionDelegateModel.selectedIndexes )
+        onActionAtIndex: (index) => { root.actionForSelection( selectionModel.selectedIndexes ) }
 
-        onDeselectAll: {
-            if (selectionDelegateModel) {
-                selectionDelegateModel.clear()
-            }
-        }
-
-        onShowContextMenu: {
-            if (selectionDelegateModel.hasSelection)
+        onShowContextMenu: (globalPos) => {
+            if (selectionModel.hasSelection)
                 root.rightClick(null, null, globalPos);
         }
 
@@ -287,17 +259,15 @@ FocusScope {
             onHeightChanged: if (root.contentY < 0) root.positionViewAtBeginning()
 
             Widgets.ListLabel {
-                height: row.height
-
                 // NOTE: We want the section label to be slightly shifted to the left.
                 x: row.x - VLCStyle.margin_small
-                y: row.y
+                y: row.y + root.headerTopPadding
 
-                topPadding: root.headerTopPadding
+                height: VLCStyle.tableHeaderText_height
+                verticalAlignment: Text.AlignVCenter
 
                 text: view.currentSection
                 color: view.colorContext.accent
-                verticalAlignment: Text.AlignTop
                 visible: view.headerPositioning === ListView.OverlayHeader
                          && text !== ""
                          && view.contentY > (row.height - col.height - row.topPadding)
@@ -332,23 +302,31 @@ FocusScope {
                     Repeater {
                         model: sortModel
                         MouseArea {
+                            id: headerCell
 
-                            height: VLCStyle.dp(20, VLCStyle.scale)
+                            required property var modelData
+                            property TableHeaderDelegate _item: null
+
+                            height: VLCStyle.tableHeaderText_height
                             width: VLCStyle.colWidth(modelData.size) || 1
 
-                            Loader {
-                                anchors.top: parent.top
-                                anchors.bottom: parent.bottom
+                            Accessible.role: Accessible.ColumnHeader
+                            Accessible.name: modelData.model.text
 
-                                property var model: modelData.model
-                                readonly property ColorContext colorContext: view.colorContext
-
-                                sourceComponent: model.headerDelegate || root.tableHeaderDelegate
+                            //Using a Loader is unable to pass the initial/required properties
+                            Component.onCompleted: {
+                                const comp = modelData.model.headerDelegate || root.tableHeaderDelegate
+                                headerCell._item = comp.createObject(headerCell, {
+                                    width:  Qt.binding(() => headerCell.width),
+                                    height:  Qt.binding(() => headerCell.height),
+                                    colorContext:  Qt.binding(() => view.colorContext),
+                                    colModel: Qt.binding(() => modelData.model)
+                                })
                             }
 
                             Text {
                                 text: (root.model.sortOrder === Qt.AscendingOrder) ? "▼" : "▲"
-                                visible: root.model.sortCriteria === modelData.criteria
+                                visible: root.model.sortCriteria === modelData.model.criteria
                                 font.pixelSize: VLCStyle.fontSize_normal
                                 color: root.colorContext.accent
 
@@ -361,8 +339,10 @@ FocusScope {
                                 }
                             }
                             onClicked: {
-                                if (root.model.sortCriteria !== modelData.criteria)
-                                    root.model.sortCriteria = modelData.criteria
+                                if (!(modelData.model.isSortable ?? true))
+                                    return
+                                else if (root.model.sortCriteria !== modelData.model.criteria)
+                                    root.model.sortCriteria = modelData.model.criteria
                                 else
                                     root.model.sortOrder = (root.model.sortOrder === Qt.AscendingOrder) ? Qt.DescendingOrder : Qt.AscendingOrder
                             }
@@ -393,6 +373,8 @@ FocusScope {
         delegate: TableViewDelegate {
             id: tableDelegate
 
+            required property var model
+
             width: view.width
             height: root.rowHeight
 
@@ -404,21 +386,35 @@ FocusScope {
             rowModel: model
             sortModel: root.sortModel
 
-            selected: selectionDelegateModel.isSelected(root.model.index(index, 0))
+            selected: selectionModel.selectedIndexesFlat.includes(index)
 
             acceptDrop: root.acceptDrop
 
-            onContextMenuButtonClicked: root.contextMenuButtonClicked(menuParent, menuModel, globalMousePos)
-            onRightClick: root.rightClick(menuParent, menuModel, globalMousePos)
-            onItemDoubleClicked: root.itemDoubleClicked(index, model)
+            onContextMenuButtonClicked: (menuParent, menuModel, globalMousePos) => {
+                root.contextMenuButtonClicked(menuParent, menuModel, globalMousePos)
+            }
+            onRightClick: (menuParent, menuModel, globalMousePos) => {
+                root.rightClick(menuParent, menuModel, globalMousePos)
+            }
+            onItemDoubleClicked: (index, model) => {
+                root.itemDoubleClicked(index, model)
+            }
 
-            onDropEntered: root.dropEntered(tableDelegate, index, drag, before)
-            onDropUpdatePosition: root.dropUpdatePosition(tableDelegate, index, drag, before)
-            onDropExited: root.dropExited(tableDelegate, index, drag, before)
-            onDropEvent: root.dropEvent(tableDelegate, index, drag, drop, before)
+            onDropEntered: (drag, before) => {
+                root.dropEntered(tableDelegate, index, drag, before)
+            }
+            onDropUpdatePosition:  (drag, before) => {
+                root.dropUpdatePosition(tableDelegate, index, drag, before)
+            }
+            onDropExited:  (drag, before) => {
+                root.dropExited(tableDelegate, index, drag, before)
+            }
+            onDropEvent:  (drag, drop, before) => {
+                root.dropEvent(tableDelegate, index, drag, drop, before)
+            }
 
-            onSelectAndFocus:  {
-                selectionDelegateModel.updateSelection(modifiers, view.currentIndex, index)
+            onSelectAndFocus: (modifiers, focusReason) => {
+                selectionModel.updateSelection(modifiers, view.currentIndex, index)
 
                 view.currentIndex = index
                 view.positionViewAtIndex(index, ListView.Contain)
@@ -427,11 +423,11 @@ FocusScope {
             }
 
             Connections {
-                target: selectionDelegateModel
+                target: selectionModel
 
-                onSelectionChanged: {
+                function onSelectionChanged() {
                     tableDelegate.selected = Qt.binding(function() {
-                      return  selectionDelegateModel.isSelected(root.model.index(index, 0))
+                      return root.selectionModel.selectedIndexesFlat.includes(index)
                     })
                 }
             }

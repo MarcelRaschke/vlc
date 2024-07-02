@@ -32,6 +32,7 @@
 #include <vlc_filter.h>
 #include <vlc_picture.h>
 #include <assert.h>
+#include "../video_filter/filter_picture.h"
 
 /* TODO:
  *  Add anti-aliasing support (specially for DVD where only 4 colors are used)
@@ -61,18 +62,20 @@ static int Open( filter_t *p_filter )
 {
     /* It only supports YUVP to YUVA/RGBA without scaling
      * (if scaling is required another filter can do it) */
-    if( p_filter->fmt_in.video.i_chroma != VLC_CODEC_YUVP ||
-        ( p_filter->fmt_out.video.i_chroma != VLC_CODEC_YUVA &&
-          p_filter->fmt_out.video.i_chroma != VLC_CODEC_RGBA &&
-          p_filter->fmt_out.video.i_chroma != VLC_CODEC_ARGB &&
-          p_filter->fmt_out.video.i_chroma != VLC_CODEC_BGRA &&
-          p_filter->fmt_out.video.i_chroma != VLC_CODEC_ABGR) ||
-        p_filter->fmt_in.video.i_width  != p_filter->fmt_out.video.i_width ||
+    if( p_filter->fmt_in.video.i_chroma != VLC_CODEC_YUVP )
+        return VLC_EGENERIC;
+    switch ( p_filter->fmt_out.video.i_chroma )
+    {
+        CASE_PACKED_RGBA
+        case VLC_CODEC_YUVA:
+            break;
+        default:
+            return VLC_EGENERIC;
+    }
+    if( p_filter->fmt_in.video.i_width  != p_filter->fmt_out.video.i_width ||
         p_filter->fmt_in.video.i_height != p_filter->fmt_out.video.i_height ||
         p_filter->fmt_in.video.orientation != p_filter->fmt_out.video.orientation )
-    {
         return VLC_EGENERIC;
-    }
 
     p_filter->ops = &Convert_ops;
 
@@ -119,66 +122,50 @@ static void Convert( filter_t *p_filter, picture_t *p_source,
                 p_a[x] = p_yuvp->palette[v][3];
             }
         }
+        return;
     }
-    else
+
+    video_palette_t rgbp;
+    int r, g, b, a;
+
+    if (GetPackedRgbIndexes(p_filter->fmt_out.video.i_chroma, &r, &g, &b, &a) != VLC_SUCCESS)
+        vlc_assert_unreachable();
+
+    /* Create a RGBA palette */
+    assert(p_yuvp->i_entries <= VIDEO_PALETTE_COLORS_MAX);
+    rgbp.i_entries = p_yuvp->i_entries;
+    for( int i = 0; i < p_yuvp->i_entries; i++ )
     {
-        video_palette_t rgbp;
-        int r, g, b, a;
-
-        switch( p_filter->fmt_out.video.i_chroma )
+        if( p_yuvp->palette[i][3] == 0 )
         {
-            case VLC_CODEC_ARGB: r = 1, g = 2, b = 3, a = 0; break;
-            case VLC_CODEC_RGBA: r = 0, g = 1, b = 2, a = 3; break;
-            case VLC_CODEC_BGRA: r = 2, g = 1, b = 0, a = 3; break;
-            case VLC_CODEC_ABGR: r = 3, g = 2, b = 1, a = 0; break;
-            default:
-                vlc_assert_unreachable();
+            memset( rgbp.palette[i], 0, sizeof( rgbp.palette[i] ) );
+            continue;
         }
-        /* Create a RGBA palette */
-        rgbp.i_entries = p_yuvp->i_entries;
-        for( int i = 0; i < p_yuvp->i_entries; i++ )
+        Yuv2Rgb( &rgbp.palette[i][r], &rgbp.palette[i][g], &rgbp.palette[i][b],
+                 p_yuvp->palette[i][0], p_yuvp->palette[i][1], p_yuvp->palette[i][2] );
+        rgbp.palette[i][a] = p_yuvp->palette[i][3];
+    }
+
+    for( unsigned int y = 0; y < p_filter->fmt_in.video.i_height; y++ )
+    {
+        const uint8_t *p_line = &p_source->p->p_pixels[y*p_source->p->i_pitch];
+        uint8_t *p_pixels = &p_dest->p->p_pixels[y*p_dest->p->i_pitch];
+
+        for( unsigned int x = 0; x < p_filter->fmt_in.video.i_width; x++ )
         {
-            if( p_yuvp->palette[i][3] == 0 )
-            {
-                memset( rgbp.palette[i], 0, sizeof( rgbp.palette[i] ) );
+            const int v = p_line[x];
+
+            if( v >= rgbp.i_entries )  /* maybe assert ? */
                 continue;
-            }
-            Yuv2Rgb( &rgbp.palette[i][r], &rgbp.palette[i][g], &rgbp.palette[i][b],
-                     p_yuvp->palette[i][0], p_yuvp->palette[i][1], p_yuvp->palette[i][2] );
-            rgbp.palette[i][a] = p_yuvp->palette[i][3];
+
+            p_pixels[4*x+0] = rgbp.palette[v][0];
+            p_pixels[4*x+1] = rgbp.palette[v][1];
+            p_pixels[4*x+2] = rgbp.palette[v][2];
+            p_pixels[4*x+3] = rgbp.palette[v][3];
         }
-
-        for( unsigned int y = 0; y < p_filter->fmt_in.video.i_height; y++ )
-        {
-            const uint8_t *p_line = &p_source->p->p_pixels[y*p_source->p->i_pitch];
-            uint8_t *p_pixels = &p_dest->p->p_pixels[y*p_dest->p->i_pitch];
-
-            for( unsigned int x = 0; x < p_filter->fmt_in.video.i_width; x++ )
-            {
-                const int v = p_line[x];
-
-                if( v >= rgbp.i_entries )  /* maybe assert ? */
-                    continue;
-
-                p_pixels[4*x+0] = rgbp.palette[v][0];
-                p_pixels[4*x+1] = rgbp.palette[v][1];
-                p_pixels[4*x+2] = rgbp.palette[v][2];
-                p_pixels[4*x+3] = rgbp.palette[v][3];
-            }
-        }
-
     }
 }
 
-/* FIXME copied from blend.c */
-static inline uint8_t vlc_uint8( int v )
-{
-    if( v > 255 )
-        return 255;
-    else if( v < 0 )
-        return 0;
-    return v;
-}
 static void Yuv2Rgb( uint8_t *r, uint8_t *g, uint8_t *b, int y1, int u1, int v1 )
 {
     /* macros used for YUV pixel conversions */

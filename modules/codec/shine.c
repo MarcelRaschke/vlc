@@ -60,14 +60,14 @@ static void CloseEncoder  ( encoder_t * );
 
 static block_t *EncodeFrame  ( encoder_t *, block_t * );
 
-vlc_module_begin();
-    set_subcategory( SUBCAT_INPUT_ACODEC );
-    set_description( N_("MP3 fixed point audio encoder") );
-    set_capability( "audio encoder", 50 );
-    set_callback( OpenEncoder );
-vlc_module_end();
+vlc_module_begin()
+    set_subcategory( SUBCAT_INPUT_ACODEC )
+    set_description( N_("MP3 fixed point audio encoder") )
+    set_capability( "audio encoder", 50 )
+    set_callback( OpenEncoder )
+vlc_module_end()
 
-static atomic_bool busy = ATOMIC_VAR_INIT(false);
+static atomic_bool busy = false;
 
 static int OpenEncoder( vlc_object_t *p_this )
 {
@@ -75,7 +75,9 @@ static int OpenEncoder( vlc_object_t *p_this )
     encoder_sys_t *p_sys;
 
     /* shine is an 'MP3' encoder */
-    if( (p_enc->fmt_out.i_codec != VLC_CODEC_MP3 && p_enc->fmt_out.i_codec != VLC_CODEC_MPGA) ||
+    if( (p_enc->fmt_out.i_codec != VLC_CODEC_MP3 &&
+         p_enc->fmt_out.i_codec != VLC_CODEC_MP2 &&
+         p_enc->fmt_out.i_codec != VLC_CODEC_MPGA) ||
         p_enc->fmt_out.audio.i_channels > 2 )
         return VLC_EGENERIC;
 

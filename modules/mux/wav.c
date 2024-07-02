@@ -35,6 +35,8 @@
 #include <vlc_block.h>
 #include <vlc_codecs.h>
 
+#include "../demux/windows_audio_commons.h"
+
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
@@ -57,7 +59,6 @@ static int AddStream( sout_mux_t *, sout_input_t * );
 static void DelStream( sout_mux_t *, sout_input_t * );
 static int Mux      ( sout_mux_t * );
 
-#define MAX_CHANNELS 6
 
 typedef struct
 {
@@ -76,18 +77,6 @@ typedef struct
     uint8_t i_chans_to_reorder;            /* do we need channel reordering */
     uint8_t pi_chan_table[AOUT_CHAN_MAX];
 } sout_mux_sys_t;
-
-static const uint32_t pi_channels_in[] =
-    { WAVE_SPEAKER_FRONT_LEFT, WAVE_SPEAKER_FRONT_RIGHT,
-      WAVE_SPEAKER_SIDE_LEFT, WAVE_SPEAKER_SIDE_RIGHT,
-      WAVE_SPEAKER_BACK_LEFT, WAVE_SPEAKER_BACK_RIGHT, WAVE_SPEAKER_BACK_CENTER,
-      WAVE_SPEAKER_FRONT_CENTER, WAVE_SPEAKER_LOW_FREQUENCY, 0 };
-static const uint32_t pi_channels_out[] =
-    { WAVE_SPEAKER_FRONT_LEFT, WAVE_SPEAKER_FRONT_RIGHT,
-      WAVE_SPEAKER_FRONT_CENTER, WAVE_SPEAKER_LOW_FREQUENCY,
-      WAVE_SPEAKER_BACK_LEFT, WAVE_SPEAKER_BACK_RIGHT,
-      WAVE_SPEAKER_BACK_CENTER,
-      WAVE_SPEAKER_SIDE_LEFT, WAVE_SPEAKER_SIDE_RIGHT, 0 };
 
 /*****************************************************************************
  * Open:
@@ -174,12 +163,12 @@ static int AddStream( sout_mux_t *p_mux, sout_input_t *p_input )
     p_sys->i_channel_mask = 0;
     if( p_input->p_fmt->audio.i_physical_channels )
     {
-        for( unsigned i = 0; i < pi_vlc_chan_order_wg4[i]; i++ )
+        for( unsigned i = 0; pi_vlc_chan_order_wg4[i]; i++ )
             if( p_input->p_fmt->audio.i_physical_channels & pi_vlc_chan_order_wg4[i])
-                p_sys->i_channel_mask |= pi_channels_in[i];
+                p_sys->i_channel_mask |= pi_vlc_chan_order_wg4[i];
 
         p_sys->i_chans_to_reorder =
-            aout_CheckChannelReorder( pi_channels_in, pi_channels_out,
+            aout_CheckChannelReorder( NULL, pi_channels_aout,
                                       p_sys->i_channel_mask,
                                       p_sys->pi_chan_table );
 
@@ -275,9 +264,13 @@ static int Mux( sout_mux_t *p_mux )
     p_sys->b_header = false;
 
     p_input = p_mux->pp_inputs[0];
-    while( block_FifoCount( p_input->p_fifo ) > 0 )
+
+    vlc_fifo_Lock( p_input->p_fifo );
+    block_t *p_block = vlc_fifo_DequeueAllUnlocked( p_input->p_fifo );
+    vlc_fifo_Unlock( p_input->p_fifo );
+
+    while( p_block != NULL)
     {
-        block_t *p_block = block_FifoGet( p_input->p_fifo );
         p_sys->i_data += p_block->i_buffer;
 
         /* Do the channel reordering */
@@ -286,7 +279,13 @@ static int Mux( sout_mux_t *p_mux )
                                  p_sys->i_chans_to_reorder,
                                  p_sys->pi_chan_table, p_input->p_fmt->i_codec );
 
+        /* We should not pass whole blockchain to accessoutwrite, as we only handled
+           current block channel reordering, so mark next as empty and handle next block separately
+           */
+        block_t *p_next_block = p_block->p_next;
+        p_block->p_next = NULL;
         sout_AccessOutWrite( p_mux->p_access, p_block );
+        p_block = p_next_block;
     }
 
     return VLC_SUCCESS;

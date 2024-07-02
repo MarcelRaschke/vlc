@@ -37,6 +37,7 @@
 #include "screenshooter-client-protocol.h"
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_demux.h>
 #include <vlc_fs.h>
 #include <vlc_plugin.h>
@@ -120,9 +121,9 @@ static void output_mode_cb(void *data, struct wl_output *output,
 
     es_format_t fmt;
 
-    es_format_Init(&fmt, VIDEO_ES, VLC_CODEC_RGB32);
-    fmt.video.i_chroma = VLC_CODEC_RGB32;
-    fmt.video.i_bits_per_pixel = 32;
+    vlc_fourcc_t i_chroma = VLC_CODEC_BGRX;
+    es_format_Init(&fmt, VIDEO_ES, i_chroma);
+    fmt.video.i_chroma = i_chroma;
     fmt.video.i_sar_num = fmt.video.i_sar_den = 1;
     fmt.video.i_frame_rate = lroundf(1000.f * sys->rate);
     fmt.video.i_frame_rate_base = 1000;
@@ -152,6 +153,12 @@ const struct wl_output_listener output_cbs =
     output_mode_cb,
     NULL,
     NULL,
+#ifdef WL_OUTPUT_NAME_SINCE_VERSION
+    NULL,
+#endif
+#ifdef WL_OUTPUT_DESCRIPTION_SINCE_VERSION
+    NULL,
+#endif
 };
 
 static void screenshooter_done_cb(void *data,

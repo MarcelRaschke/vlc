@@ -38,21 +38,21 @@
  * Module descriptor
  *****************************************************************************/
 static int      Open    ( vlc_object_t * );
-static void     Close   ( vlc_object_t * );
 
 vlc_module_begin ()
     set_description( N_("Gathering stream output") )
     set_capability( "sout filter", 50 )
     add_shortcut( "gather" )
-    set_callbacks( Open, Close )
+    set_callback( Open )
 vlc_module_end ()
 
 /*****************************************************************************
  * Exported prototypes
  *****************************************************************************/
-static void *Add( sout_stream_t *, const es_format_t * );
+static void *Add( sout_stream_t *, const es_format_t *, const char * );
 static void  Del( sout_stream_t *, void * );
 static int   Send( sout_stream_t *, void *, block_t * );
+static void  Close( sout_stream_t * );
 
 typedef struct
 {
@@ -61,6 +61,7 @@ typedef struct
 
     es_format_t fmt;
     void          *id;
+    char *es_id;
     struct vlc_list node;
 } sout_stream_id_sys_t;
 
@@ -70,7 +71,10 @@ typedef struct
 } sout_stream_sys_t;
 
 static const struct sout_stream_operations ops = {
-    Add, Del, Send, NULL, NULL, NULL,
+    .add = Add,
+    .del = Del,
+    .send = Send,
+    .close = Close,
 };
 
 /*****************************************************************************
@@ -93,9 +97,8 @@ static int Open( vlc_object_t *p_this )
 /*****************************************************************************
  * Close:
  *****************************************************************************/
-static void Close( vlc_object_t * p_this )
+static void Close( sout_stream_t *p_stream )
 {
-    sout_stream_t     *p_stream = (sout_stream_t*)p_this;
     sout_stream_sys_t *p_sys = p_stream->p_sys;
     sout_stream_id_sys_t *id;
 
@@ -112,7 +115,8 @@ static void Close( vlc_object_t * p_this )
 /*****************************************************************************
  * Add:
  *****************************************************************************/
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *
+Add( sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id )
 {
     sout_stream_sys_t *p_sys = p_stream->p_sys;
     sout_stream_id_sys_t *id;
@@ -155,6 +159,7 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
         {
             sout_StreamIdDel( p_stream->p_next, id->id );
             es_format_Clean( &id->fmt );
+            free( id->es_id );
             free( id );
         }
 
@@ -162,12 +167,21 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
     id = malloc( sizeof( sout_stream_id_sys_t ) );
     if( id == NULL )
         return NULL;
+
+    id->es_id = strdup( es_id );
+    if( unlikely(id->es_id == NULL) )
+    {
+        free( id );
+        return NULL;
+    }
+
     es_format_Copy( &id->fmt, p_fmt );
     id->b_streamswap     = false;
     id->b_used           = true;
-    id->id               = sout_StreamIdAdd( p_stream->p_next, &id->fmt );
+    id->id               = sout_StreamIdAdd( p_stream->p_next, &id->fmt, id->es_id );
     if( id->id == NULL )
     {
+        free( id->es_id );
         free( id );
         return NULL;
     }

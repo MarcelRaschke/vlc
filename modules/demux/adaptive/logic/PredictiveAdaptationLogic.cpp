@@ -134,12 +134,12 @@ BaseRepresentation *PredictiveAdaptationLogic::getNextRepresentation(BaseAdaptat
         BwDebug( for(it=streams.begin(); it != streams.end(); ++it)
         {
             const PredictiveStats &s = (*it).second;
-            msg_Info(p_obj, "Stream %s buffering level %.2f%",
+            msg_Info(p_obj, "Stream %s buffering level %.2f%%",
                  (*it).first.str().c_str(), (double) s.buffering_level / s.buffering_target);
         } );
 
         BwDebug( if( rep != prevRep )
-                    msg_Info(p_obj, "Stream %s new bandwidth usage %zu KiB/s",
+                    msg_Info(p_obj, "Stream %s new bandwidth usage %" PRId64 " KiB/s",
                          adaptSet->getID().str().c_str(), rep->getBandwidth() / 8000); );
 
         stats.segments_count++;
@@ -186,7 +186,7 @@ void PredictiveAdaptationLogic::trackerEvent(const TrackerEvent &ev)
             if(event.next)
                 usedBps += event.next->getBandwidth();
 
-            BwDebug(msg_Info(p_obj, "New total bandwidth usage %zu KiB/s", (usedBps / 8000)));
+            BwDebug(msg_Info(p_obj, "New total bandwidth usage %u KiB/s", (usedBps / 8000)));
         }
         break;
 

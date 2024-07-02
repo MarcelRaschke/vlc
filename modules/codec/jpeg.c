@@ -25,9 +25,11 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_codec.h>
 #include <vlc_charset.h>
+#include <vlc_ancillary.h>
 
 #include <jpeglib.h>
 #include <setjmp.h>
@@ -113,15 +115,24 @@ vlc_module_begin()
     set_callbacks(OpenDecoder, CloseDecoder)
     add_shortcut("jpeg")
 
-    /* encoder submodule */
+#ifdef ENABLE_SOUT
+    /* video encoder submodule */
     add_submodule()
     add_shortcut("jpeg")
     set_section(N_("Encoding"), NULL)
-    set_description(N_("JPEG image encoder"))
+    set_description(N_("JPEG video encoder"))
     set_capability("video encoder", 1000)
     set_callback(OpenEncoder)
     add_integer_with_range(ENC_CFG_PREFIX "quality", 95, 0, 100,
                            ENC_QUALITY_TEXT, ENC_QUALITY_LONGTEXT)
+#endif
+    /* image encoder submodule */
+    add_submodule()
+    add_shortcut("jpeg")
+    set_section(N_("Encoding"), NULL)
+    set_description(N_("JPEG image encoder"))
+    set_capability("image encoder", 1000)
+    set_callback(OpenEncoder)
 vlc_module_end()
 
 
@@ -177,13 +188,12 @@ static int OpenDecoder(vlc_object_t *p_this)
     /* Set callbacks */
     p_dec->pf_decode = DecodeBlock;
 
-    p_dec->fmt_out.video.i_chroma =
-    p_dec->fmt_out.i_codec = VLC_CODEC_RGB24;
+    p_dec->fmt_out.i_codec =
+    p_dec->fmt_out.video.i_chroma = VLC_CODEC_RGB24;
     p_dec->fmt_out.video.transfer  = TRANSFER_FUNC_SRGB;
     p_dec->fmt_out.video.space     = COLOR_SPACE_SRGB;
     p_dec->fmt_out.video.primaries = COLOR_PRIMARIES_SRGB;
     p_dec->fmt_out.video.color_range = COLOR_RANGE_FULL;
-    video_format_FixRgb(&p_dec->fmt_out.video);
 
     return VLC_SUCCESS;
 }
@@ -625,7 +635,8 @@ static int OpenEncoder(vlc_object_t *p_this)
     p_sys->i_quality = var_GetInteger(p_enc, ENC_CFG_PREFIX "quality");
     p_sys->i_blocksize = 3 * p_enc->fmt_in.video.i_visible_width * p_enc->fmt_in.video.i_visible_height;
 
-    p_enc->fmt_in.i_codec = VLC_CODEC_J420;
+    p_enc->fmt_in.i_codec = p_enc->fmt_in.video.i_chroma = VLC_CODEC_I420;
+    p_enc->fmt_in.video.color_range = COLOR_RANGE_FULL;
 
     static const struct vlc_encoder_operations ops =
     {

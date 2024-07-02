@@ -65,6 +65,7 @@ typedef struct
     bool         can_pace;
     bool         can_pause;
     uint64_t     size;
+    uint64_t     mtime;
     vlc_tick_t   pts_delay;
     char        *content_type;
 
@@ -365,6 +366,11 @@ static int Control(stream_t *stream, int query, va_list args)
                 return VLC_EGENERIC;
             *va_arg(args, uint64_t *) = sys->size;
             break;
+        case STREAM_GET_MTIME:
+            if (sys->mtime == (uint64_t)-1)
+                return VLC_EGENERIC;
+            *va_arg(args, uint64_t *) = sys->mtime;
+            break;
         case STREAM_GET_PTS_DELAY:
             *va_arg(args, vlc_tick_t *) = sys->pts_delay;
             break;
@@ -426,37 +432,36 @@ static int Open(vlc_object_t *obj)
 {
     stream_t *stream = (stream_t *)obj;
 
-    bool fast_seek;
-
-    if (vlc_stream_Control(stream->s, STREAM_CAN_FASTSEEK, &fast_seek))
-        return VLC_EGENERIC; /* not a byte stream */
     /* For local files, the operating system is likely to do a better work at
      * caching/prefetching. Also, prefetching with this module could cause
      * undesirable high load at start-up. Lastly, local files may require
      * support for title/seekpoint and meta control requests. */
-    if (fast_seek)
+    if (vlc_stream_CanFastSeek(stream->s))
         return VLC_EGENERIC;
 
     /* PID-filtered streams are not suitable for prefetching, as they would
      * suffer excessive latency to enable a PID. DVB would also require support
      * for the signal level and Conditional Access controls.
      * TODO? For seekable streams, a forced could work around the problem. */
-    if (vlc_stream_Control(stream->s, STREAM_GET_PRIVATE_ID_STATE, 0,
-                           &(bool){ false }) == VLC_SUCCESS)
+    if (vlc_stream_GetPrivateIdState(stream->s, 0, &(bool){false}) ==
+        VLC_SUCCESS)
         return VLC_EGENERIC;
 
     stream_sys_t *sys = malloc(sizeof (*sys));
     if (unlikely(sys == NULL))
         return VLC_ENOMEM;
 
-    vlc_stream_Control(stream->s, STREAM_CAN_SEEK, &sys->can_seek);
-    vlc_stream_Control(stream->s, STREAM_CAN_PAUSE, &sys->can_pause);
-    vlc_stream_Control(stream->s, STREAM_CAN_CONTROL_PACE, &sys->can_pace);
-    if (vlc_stream_Control(stream->s, STREAM_GET_SIZE, &sys->size))
+    sys->can_seek = vlc_stream_CanSeek(stream->s);
+    sys->can_pause = vlc_stream_CanPause(stream->s);
+    sys->can_pace = vlc_stream_CanPace(stream->s);
+
+    if (vlc_stream_GetSize(stream->s, &sys->size) != VLC_SUCCESS)
         sys->size = -1;
-    vlc_stream_Control(stream->s, STREAM_GET_PTS_DELAY, &sys->pts_delay);
-    if (vlc_stream_Control(stream->s, STREAM_GET_CONTENT_TYPE,
-                           &sys->content_type))
+    if (vlc_stream_GetMTime(stream->s, &sys->mtime) != VLC_SUCCESS)
+        sys->mtime = -1;
+
+    sys->pts_delay = vlc_stream_GetPtsDelay(stream->s);
+    if (vlc_stream_GetContentType(stream->s, &sys->content_type) != VLC_SUCCESS)
         sys->content_type = NULL;
 
     sys->eof = false;

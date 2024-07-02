@@ -33,6 +33,7 @@
 #include <errno.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
@@ -154,7 +155,8 @@ static int Create( filter_t *p_filter )
 
     const vlc_chroma_description_t *p_chroma =
         vlc_fourcc_GetChromaDescription( p_filter->fmt_in.video.i_chroma );
-    if( p_chroma == NULL || p_chroma->plane_count == 0 )
+    assert( p_chroma != NULL );
+    if( p_chroma->plane_count == 0 )
         return VLC_EGENERIC;
 
     config_ChainParse( p_filter, CFG_PREFIX, ppsz_vfilter_options,
@@ -192,7 +194,7 @@ static int Create( filter_t *p_filter )
     p_sys->psz_prefix = var_CreateGetString( p_filter, CFG_PREFIX "prefix" );
     p_sys->psz_path = var_GetNonEmptyString( p_filter, CFG_PREFIX "path" );
     if( p_sys->psz_path == NULL )
-        p_sys->psz_path = config_GetUserDir( VLC_PICTURES_DIR );
+        p_sys->psz_path = config_GetUserDir( VLC_SNAPSHOTS_DIR );
 
     if (unlikely(p_sys->psz_path == NULL))
     {
@@ -289,7 +291,7 @@ static void SavePicture( filter_t *p_filter, picture_t *p_pic )
     char *psz_temp = NULL;
     int i_ret;
 
-    video_format_Init( &fmt_out, p_sys->i_format );
+    video_format_Init( &fmt_out, 0 );
 
     /* Save snapshot psz_format to a memory zone */
     fmt_in = p_pic->format;
@@ -324,7 +326,7 @@ static void SavePicture( filter_t *p_filter, picture_t *p_pic )
     }
 
     /* Save the image */
-    i_ret = image_WriteUrl( p_sys->p_image, p_pic, &fmt_in, &fmt_out,
+    i_ret = image_WriteUrl( p_sys->p_image, p_pic, &fmt_in, p_sys->i_format, &fmt_out,
                             psz_temp );
     if( i_ret != VLC_SUCCESS )
     {

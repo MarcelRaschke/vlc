@@ -29,6 +29,7 @@
 
 #define VLC_MODULE_LICENSE VLC_LICENSE_GPL_2_PLUS
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_interface.h>
 #include <vlc_charset.h>
@@ -138,9 +139,9 @@ void Close( vlc_object_t *p_this )
 static void *Run( void *data )
 {
     intf_thread_t *p_intf = data;
-    SERVICE_TABLE_ENTRY dispatchTable[] =
+    const SERVICE_TABLE_ENTRYA dispatchTable[] =
     {
-        { (WCHAR*) TEXT(VLCSERVICENAME), (LPSERVICE_MAIN_FUNCTION) &ServiceDispatch },
+        { (LPSTR)VLCSERVICENAME, (LPSERVICE_MAIN_FUNCTIONA) &ServiceDispatch },
         { NULL, NULL }
     };
 
@@ -154,16 +155,18 @@ static void *Run( void *data )
     if( var_InheritBool( p_intf, "ntservice-install" ) )
     {
         NTServiceInstall( p_intf );
+        free( p_intf->p_sys->psz_service );
         return NULL;
     }
 
     if( var_InheritBool( p_intf, "ntservice-uninstall" ) )
     {
         NTServiceUninstall( p_intf );
+        free( p_intf->p_sys->psz_service );
         return NULL;
     }
 
-    if( StartServiceCtrlDispatcher( dispatchTable ) == 0 )
+    if( StartServiceCtrlDispatcherA( dispatchTable ) == 0 )
     {
         msg_Err( p_intf, "StartServiceCtrlDispatcher failed" ); /* str review */
     }

@@ -12,12 +12,13 @@ VLC_TOOLS ?= $(TOPSRC)/../extras/tools/build
 
 CMAKE_GENERATOR ?= Ninja
 
-PATH :=$(abspath $(VLC_TOOLS)/bin):$(PATH)
-export PATH
-
 PKGS_ALL := $(patsubst $(SRC)/%/rules.mak,%,$(wildcard $(SRC)/*/rules.mak))
 DATE := $(shell date +%Y%m%d)
 VPATH := $(TARBALLS)
+
+# Default Qt version
+QTBASE_VERSION_MAJOR := 6.7
+QTBASE_VERSION := $(QTBASE_VERSION_MAJOR).1
 
 # Common download locations
 GNU ?= http://ftp.gnu.org/gnu
@@ -27,8 +28,10 @@ CONTRIB_VIDEOLAN := http://downloads.videolan.org/pub/contrib
 VIDEOLAN_GIT := https://git.videolan.org/git
 GITHUB := https://github.com
 GOOGLE_CODE := https://storage.googleapis.com/google-code-archive-downloads/v2/code.google.com
-QT := https://download.qt.io/official_releases/qt
+GNUGPG := https://www.gnupg.org/ftp/gcrypt
+QT := https://download.qt.io/official_releases/qt/$(QTBASE_VERSION_MAJOR)
 XIPH := https://ftp.osuosl.org/pub/xiph/releases
+XORG := https://www.x.org/releases/individual
 
 #
 # Machine-dependent variables
@@ -39,6 +42,11 @@ PREFIX := $(abspath $(PREFIX))
 BUILDPREFIX ?= $(PREFIX)/..
 BUILDPREFIX := $(abspath $(BUILDPREFIX))
 BUILDBINDIR ?= $(BUILDPREFIX)/bin
+
+SYSTEM_PATH := $(abspath $(VLC_TOOLS)/bin):$(PATH)
+PATH :=$(abspath $(BUILDBINDIR)):$(abspath $(BUILDBINDIR)/../libexec):$(SYSTEM_PATH)
+export PATH
+
 ifneq ($(HOST),$(BUILD))
 HAVE_CROSS_COMPILE = 1
 endif
@@ -121,6 +129,11 @@ XCODE_FLAGS += -arch $(ARCH)
 endif
 endif
 
+ifdef HAVE_EMSCRIPTEN
+EXTRA_CFLAGS += -pthread
+EXTRA_CXXFLAGS += -pthread
+endif
+
 CCAS=$(CC) -c
 
 LN_S = ln -s
@@ -135,6 +148,13 @@ LN_S = cp -R
 endif
 endif
 
+ifdef HAVE_ANDROID
+# Android NDK has vulkan headers but vulkan.h from the sysroot but it is not
+# the actual vulkan version from the Android NDK, the proper one is located
+# in this third_party folder
+EXTRA_CFLAGS += -isystem$(ANDROID_NDK)/sources/third_party/vulkan/src/include
+endif
+
 ifdef HAVE_SOLARIS
 ifeq ($(ARCH),x86_64)
 EXTRA_CFLAGS += -m64
@@ -143,11 +163,6 @@ else
 EXTRA_CFLAGS += -m32
 EXTRA_LDFLAGS += -m32
 endif
-endif
-
-ifdef HAVE_WINSTORE
-EXTRA_CFLAGS += -DWINSTORECOMPAT
-EXTRA_LDFLAGS += -lwindowsappcompat
 endif
 
 ifneq ($(findstring clang, $(shell $(CC) --version 2>/dev/null)),)
@@ -164,10 +179,8 @@ LDFLAGS := $(LDFLAGS) -L$(PREFIX)/lib $(EXTRA_LDFLAGS)
 
 ifdef ENABLE_PDB
 ifdef HAVE_CLANG
-ifneq ($(findstring $(ARCH),i686 x86_64),)
 CFLAGS := $(CFLAGS) -gcodeview
 CXXFLAGS := $(CXXFLAGS) -gcodeview
-endif
 endif
 endif
 
@@ -206,7 +219,7 @@ BUILDLDFLAGS ?= $(BUILDCFLAGS)
 # Do not export variables above! Use HOSTVARS or BUILDVARS.
 
 # Do the FPU detection, after we have figured out our compilers and flags.
-ifneq ($(findstring $(ARCH),aarch64 i386 ppc ppc64 sparc sparc64 x86_64),)
+ifneq ($(findstring $(ARCH),aarch64 i386 ppc ppc64 ppc64le sparc sparc64 x86_64),)
 # This should be consistent with include/vlc_cpu.h
 HAVE_FPU = 1
 else ifneq ($(findstring $(ARCH),arm),)
@@ -223,11 +236,12 @@ else ifneq ($(call cppcheck, __mips_hard_float),)
 HAVE_FPU = 1
 endif
 
-ACLOCAL_AMFLAGS += -I$(PREFIX)/share/aclocal
 ifneq ($(wildcard $(VLC_TOOLS)/share/aclocal/*),)
-ACLOCAL_AMFLAGS += -I$(abspath $(VLC_TOOLS)/share/aclocal)
+VLC_ACLOCAL_PATH := $(PREFIX)/share/aclocal:$(abspath $(VLC_TOOLS)/share/aclocal):${ACLOCAL_PATH}
+else
+VLC_ACLOCAL_PATH := $(PREFIX)/share/aclocal:${ACLOCAL_PATH}
 endif
-export ACLOCAL_AMFLAGS
+export ACLOCAL_PATH=${VLC_ACLOCAL_PATH}
 
 #########
 # Tools #
@@ -249,8 +263,14 @@ endif # HAVE_CROSS_COMPILE
 
 PKG_CONFIG ?= pkg-config
 
-PKG_CONFIG_PATH := $(PREFIX)/lib/pkgconfig:$(PKG_CONFIG_PATH)
+PKG_CONFIG_PATH := $(PREFIX)/lib/pkgconfig:$(PREFIX)/share/pkgconfig:$(PKG_CONFIG_PATH)
 export PKG_CONFIG_PATH
+
+# Get the version of a system tool $1 and pass it through the $2 command(s)
+FULL_VERSION_REGEX := 's/[^0-9]*\([0-9]\([0-9a-zA-Z\.\-]*\)\)\(.*\)/\1/p'
+system_tool_version = $(shell PATH="${SYSTEM_PATH}" $(1) 2>/dev/null | head -1 | sed -ne ${FULL_VERSION_REGEX} | $(2))
+# Get the major.minor version of a system tool
+system_tool_majmin = $(call system_tool_version, $(1), cut -d '.' -f -2)
 
 ifndef GIT
 ifeq ($(shell git --version >/dev/null 2>&1 || echo FAIL),)
@@ -258,13 +278,6 @@ GIT = git
 endif
 endif
 GIT ?= $(error git not found)
-
-ifndef SVN
-ifeq ($(shell svn --version >/dev/null 2>&1 || echo FAIL),)
-SVN = svn
-endif
-endif
-SVN ?= $(error subversion client (svn) not found)
 
 ifeq ($(shell curl --version >/dev/null 2>&1 || echo FAIL),)
 download = curl -f -L -- "$(1)" > "$@"
@@ -328,6 +341,19 @@ HOSTTOOLS := \
 
 HOSTVARS_MESON := $(HOSTTOOLS)
 
+ifdef HAVE_BITCODE_ENABLED
+CFLAGS := $(CFLAGS) -fembed-bitcode
+CXXFLAGS := $(CXXFLAGS) -fembed-bitcode
+endif
+
+# Add these flags after CMake consumed the CFLAGS/CXXFLAGS
+# CMake handles the optimization level with CMAKE_BUILD_TYPE
+HOSTVARS_CMAKE := $(HOSTTOOLS) \
+	CPPFLAGS="$(CPPFLAGS)" \
+	CFLAGS="$(CFLAGS)" \
+	CXXFLAGS="$(CXXFLAGS)" \
+	LDFLAGS="$(LDFLAGS)"
+
 # Add these flags after Meson consumed the CFLAGS/CXXFLAGS
 # as when setting those for Meson, it would apply to tests
 # and cause the check if symbols have underscore prefix to
@@ -338,11 +364,6 @@ CXXFLAGS := $(CXXFLAGS) -g -O0
 else
 CFLAGS := $(CFLAGS) -g -O2
 CXXFLAGS := $(CXXFLAGS) -g -O2
-endif
-
-ifdef HAVE_BITCODE_ENABLED
-CFLAGS := $(CFLAGS) -fembed-bitcode
-CXXFLAGS := $(CXXFLAGS) -fembed-bitcode
 endif
 
 HOSTVARS := $(HOSTTOOLS) \
@@ -421,22 +442,28 @@ APPLY = (cd $(UNPACK_DIR) && patch -fp1) <
 pkg_static = (cd $(UNPACK_DIR) && $(SRC_BUILT)/pkg-static.sh $(1))
 MOVE = mv $(UNPACK_DIR) $@ && touch $@
 
-AUTOMAKE_DATA_DIRS=$(foreach n,$(foreach n,$(subst :, ,$(shell echo $$PATH)),$(abspath $(n)/../share)),$(wildcard $(n)/automake*))
-UPDATE_AUTOCONFIG = for dir in $(AUTOMAKE_DATA_DIRS); do \
+AUTOMAKE_DATA_DIRS:=$(foreach n,$(foreach n,$(subst :, ,$(shell echo $$PATH)),$(abspath $(n)/../share)),$(wildcard $(n)/autoconf*/build-aux))
+update_autoconfig = \
+	for dir in $(AUTOMAKE_DATA_DIRS); do \
 		if test -f "$${dir}/config.sub" -a -f "$${dir}/config.guess"; then \
-			cp "$${dir}/config.sub" "$${dir}/config.guess" $(UNPACK_DIR); \
+			install -p "$${dir}/config.guess" "$(UNPACK_DIR)/$(1)/"; \
+			install -p "$${dir}/config.sub"   "$(UNPACK_DIR)/$(1)/"; \
 			break; \
 		fi; \
 	done
 
+ifneq ($(wildcard $(abspath $(VLC_TOOLS))/share/autoconf-vlc/build-aux),)
+VLC_CONFIG_GUESS := autom4te_buildauxdir=$(abspath $(VLC_TOOLS))/share/autoconf-vlc/build-aux
+endif
+
 AUTORECONF = GTKDOCIZE=true autoreconf
 RECONF = mkdir -p -- $(PREFIX)/share/aclocal && \
-	cd $< && $(AUTORECONF) -fiv $(ACLOCAL_AMFLAGS)
+	cd $< && $(VLC_CONFIG_GUESS) $(AUTORECONF) -fiv
 
 BUILD_DIR = $</vlc_build
 BUILD_SRC := ..
 # build directory relative to UNPACK_DIR
-BUILD_DIRUNPACK = vlc_build
+BUILD_DIRUNPACK := vlc_build
 
 MAKEBUILDDIR = mkdir -p $(BUILD_DIR) && rm -f $(BUILD_DIR)/config.status && test ! -f $</config.status || $(MAKE) -C $< distclean
 MAKEBUILD = $(MAKE) -C $(BUILD_DIR)
@@ -448,26 +475,37 @@ MAKECONFIGURE = $(MAKECONFDIR)/configure $(HOSTCONF)
 # itself instead of relying on a shell, but a bug in gnulib ends up
 # trying to execute a cmake folder when one is found in the PATH
 CMAKEBUILD = env cmake --build $(BUILD_DIR)
-CMAKEINSTALL = env cmake --install $(BUILD_DIR) --prefix $(PREFIX)
+CMAKEINSTALL = env cmake --install $(BUILD_DIR)
 CMAKECLEAN = rm -f $(BUILD_DIR)/CMakeCache.txt
-CMAKE = cmake -S $< -DCMAKE_TOOLCHAIN_FILE=$(abspath toolchain.cmake) \
-		-B $(BUILD_DIR) \
+CMAKECONFIG = cmake -S $< -B $(BUILD_DIR) \
 		-DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-		-DCMAKE_INSTALL_PREFIX:STRING=$(PREFIX) \
 		-DBUILD_SHARED_LIBS:BOOL=OFF \
 		-DCMAKE_INSTALL_LIBDIR:STRING=lib \
-		-DBUILD_TESTING:BOOL=OFF
+		-DBUILD_TESTING:BOOL=OFF \
+		-G $(CMAKE_GENERATOR)
+ifeq ($(V),1)
+CMAKECONFIG += -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
+endif
+
+CMAKE = $(CMAKECONFIG) \
+		-DCMAKE_TOOLCHAIN_FILE=$(abspath toolchain.cmake) \
+		-DCMAKE_INSTALL_PREFIX:STRING=$(PREFIX)
+CMAKE_NATIVE = $(CMAKECONFIG) \
+		-DCMAKE_INSTALL_PREFIX:STRING=$(BUILDPREFIX)
+ifndef WITH_OPTIMIZATION
+CMAKE += -DCMAKE_BUILD_TYPE=Debug
+else
+CMAKE += -DCMAKE_BUILD_TYPE=RelWithDebInfo
+endif
 ifdef HAVE_WIN32
 CMAKE += -DCMAKE_DEBUG_POSTFIX:STRING=
+endif
+ifdef HAVE_ANDROID
+CMAKE += -DANDROID:BOOL=ON
 endif
 ifdef MSYS_BUILD
 CMAKE = PKG_CONFIG_LIBDIR="$(PKG_CONFIG_PATH)" $(CMAKE)
 CMAKE += -DCMAKE_LINK_LIBRARY_SUFFIX:STRING=.a
-endif
-CMAKE += -G $(CMAKE_GENERATOR)
-
-ifeq ($(V),1)
-CMAKE += -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
 endif
 
 MESONFLAGS = $(BUILD_DIR) $< --default-library static --prefix "$(PREFIX)" \
@@ -509,6 +547,40 @@ MESON = meson setup $(MESONFLAGS)
 endif
 MESONCLEAN = rm -rf $(BUILD_DIR)/meson-private
 MESONBUILD = meson compile -C $(BUILD_DIR) $(MESON_BUILD) && meson install -C $(BUILD_DIR)
+
+# shared Qt config
+ifeq ($(call system_tool_version, qmake6 -query QT_VERSION 2>/dev/null, cat),$(QTBASE_VERSION))
+
+ifdef HAVE_CROSS_COMPILE
+QT_LIBEXECS := $(shell qmake6 -query QT_HOST_LIBEXECS)
+QT_BINS := $(shell qmake6 -query QT_HOST_BINS)
+else
+QT_LIBEXECS := $(shell qmake6 -query QT_INSTALL_LIBEXECS):$(shell qmake6 -query QT_HOST_LIBEXECS)
+QT_BINS := $(shell qmake6 -query QT_INSTALL_BINS):$(shell qmake6 -query QT_HOST_BINS)
+endif
+
+ifeq ($(call system_tool_version, PATH="${QT_LIBEXECS}" moc --version, cat),$(QTBASE_VERSION))
+ifeq ($(call system_tool_version, PATH="${QT_BINS}" qsb --version, cat),$(QTBASE_VERSION))
+ifeq ($(call system_tool_version, PATH="${QT_LIBEXECS}" qmlcachegen --version, cat),$(QTBASE_VERSION))
+QT_USES_SYSTEM_TOOLS = 1
+endif
+endif
+endif
+endif
+
+ifdef HAVE_CROSS_COMPILE
+ifdef QT_USES_SYSTEM_TOOLS
+ # using system Qt native tools
+ QT_HOST_PREFIX := $(shell PATH="${SYSTEM_PATH}" qmake6 -query QT_HOST_PREFIX)
+ QT_HOST_LIBS := $(shell PATH="${SYSTEM_PATH}" qmake6 -query QT_HOST_LIBS)
+else
+ # using locally compiled Qt native tools
+ QT_HOST_PREFIX := $(BUILDPREFIX)
+ QT_HOST_LIBS := $(QT_HOST_PREFIX)/lib
+endif
+QT_HOST_PATH := -DQT_HOST_PATH=$(QT_HOST_PREFIX) -DQT_HOST_PATH_CMAKE_DIR=$(QT_HOST_LIBS)/cmake
+endif
+QT_CMAKE_CONFIG := -DCMAKE_TOOLCHAIN_FILE=$(PREFIX)/lib/cmake/Qt6/qt.toolchain.cmake $(QT_HOST_PATH)
 
 ifdef GPL
 REQUIRE_GPL =
@@ -634,11 +706,20 @@ help:
 
 .PHONY: all fetch fetch-all install mostlyclean clean distclean package list help prebuilt tools
 
+CMAKE_HOST_ARCH=$(ARCH)
+ifeq ($(ARCH),i386)
+CMAKE_HOST_ARCH=i686
+else ifeq ($(ARCH),arm)
+CMAKE_HOST_ARCH=armv7-a
+endif
+
 CMAKE_SYSTEM_NAME =
 ifdef HAVE_CROSS_COMPILE
 CMAKE_SYSTEM_NAME = $(error CMAKE_SYSTEM_NAME required for cross-compilation)
 endif
-ifdef HAVE_LINUX
+ifdef HAVE_ANDROID
+CMAKE_SYSTEM_NAME = Android
+else
 CMAKE_SYSTEM_NAME = Linux
 endif
 ifdef HAVE_WIN32
@@ -646,9 +727,6 @@ CMAKE_SYSTEM_NAME = Windows
 ifdef HAVE_VISUALSTUDIO
 ifdef HAVE_WINSTORE
 CMAKE_SYSTEM_NAME = WindowsStore
-endif
-ifdef HAVE_WINDOWSPHONE
-CMAKE_SYSTEM_NAME = WindowsPhone
 endif
 endif
 endif
@@ -666,12 +744,7 @@ CFLAGS += -DANDROID_NATIVE_API_LEVEL=$(ANDROID_API)
 endif
 
 # CMake toolchain
-CMAKE_TOOLCHAIN_ENV := $(HOSTTOOLS) HOST_ARCH="$(ARCH)" SYSTEM_NAME="$(CMAKE_SYSTEM_NAME)"
-ifndef WITH_OPTIMIZATION
-	CMAKE_TOOLCHAIN_ENV += BUILD_TYPE=Debug
-else
-	CMAKE_TOOLCHAIN_ENV += BUILD_TYPE=RelWithDebInfo
-endif
+CMAKE_TOOLCHAIN_ENV := $(HOSTTOOLS) HOST_ARCH="$(CMAKE_HOST_ARCH)" SYSTEM_NAME="$(CMAKE_SYSTEM_NAME)"
 ifdef HAVE_WIN32
 ifdef HAVE_CROSS_COMPILE
 	CMAKE_TOOLCHAIN_ENV += RC_COMPILER="$(WINDRES)"
@@ -688,8 +761,12 @@ ifdef HAVE_CROSS_COMPILE
 	CMAKE_TOOLCHAIN_ENV += TOOLCHAIN_PREFIX="$(HOST)-"
 	CMAKE_TOOLCHAIN_ENV += PATH_MODE_LIBRARY="ONLY"
 	CMAKE_TOOLCHAIN_ENV += PATH_MODE_INCLUDE="ONLY"
+	CMAKE_TOOLCHAIN_ENV += PATH_MODE_PACKAGE="ONLY"
 endif
 ifdef HAVE_ANDROID
+	CMAKE_TOOLCHAIN_ENV += ANDROID_NDK=$(ANDROID_NDK)
+	CMAKE_TOOLCHAIN_ENV += ANDROID_ABI=$(ANDROID_ABI)
+	CMAKE_TOOLCHAIN_ENV += ANDROID_API=$(ANDROID_API)
 # cmake will overwrite our --sysroot with a native (host) one on Darwin
 # Set it to "" right away to short-circuit this behaviour
 	CMAKE_TOOLCHAIN_ENV += CXX_SYSROOT_FLAG=

@@ -37,6 +37,8 @@
 #import "../../packetizer/h264_slice.h"
 #import "../../packetizer/hxxx_nal.h"
 #import "../../packetizer/hxxx_sei.h"
+#import "pacer.h"
+#import "dpb.h"
 
 #import <VideoToolbox/VideoToolbox.h>
 #import <VideoToolbox/VTErrors.h>
@@ -73,36 +75,12 @@ static void Drain(decoder_t *p_dec, bool flush);
 static void DecoderCallback(void *, void *, OSStatus, VTDecodeInfoFlags,
                             CVPixelBufferRef, CMTime, CMTime);
 static Boolean deviceSupportsHEVC();
+static bool deviceSupports42010bitRendering();
 static Boolean deviceSupportsAdvancedProfiles();
 static Boolean deviceSupportsAdvancedLevels();
 
-typedef struct frame_info_t frame_info_t;
-
-struct frame_info_t
-{
-    picture_t *p_picture;
-    int i_poc;
-    int i_foc;
-    vlc_tick_t pts;
-    vlc_tick_t dts;
-    unsigned field_rate_num;
-    unsigned field_rate_den;
-    bool b_flush;
-    bool b_eos;
-    bool b_keyframe;
-    bool b_leading;
-    bool b_field;
-    bool b_progressive;
-    bool b_top_field_first;
-    uint8_t i_num_ts;
-    uint8_t i_max_reorder;
-    unsigned i_length;
-    frame_info_t *p_next;
-};
-
 #pragma mark - decoder structure
 
-#define H264_MAX_DPB 16
 #define VT_MAX_SEI_COUNT 16
 
 #define DEFAULT_FRAME_RATE_NUM 30000
@@ -116,6 +94,7 @@ typedef struct decoder_sys_t
     bool                        (*pf_codec_init)(decoder_t *);
     void                        (*pf_codec_clean)(void *);
     bool                        (*pf_codec_supported)(decoder_t *);
+    void                        (*pf_codec_flush)(decoder_t *);
     bool                        (*pf_late_start)(decoder_t *);
     block_t*                    (*pf_process_block)(decoder_t *,
                                                     block_t *, bool *);
@@ -146,12 +125,7 @@ typedef struct decoder_sys_t
     vlc_mutex_t                 lock;
     bool                        b_discard_decoder_output;
 
-    frame_info_t               *p_pic_reorder;
-    uint8_t                     i_pic_reorder;
-    uint8_t                     i_pic_reorder_max;
-    bool                        b_strict_reorder;
-    bool                        b_invalid_pic_reorder_max;
-    bool                        b_poc_based_reorder;
+    struct dpb_s                dpb;
 
     bool                        b_format_propagated;
 
@@ -163,83 +137,10 @@ typedef struct decoder_sys_t
     date_t                      pts;
 
     vlc_video_context          *vctx;
+    /* Picture pacer to work-around the VT session allocating too many CVPX buffers
+     * that can lead to a OOM. */
     struct pic_pacer           *pic_pacer;
 } decoder_sys_t;
-
-/* Picture pacer to work-around the VT session allocating too much CVPX buffers
- * that can lead to a OOM. */
-struct pic_pacer
-{
-    vlc_mutex_t lock;
-    vlc_cond_t  wait;
-    uint8_t     nb_out;
-    uint8_t     allocated_max;
-    uint8_t     allocated_next;
-    uint8_t     queued_for_decode;
-};
-
-#define PIC_PACER_ALLOCATABLE_MAX (1 /* callback, pre-reorder */ \
-                                 + 2 /* filters */ \
-                                 + 1 /* display */ \
-                                 + 1 /* next/prev display */)
-#define PIC_PACER_DECODE_QUEUE 4  /* max async decode before callback */
-//#define PIC_PACER_DEBUG
-static void pic_pacer_UpdateReorderMax(struct pic_pacer *, uint8_t);
-
-static void pic_pacer_Destroy(void *priv)
-{
-    (void) priv;
-}
-
-static void pic_pacer_Init(struct pic_pacer *pic_pacer)
-{
-    vlc_mutex_init(&pic_pacer->lock);
-    vlc_cond_init(&pic_pacer->wait);
-    pic_pacer->nb_out = 0;
-    pic_pacer->allocated_max = 6;
-    pic_pacer->allocated_next = pic_pacer->allocated_max;
-    pic_pacer->queued_for_decode = 0;
-}
-
-static void pic_pacer_AccountAllocation(struct pic_pacer *pic_pacer)
-{
-    vlc_mutex_lock(&pic_pacer->lock);
-    pic_pacer->nb_out += 1;
-    vlc_mutex_unlock(&pic_pacer->lock);
-}
-
-static void pic_pacer_AccountScheduledDecode(struct pic_pacer *pic_pacer)
-{
-    vlc_mutex_lock(&pic_pacer->lock);
-    pic_pacer->queued_for_decode += 1;
-    vlc_mutex_unlock(&pic_pacer->lock);
-}
-
-static void pic_pacer_AccountFinishedDecode(struct pic_pacer *pic_pacer)
-{
-    vlc_mutex_lock(&pic_pacer->lock);
-    pic_pacer->queued_for_decode -= 1;
-    vlc_cond_signal(&pic_pacer->wait);
-    vlc_mutex_unlock(&pic_pacer->lock);
-}
-
-static void pic_pacer_WaitAllocatableSlot(struct pic_pacer *pic_pacer)
-{
-    vlc_mutex_lock(&pic_pacer->lock);
-    uint8_t allocatable_total = pic_pacer->allocated_max + PIC_PACER_DECODE_QUEUE;
-
-    while( pic_pacer->queued_for_decode + pic_pacer->nb_out >= allocatable_total )
-    {
-#ifdef PIC_PACER_DEBUG
-        fprintf(stderr, "input pacing %d+%d >= %d\n",
-                pic_pacer->queued_for_decode, pic_pacer->nb_out, allocatable_total);
-#endif
-        vlc_cond_wait(&pic_pacer->wait, &pic_pacer->lock);
-        /*update*/
-        allocatable_total = pic_pacer->allocated_max + PIC_PACER_DECODE_QUEUE;
-    }
-    vlc_mutex_unlock(&pic_pacer->lock);
-}
 
 #pragma mark - start & stop
 
@@ -252,10 +153,9 @@ static OSType GetBestChroma(uint8_t i_chroma_format, uint8_t i_depth_luma,
             return kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
         if (i_depth_luma == 10 && i_depth_chroma == 10)
         {
-#if !TARGET_OS_IPHONE
-            if (deviceSupportsHEVC()) /* 42010bit went with HEVC on macOS */
+            if (deviceSupportsHEVC() && deviceSupports42010bitRendering())
                 return kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
-#endif
+
            /* Force BGRA output (and let VT handle the tone mapping) since the
             * Apple openGL* implementation can't handle 16 bit textures. This
             * is the case for iOS and some macOS devices (ones that are not
@@ -301,7 +201,7 @@ static void GetxPSH264(uint8_t i_pps_id, void *priv,
     if (*pp_pps == NULL)
         *pp_sps = NULL;
     else
-        *pp_sps = h264ctx->hh.h264.sps_list[(*pp_pps)->i_sps_id].h264_sps;
+        *pp_sps = h264ctx->hh.h264.sps_list[h264_get_pps_sps_id(*pp_pps)].h264_sps;
 }
 
 struct sei_callback_h264_s
@@ -315,16 +215,13 @@ static bool ParseH264SEI(const hxxx_sei_data_t *p_sei_data, void *priv)
     if (p_sei_data->i_type == HXXX_SEI_PIC_TIMING)
     {
         struct sei_callback_h264_s *s = priv;
-        if (s->p_sps && s->p_sps->vui.b_valid)
+        if (s->p_sps)
         {
-            if (s->p_sps->vui.b_hrd_parameters_present_flag)
-            {
-                bs_read(p_sei_data->p_bs, s->p_sps->vui.i_cpb_removal_delay_length_minus1 + 1);
-                bs_read(p_sei_data->p_bs, s->p_sps->vui.i_dpb_output_delay_length_minus1 + 1);
-            }
-
-            if (s->p_sps->vui.b_pic_struct_present_flag)
-                s->i_pic_struct = bs_read( p_sei_data->p_bs, 4);
+            uint8_t i_dpb_output_delay;
+            h264_decode_sei_pic_timing( p_sei_data->p_bs, s->p_sps,
+                                       &s->i_pic_struct,
+                                       &i_dpb_output_delay );
+            VLC_UNUSED(i_dpb_output_delay);
         }
         return false;
     }
@@ -357,24 +254,25 @@ static bool FillReorderInfoH264(decoder_t *p_dec, const block_t *p_block,
 
         if (i_nal_type <= H264_NAL_SLICE_IDR && i_nal_type != H264_NAL_UNKNOWN)
         {
-            h264_slice_t slice;
-            if (!h264_decode_slice(p_nal, i_nal, GetxPSH264, h264ctx, &slice))
+            h264_slice_t *slice = h264_decode_slice(p_nal, i_nal, GetxPSH264, h264ctx);
+            if (!slice)
                 return false;
 
             const h264_sequence_parameter_set_t *p_sps;
             const h264_picture_parameter_set_t *p_pps;
-            GetxPSH264(slice.i_pic_parameter_set_id, h264ctx, &p_sps, &p_pps);
+            GetxPSH264(h264_get_slice_pps_id(slice), h264ctx, &p_sps, &p_pps);
             if (p_sps)
             {
                 int bFOC;
-                h264_compute_poc(p_sps, &slice, &h264ctx->poc,
+                h264_compute_poc(p_sps, slice, &h264ctx->poc,
                                  &p_info->i_poc, &p_info->i_foc, &bFOC);
 
-                p_info->b_keyframe = slice.type == H264_SLICE_TYPE_I;
-                p_info->b_flush = (slice.type == H264_SLICE_TYPE_I) || slice.has_mmco5;
-                p_info->b_field = slice.i_field_pic_flag;
-                p_info->b_progressive = !p_sps->mb_adaptive_frame_field_flag &&
-                                        !slice.i_field_pic_flag;
+                enum h264_slice_type_e slicetype = h264_get_slice_type(slice);
+                p_info->b_keyframe = slicetype == H264_SLICE_TYPE_I;
+                p_info->b_flush = p_info->b_keyframe || h264_has_mmco5(slice);
+                p_info->b_field = h264_is_field_pic(slice);
+                p_info->b_progressive = !h264_using_adaptive_frames(p_sps) &&
+                                        !p_info->b_field;
 
                 struct sei_callback_h264_s sei;
                 sei.p_sps = p_sps;
@@ -384,21 +282,23 @@ static bool FillReorderInfoH264(decoder_t *p_dec, const block_t *p_block,
                     HxxxParseSEI(sei_array[i].p_nal, sei_array[i].i_nal, 1,
                                  ParseH264SEI, &sei);
 
-                p_info->i_num_ts = h264_get_num_ts(p_sps, &slice, sei.i_pic_struct,
+                p_info->i_num_ts = h264_get_num_ts(p_sps, slice, sei.i_pic_struct,
                                                    p_info->i_foc, bFOC);
                 unsigned dummy;
-                h264_get_dpb_values(p_sps, &p_info->i_max_reorder, &dummy);
+                h264_get_dpb_values(p_sps, &p_info->i_max_pics_buffering, &dummy);
 
                 if (!p_info->b_progressive)
                     p_info->b_top_field_first = (sei.i_pic_struct % 2 == 1);
 
                 /* Set frame rate for timings in case of missing rate */
-                if (p_sps->vui.i_time_scale && p_sps->vui.i_num_units_in_tick)
+                unsigned fr[2];
+                if(h264_get_frame_rate(p_sps, fr, &fr[1]))
                 {
-                    p_info->field_rate_num = p_sps->vui.i_time_scale;
-                    p_info->field_rate_den = p_sps->vui.i_num_units_in_tick;
+                    p_info->field_rate_num = fr[0];
+                    p_info->field_rate_den = fr[1];
                 }
             }
+            h264_slice_release(slice);
 
             return true; /* No need to parse further NAL */
         }
@@ -448,6 +348,7 @@ static bool InitH264(decoder_t *p_dec)
         return false;
     }
     p_sys->p_codec_context = ctx;
+    p_sys->dpb.i_fields_per_buffer = 2;
     return true;
 }
 
@@ -528,6 +429,13 @@ static bool CodecSupportedH264(decoder_t *p_dec)
     return true;
 }
 
+static void CodecFlushH264(decoder_t *p_dec)
+{
+    decoder_sys_t *p_sys = p_dec->p_sys;
+    struct vt_h264_context *h264ctx = p_sys->p_codec_context;
+    h264_poc_context_init(&h264ctx->poc);
+}
+
 static bool LateStartH264(decoder_t *p_dec)
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
@@ -561,12 +469,15 @@ static bool ConfigureVoutH264(decoder_t *p_dec)
 
     if (!p_dec->fmt_in->video.i_visible_width || !p_dec->fmt_in->video.i_visible_height)
     {
-        unsigned i_width, i_height, i_vis_width, i_vis_height;
+        unsigned i_offset_x, i_offset_y, i_width, i_height, i_vis_width, i_vis_height;
         if (VLC_SUCCESS ==
            hxxx_helper_get_current_picture_size(&h264ctx->hh,
+                                                &i_offset_x, &i_offset_y,
                                                 &i_width, &i_height,
                                                 &i_vis_width, &i_vis_height))
         {
+            p_dec->fmt_out.video.i_x_offset = i_offset_x;
+            p_dec->fmt_out.video.i_y_offset = i_offset_y;
             p_dec->fmt_out.video.i_visible_width = i_vis_width;
             p_dec->fmt_out.video.i_width = vlc_align(i_width, VT_ALIGNMENT);
             p_dec->fmt_out.video.i_visible_height = i_vis_height;
@@ -596,10 +507,10 @@ static bool VideoToolboxNeedsToRestartH264(decoder_t *p_dec,
     struct vt_h264_context *h264ctx = p_sys->p_codec_context;
     const struct hxxx_helper *hh = &h264ctx->hh;
 
-    unsigned w, h, vw, vh;
+    unsigned ox, oy, w, h, vw, vh;
     int sarn, sard;
 
-    if (hxxx_helper_get_current_picture_size(hh, &w, &h, &vw, &vh) != VLC_SUCCESS)
+    if (hxxx_helper_get_current_picture_size(hh, &ox, &oy, &w, &h, &vw, &vh) != VLC_SUCCESS)
         return true;
 
     if (hxxx_helper_get_current_sar(hh, &sarn, &sard) != VLC_SUCCESS)
@@ -746,6 +657,16 @@ static bool FillReorderInfoHEVC(decoder_t *p_dec, const block_t *p_block,
                 p_info->b_keyframe |= (slice_type == HEVC_SLICE_TYPE_I);
             }
 
+            if( p_info->b_keyframe )
+            {
+                p_info->b_no_rasl_output = hevc_get_IRAPNoRaslOutputFlag( i_nal_type, &hevcctx->poc );
+                if ( i_nal_type == HEVC_NAL_CRA ) /* C.3.2 */
+                    p_info->b_no_output_of_prior_pics = true;
+                else
+                    p_info->b_no_output_of_prior_pics =
+                        hevc_get_slice_no_output_of_prior_pics_flag( p_sli );
+            }
+
             hevc_sequence_parameter_set_t *p_sps;
             hevc_picture_parameter_set_t *p_pps;
             hevc_video_parameter_set_t *p_vps;
@@ -766,7 +687,8 @@ static bool FillReorderInfoHEVC(decoder_t *p_dec, const block_t *p_block,
                 p_info->i_poc = POC;
                 p_info->i_foc = POC; /* clearly looks wrong :/ */
                 p_info->i_num_ts = hevc_get_num_clock_ts(p_sps, sei.p_timing);
-                p_info->i_max_reorder = hevc_get_max_num_reorder(p_vps);
+                hevc_get_dpb_values(p_sps, &p_info->i_max_num_reorder,
+                                    &p_info->i_max_latency_pics, &p_info->i_max_pics_buffering);
                 p_info->b_flush = (POC == 0) ||
                                   (i_nal_type >= HEVC_NAL_IDR_N_LP &&
                                    i_nal_type <= HEVC_NAL_IRAP_VCL23);
@@ -789,6 +711,11 @@ static bool FillReorderInfoHEVC(decoder_t *p_dec, const block_t *p_block,
              * corrupted if the decoding start at an IRAP frame (IDR/CRA), VT
              * is likely failing to handle this case. */
             p_info->b_leading = ( i_nal_type == HEVC_NAL_RASL_N || i_nal_type == HEVC_NAL_RASL_R );
+
+            if(p_info->b_leading && p_sys->sync_state == STATE_BITSTREAM_DISCARD_LEADING)
+                p_info->b_output_needed = false;
+            else
+                p_info->b_output_needed = hevc_get_slice_pic_output(p_sli);
 
             hevc_rbsp_release_slice_header(p_sli);
             return true; /* No need to parse further NAL */
@@ -850,6 +777,13 @@ static bool CodecSupportedHEVC(decoder_t *p_dec)
     return true;
 }
 
+static void CodecFlushHEVC(decoder_t *p_dec)
+{
+    decoder_sys_t *p_sys = p_dec->p_sys;
+    struct vt_hevc_context *hevcctx = p_sys->p_codec_context;
+    hevc_poc_cxt_init(&hevcctx->poc);
+}
+
 #define ConfigureVoutHEVC ConfigureVoutH264
 #define ProcessBlockHEVC ProcessBlockH264
 #define VideoToolboxNeedsToRestartHEVC VideoToolboxNeedsToRestartH264
@@ -865,132 +799,22 @@ static CFDictionaryRef CopyDecoderExtradataMPEG4(decoder_t *p_dec)
 
 /* !Codec Specific */
 
-static void InsertIntoDPB(decoder_sys_t *p_sys, frame_info_t *p_info)
-{
-    frame_info_t **pp_lead_in = &p_sys->p_pic_reorder;
-
-    for ( ;; pp_lead_in = & ((*pp_lead_in)->p_next))
-    {
-        bool b_insert;
-        if (*pp_lead_in == NULL)
-            b_insert = true;
-        else if (p_sys->b_poc_based_reorder)
-            b_insert = ((*pp_lead_in)->i_foc > p_info->i_foc);
-        else
-            b_insert = ((*pp_lead_in)->pts >= p_info->pts);
-
-        if (b_insert)
-        {
-            p_info->p_next = *pp_lead_in;
-            *pp_lead_in = p_info;
-            p_sys->i_pic_reorder++;
-            break;
-        }
-    }
-#if 0
-    for (frame_info_t *p_in=p_sys->p_pic_reorder; p_in; p_in = p_in->p_next)
-        printf(" %d", p_in->i_foc);
-    printf("\n");
-#endif
-}
-
-static int RemoveOneFrameFromDPB(decoder_sys_t *p_sys, picture_t **pp_ret)
-{
-    frame_info_t *p_info = p_sys->p_pic_reorder;
-    if (p_info == NULL)
-    {
-        *pp_ret = NULL;
-        return VLC_EGENERIC;
-    }
-
-    const int i_framepoc = p_info->i_poc;
-    const vlc_tick_t i_framepts = p_info->pts;
-
-    picture_t **pp_ret_last = pp_ret;
-    bool b_dequeue;
-
-    do
-    {
-        /* Asynchronous fallback time init */
-        if(date_Get(&p_sys->pts) == VLC_TICK_INVALID)
-        {
-            date_Set(&p_sys->pts, p_info->pts != VLC_TICK_INVALID ?
-                                  p_info->pts : p_info->dts );
-        }
-
-        /* Compute time from output if missing */
-        if (p_info->pts == VLC_TICK_INVALID)
-            p_info->pts = date_Get(&p_sys->pts);
-        else
-            date_Set(&p_sys->pts, p_info->pts);
-
-        /* Update frame rate (used on interpolation) */
-        if(p_info->field_rate_num != p_sys->pts.i_divider_num ||
-           p_info->field_rate_den != p_sys->pts.i_divider_den)
-        {
-            /* no date_Change due to possible invalid num */
-            date_Init(&p_sys->pts, p_info->field_rate_num,
-                                   p_info->field_rate_den);
-            date_Set(&p_sys->pts, p_info->pts);
-        }
-
-        /* Set next picture time, in case it is missing */
-        if (p_info->i_length)
-            date_Set(&p_sys->pts, p_info->pts + p_info->i_length);
-        else
-            date_Increment(&p_sys->pts, p_info->i_num_ts);
-
-        if( p_info->p_picture ) /* Can have no picture attached to entry on error */
-        {
-            if( p_info->p_picture->date == VLC_TICK_INVALID )
-                p_info->p_picture->date = p_info->pts;
-
-            /* Extract attached field to output list */
-            *pp_ret_last = p_info->p_picture;
-            pp_ret_last = &p_info->p_picture->p_next;
-        }
-
-        p_sys->i_pic_reorder--;
-
-        p_sys->p_pic_reorder = p_info->p_next;
-        free(p_info);
-        p_info = p_sys->p_pic_reorder;
-
-        if (p_info)
-        {
-            if (p_sys->b_poc_based_reorder)
-                b_dequeue = (p_info->i_poc == i_framepoc);
-            else
-                b_dequeue = (p_info->pts == i_framepts);
-        }
-        else
-        {
-            b_dequeue = false;
-        }
-
-    } while(b_dequeue);
-
-    return VLC_SUCCESS;
-}
-
 static void DrainDPBLocked(decoder_t *p_dec, bool flush)
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
-    for ( ;; )
+    struct dpb_s *dpb = &p_sys->dpb;
+    while (dpb->i_size > 0)
     {
-        picture_t *p_fields;
-        if(RemoveOneFrameFromDPB(p_sys, &p_fields) != VLC_SUCCESS)
-            break;
-        for ( ; p_fields; )
+        picture_t *p_output = DPBOutputFrame(dpb, &p_sys->pts,
+                                             dpb->p_entries);
+        if(p_output)
         {
-            picture_t *p_next = p_fields->p_next;
-            p_fields->p_next = NULL;
             if (flush)
-                picture_Release(p_fields);
+                picture_Release(p_output);
             else
-                decoder_QueueVideo(p_dec, p_fields);
-            p_fields = p_next;
+                decoder_QueueVideo(p_dec, p_output);
         }
+        RemoveDPBSlot(dpb, &dpb->p_entries);
     }
 }
 
@@ -1000,6 +824,12 @@ static frame_info_t * CreateReorderInfo(decoder_t *p_dec, const block_t *p_block
     frame_info_t *p_info = calloc(1, sizeof(*p_info));
     if (!p_info)
         return NULL;
+
+    /* failsafe defaults */
+    p_info->b_output_needed = true;
+    p_info->i_max_num_reorder = 0;
+    p_info->i_max_latency_pics = 0;
+    p_info->i_latency = 0;
 
     if (p_sys->pf_fill_reorder_info)
     {
@@ -1042,52 +872,46 @@ static void OnDecodedFrame(decoder_t *p_dec, frame_info_t *p_info)
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    if(!p_sys->b_invalid_pic_reorder_max &&
-       p_info->i_max_reorder != p_sys->i_pic_reorder_max)
+    if(!p_sys->dpb.b_invalid_pic_reorder_max &&
+       p_info->i_max_pics_buffering != p_sys->dpb.i_max_pics)
     {
-        p_sys->i_pic_reorder_max = p_info->i_max_reorder;
-        pic_pacer_UpdateReorderMax(p_sys->pic_pacer, p_sys->i_pic_reorder_max);
+        p_sys->dpb.i_max_pics = p_info->i_max_pics_buffering;
+        pic_pacer_UpdateMaxBuffering(p_sys->pic_pacer, p_sys->dpb.i_max_pics);
     }
 
-    while(p_info->b_flush || p_sys->i_pic_reorder >= p_sys->i_pic_reorder_max)
+    /* First check if DPB sizing was correct before removing one frame */
+    if (!p_sys->dpb.b_strict_reorder && !p_info->b_flush &&
+        p_sys->dpb.i_size == p_sys->dpb.i_max_pics &&
+        p_sys->dpb.i_size && p_sys->dpb.i_max_pics < DPB_MAX_PICS)
     {
-        /* First check if DPB sizing was correct before removing one frame */
-        if (p_sys->p_pic_reorder && !p_sys->b_strict_reorder && !p_info->b_flush &&
-            p_sys->i_pic_reorder_max < H264_MAX_DPB)
+        if (p_sys->dpb.b_poc_based_reorder && p_sys->dpb.p_entries->i_foc > p_info->i_foc)
         {
-            if (p_sys->b_poc_based_reorder && p_sys->p_pic_reorder->i_foc > p_info->i_foc)
-            {
-                p_sys->b_invalid_pic_reorder_max = true;
-                p_sys->i_pic_reorder_max++;
-                pic_pacer_UpdateReorderMax(p_sys->pic_pacer, p_sys->i_pic_reorder_max);
-                msg_Dbg(p_dec, "Raising max DPB to %"PRIu8, p_sys->i_pic_reorder_max);
-                break;
-            }
-            else if (!p_sys->b_poc_based_reorder &&
-                     p_info->pts > VLC_TICK_INVALID &&
-                     p_sys->p_pic_reorder->pts > p_info->pts)
-            {
-                p_sys->b_invalid_pic_reorder_max = true;
-                p_sys->i_pic_reorder_max++;
-                pic_pacer_UpdateReorderMax(p_sys->pic_pacer, p_sys->i_pic_reorder_max);
-                msg_Dbg(p_dec, "Raising max DPB to %"PRIu8, p_sys->i_pic_reorder_max);
-                break;
-            }
+            p_sys->dpb.b_invalid_pic_reorder_max = true;
+            p_sys->dpb.i_max_pics++;
+            pic_pacer_UpdateMaxBuffering(p_sys->pic_pacer, p_sys->dpb.i_max_pics);
+            msg_Dbg(p_dec, "Raising max DPB to %"PRIu8, p_sys->dpb.i_max_pics);
         }
-
-        picture_t *p_fields;
-        if(RemoveOneFrameFromDPB(p_sys, &p_fields) != VLC_SUCCESS)
-            break;
-        for(; p_fields;)
+        else if (!p_sys->dpb.b_poc_based_reorder &&
+                 p_info->pts > VLC_TICK_INVALID &&
+                 p_sys->dpb.p_entries->pts > p_info->pts)
         {
-            picture_t *p_next = p_fields->p_next;
-            p_fields->p_next = NULL;
-            decoder_QueueVideo(p_dec, p_fields);
-            p_fields = p_next;
+            p_sys->dpb.b_invalid_pic_reorder_max = true;
+            p_sys->dpb.i_max_pics++;
+            pic_pacer_UpdateMaxBuffering(p_sys->pic_pacer, p_sys->dpb.i_max_pics);
+            msg_Dbg(p_dec, "Raising max DPB to %"PRIu8, p_sys->dpb.i_max_pics);
         }
     }
 
-    InsertIntoDPB(p_sys, p_info);
+    for(picture_t *p_out = DPBOutputAndRemoval(&p_sys->dpb, &p_sys->pts, p_info);
+        p_out != NULL;)
+    {
+        picture_t *p_pic = p_out;
+        p_out = p_out->p_next;
+        p_pic->p_next = NULL;
+        decoder_QueueVideo(p_dec, p_pic);
+    }
+
+    InsertIntoDPB(&p_sys->dpb, p_info);
 }
 
 static CMVideoCodecType CodecPrecheck(decoder_t *p_dec)
@@ -1176,6 +1000,61 @@ static CMVideoCodecType CodecPrecheck(decoder_t *p_dec)
     vlc_assert_unreachable();
 }
 
+static void
+SetDecoderColorProperties(CFMutableDictionaryRef decoderConfiguration,
+                          const video_format_t *video_fmt)
+{
+    /**
+     VideoToolbox decoder doesn't attach all color properties to image buffers.
+     Current display modules handle tonemap without them.
+     Attaching additional color properties to image buffers is mandatory for
+     native image buffer display on macOS in order to have proper colors
+     tonemap when AVFoundation APIs are used to render them and prevent
+     flickering while using multiple displays with different colorsync profiles.
+    */
+
+    CFStringRef color_matrix =
+        cvpx_map_YCbCrMatrix_from_vcs(video_fmt->space);
+    if (color_matrix) {
+        CFDictionarySetValue(
+            decoderConfiguration,
+            kCVImageBufferYCbCrMatrixKey,
+            color_matrix);
+    }
+
+    CFStringRef color_primaries =
+        cvpx_map_ColorPrimaries_from_vcp(video_fmt->primaries);
+    if (color_primaries) {
+        CFDictionarySetValue(
+            decoderConfiguration,
+            kCVImageBufferColorPrimariesKey,
+            color_primaries
+        );
+    }
+
+    CFStringRef color_transfer_func =
+        cvpx_map_TransferFunction_from_vtf(video_fmt->transfer);
+    if (color_transfer_func) {
+        CFDictionarySetValue(
+            decoderConfiguration,
+            kCVImageBufferTransferFunctionKey,
+            color_transfer_func
+        );
+    }
+
+    Float32 gamma = 0;
+    if (video_fmt->transfer == TRANSFER_FUNC_SRGB)
+        gamma = 2.2;
+
+    if (gamma != 0) {
+        cfdict_set_int32(
+            decoderConfiguration,
+            kCVImageBufferGammaLevelKey,
+            gamma
+        );
+    }
+}
+
 static CFMutableDictionaryRef CreateSessionDescriptionFormat(decoder_t *p_dec,
                                                              unsigned i_sar_num,
                                                              unsigned i_sar_den)
@@ -1226,25 +1105,9 @@ static CFMutableDictionaryRef CreateSessionDescriptionFormat(decoder_t *p_dec,
         CFRelease(pixelaspectratio);
     }
 
-    /* Setup YUV->RGB matrix since VT can output BGRA directly. Don't setup
-     * transfer and primaries since the transformation is done via the GL
-     * fragment shader. */
-    CFStringRef yuvmatrix;
-    switch (p_dec->fmt_out.video.space)
-    {
-        case COLOR_SPACE_BT601:
-            yuvmatrix = kCVImageBufferYCbCrMatrix_ITU_R_601_4;
-            break;
-        case COLOR_SPACE_BT2020:
-            yuvmatrix = kCVImageBufferColorPrimaries_ITU_R_2020;
-            break;
-        case COLOR_SPACE_BT709:
-        default:
-            yuvmatrix = kCVImageBufferColorPrimaries_ITU_R_709_2;
-            break;
-    }
-    CFDictionarySetValue(decoderConfiguration, kCVImageBufferYCbCrMatrixKey,
-                         yuvmatrix);
+    video_format_AdjustColorSpace(&p_dec->fmt_out.video);
+
+    SetDecoderColorProperties(decoderConfiguration, &p_dec->fmt_out.video);
 
 #if TARGET_OS_OSX
     /* enable HW accelerated playback, since this is optional on OS X
@@ -1310,11 +1173,14 @@ static int StartVideoToolbox(decoder_t *p_dec)
         goto error;
     }
 
-#if !TARGET_OS_IPHONE
     CFDictionarySetValue(destinationPixelBufferAttributes,
-                         kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey,
+                         kCVPixelBufferMetalCompatibilityKey,
                          kCFBooleanTrue);
-#else
+#if TARGET_OS_OSX
+   CFDictionarySetValue(destinationPixelBufferAttributes,
+                        kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey,
+                        kCFBooleanTrue);
+#elif !defined(TARGET_OS_VISION) || !TARGET_OS_VISION
     CFDictionarySetValue(destinationPixelBufferAttributes,
                          kCVPixelBufferOpenGLESCompatibilityKey,
                          kCFBooleanTrue);
@@ -1391,6 +1257,11 @@ static void StopVideoToolbox(decoder_t *p_dec)
 }
 
 #pragma mark - module open and close
+
+static void pic_pacer_Destroy(void *priv)
+{
+    pic_pacer_Clean((struct pic_pacer *)priv);
+}
 
 static int
 CreateVideoContext(decoder_t *p_dec)
@@ -1471,7 +1342,9 @@ static int OpenDecoder(vlc_object_t *p_this)
     p_sys->session = NULL;
     p_sys->codec = codec;
     p_sys->videoFormatDescription = NULL;
-    p_sys->i_pic_reorder_max = 4;
+    p_sys->dpb.i_max_pics = 4;
+    p_sys->dpb.i_fields_per_buffer = 1;
+    p_sys->dpb.pf_release = picture_Release;
     p_sys->vtsession_status = VTSESSION_STATUS_OK;
     p_sys->b_cvpx_format_forced = false;
     /* will be fixed later */
@@ -1521,14 +1394,15 @@ static int OpenDecoder(vlc_object_t *p_this)
             p_sys->pf_codec_init = InitH264;
             p_sys->pf_codec_clean = CleanH264;
             p_sys->pf_codec_supported = CodecSupportedH264;
+            p_sys->pf_codec_flush = CodecFlushH264;
             p_sys->pf_late_start = LateStartH264;
             p_sys->pf_process_block = ProcessBlockH264;
             p_sys->pf_need_restart = VideoToolboxNeedsToRestartH264;
             p_sys->pf_configure_vout = ConfigureVoutH264;
             p_sys->pf_copy_extradata = CopyDecoderExtradataH264;
             p_sys->pf_fill_reorder_info = FillReorderInfoH264;
-            p_sys->b_strict_reorder = false;
-            p_sys->b_poc_based_reorder = true;
+            p_sys->dpb.b_strict_reorder = false;
+            p_sys->dpb.b_poc_based_reorder = true;
             p_sys->start_sync_state = STATE_BITSTREAM_WAITING_RAP;
             break;
 
@@ -1536,14 +1410,15 @@ static int OpenDecoder(vlc_object_t *p_this)
             p_sys->pf_codec_init = InitHEVC;
             p_sys->pf_codec_clean = CleanHEVC;
             p_sys->pf_codec_supported = CodecSupportedHEVC;
+            p_sys->pf_codec_flush = CodecFlushHEVC;
             p_sys->pf_late_start = LateStartHEVC;
             p_sys->pf_process_block = ProcessBlockHEVC;
             p_sys->pf_need_restart = VideoToolboxNeedsToRestartHEVC;
             p_sys->pf_configure_vout = ConfigureVoutHEVC;
             p_sys->pf_copy_extradata = CopyDecoderExtradataHEVC;
             p_sys->pf_fill_reorder_info = FillReorderInfoHEVC;
-            p_sys->b_strict_reorder = true;
-            p_sys->b_poc_based_reorder = true;
+            p_sys->dpb.b_strict_reorder = true;
+            p_sys->dpb.b_poc_based_reorder = true;
             p_sys->start_sync_state = STATE_BITSTREAM_WAITING_RAP;
             break;
 
@@ -1590,6 +1465,17 @@ static Boolean deviceSupportsHEVC()
         return VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC);
     else
         return false;
+}
+
+static bool deviceSupports42010bitRendering()
+{
+#if TARGET_OS_IPHONE
+    /* iPhone/iPad/aTV needs metal device to render 420 10bit */
+    return cvpx_system_has_metal_device();
+#else
+    /* macOS can render 420 10bit with OpenGL and Metal */
+    return true;
+#endif
 }
 
 static Boolean deviceSupportsAdvancedProfiles()
@@ -1738,7 +1624,7 @@ static CMSampleBufferRef VTSampleBufferCreate(decoder_t *p_dec,
     CMBlockBufferRef  block_buf = NULL;
     CMSampleBufferRef sample_buf = NULL;
     CMTime pts;
-    if (!p_sys->b_poc_based_reorder && p_block->i_pts == VLC_TICK_INVALID)
+    if (!p_sys->dpb.b_poc_based_reorder && p_block->i_pts == VLC_TICK_INVALID)
         pts = CMTimeMake(p_block->i_dts, CLOCK_FREQ);
     else
         pts = CMTimeMake(p_block->i_pts, CLOCK_FREQ);
@@ -1862,10 +1748,12 @@ static int HandleVTStatus(decoder_t *p_dec, OSStatus status,
             case -8960 /* codecErr */:
             case kVTVideoDecoderMalfunctionErr:
             case kVTInvalidSessionErr:
-            case kVTVideoDecoderReferenceMissingErr:
             case kVTVideoDecoderBadDataErr:
             case -8969 /* codecBadDataErr */:
                 *p_vtsession_status = VTSESSION_STATUS_RESTART;
+                break;
+            case kVTVideoDecoderReferenceMissingErr:
+                *p_vtsession_status = VTSESSION_STATUS_OK;
                 break;
             default:
                 *p_vtsession_status = VTSESSION_STATUS_ABORT;
@@ -1882,6 +1770,8 @@ static void RequestFlush(decoder_t *p_dec)
     decoder_sys_t *p_sys = p_dec->p_sys;
     Drain(p_dec, true);
     date_Set(&p_sys->pts, VLC_TICK_INVALID);
+    if(p_sys->pf_codec_flush)
+        p_sys->pf_codec_flush(p_dec);
 }
 
 static void Drain(decoder_t *p_dec, bool flush)
@@ -1898,8 +1788,8 @@ static void Drain(decoder_t *p_dec, bool flush)
 
     vlc_mutex_lock(&p_sys->lock);
     DrainDPBLocked(p_dec, flush);
-    picture_t *p_output;
-    assert(RemoveOneFrameFromDPB(p_sys, &p_output) == VLC_EGENERIC);
+    assert(p_sys->dpb.i_size == 0);
+    assert(p_sys->dpb.p_entries == NULL);
     p_sys->b_discard_decoder_output = false;
     p_sys->sync_state = p_sys->start_sync_state;
     vlc_mutex_unlock(&p_sys->lock);
@@ -1908,8 +1798,6 @@ static void Drain(decoder_t *p_dec, bool flush)
 static int DecodeBlock(decoder_t *p_dec, block_t *p_block)
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
-
-    pic_pacer_WaitAllocatableSlot(p_sys->pic_pacer);
 
     if (p_block == NULL)
     {
@@ -2088,6 +1976,8 @@ static int DecodeBlock(decoder_t *p_dec, block_t *p_block)
         goto skip;
     }
 
+    pic_pacer_WaitAllocatableSlot(p_sys->pic_pacer, p_info->b_field);
+
     VTDecodeInfoFlags flagOut;
     VTDecodeFrameFlags decoderFlags = kVTDecodeFrame_EnableAsynchronousDecompression;
 
@@ -2098,7 +1988,7 @@ static int DecodeBlock(decoder_t *p_dec, block_t *p_block)
     enum vtsession_status vtsession_status;
     if (HandleVTStatus(p_dec, status, &vtsession_status) == VLC_SUCCESS)
     {
-        pic_pacer_AccountScheduledDecode(p_sys->pic_pacer);
+        pic_pacer_AccountScheduledDecode(p_sys->pic_pacer, p_info->b_field);
 
         if(p_sys->decoder_state != STATE_DECODER_STARTED)
         {
@@ -2110,7 +2000,7 @@ static int DecodeBlock(decoder_t *p_dec, block_t *p_block)
     }
     else
     {
-        msg_Dbg(p_dec, "session rejected frame %"PRId64" with status %d", p_info->pts, status);
+        msg_Dbg(p_dec, "session rejected frame %"PRId64" with status %d", p_info->pts, (int)status);
         p_sys->sync_state = p_sys->start_sync_state;
         vlc_mutex_lock(&p_sys->lock);
         p_sys->vtsession_status = vtsession_status;
@@ -2208,45 +2098,8 @@ video_context_OnPicReleased(vlc_video_context *vctx, unsigned nb_fields)
 {
     struct pic_pacer *pic_pacer =
         vlc_video_context_GetCVPXPrivate(vctx, CVPX_VIDEO_CONTEXT_VIDEOTOOLBOX);
-    VLC_UNUSED(nb_fields);
 
-    vlc_mutex_lock(&pic_pacer->lock);
-    assert(pic_pacer->nb_out > 0);
-    pic_pacer->nb_out -= 1;
-
-    /* our shrink condition */
-    if(pic_pacer->allocated_next < pic_pacer->allocated_max &&
-       pic_pacer->nb_out <= pic_pacer->allocated_next)
-        pic_pacer->allocated_max = pic_pacer->allocated_next;
-
-    vlc_cond_signal(&pic_pacer->wait);
-
-    vlc_mutex_unlock(&pic_pacer->lock);
-}
-
-static void
-pic_pacer_UpdateReorderMax(struct pic_pacer *pic_pacer, uint8_t pic_reorder_max)
-{
-    vlc_mutex_lock(&pic_pacer->lock);
-
-    pic_reorder_max += PIC_PACER_ALLOCATABLE_MAX;
-    bool b_growing  = pic_reorder_max > pic_pacer->allocated_max;
-#ifdef PIC_PACER_DEBUG
-    fprintf(stderr, "updating pacer max %d/%d to %d\n",
-            pic_pacer->nb_out, pic_pacer->allocated_max, pic_reorder_max);
-#endif
-    if(b_growing)
-    {
-        pic_pacer->allocated_max = pic_reorder_max;
-        pic_pacer->allocated_next = pic_reorder_max;
-        vlc_cond_signal(&pic_pacer->wait);
-    }
-    else
-    {
-        pic_pacer->allocated_next = pic_reorder_max;
-    }
-
-    vlc_mutex_unlock(&pic_pacer->lock);
+    pic_pacer_AccountDeallocation(pic_pacer, nb_fields == 1);
 }
 
 static void DecoderCallback(void *decompressionOutputRefCon,
@@ -2261,6 +2114,7 @@ static void DecoderCallback(void *decompressionOutputRefCon,
     decoder_t *p_dec = (decoder_t *)decompressionOutputRefCon;
     decoder_sys_t *p_sys = p_dec->p_sys;
     frame_info_t *p_info = (frame_info_t *) sourceFrameRefCon;
+    const bool b_field = p_info->b_field;
 
     vlc_mutex_lock(&p_sys->lock);
     if (p_sys->b_discard_decoder_output)
@@ -2273,10 +2127,16 @@ static void DecoderCallback(void *decompressionOutputRefCon,
             p_sys->vtsession_status = vtsession_status;
         goto end;
     }
-    if (unlikely(!imageBuffer))
+
+    if (!imageBuffer)
     {
-        msg_Err(p_dec, "critical: null imageBuffer with a valid status");
-        p_sys->vtsession_status = VTSESSION_STATUS_ABORT;
+        if (unlikely((infoFlags & kVTDecodeInfo_FrameDropped) != kVTDecodeInfo_FrameDropped))
+        {
+            msg_Err(p_dec, "critical: null imageBuffer for a non-dropped frame with valid status");
+            p_sys->vtsession_status = VTSESSION_STATUS_ABORT;
+        } else {
+            msg_Dbg(p_dec, "decoder dropped frame");
+        }
         goto end;
     }
 
@@ -2333,7 +2193,7 @@ static void DecoderCallback(void *decompressionOutputRefCon,
                  * allocating way too many frames. This can be problematic for 4K
                  * 10bits. To fix this issue, we ensure that we don't have too many
                  * output frames allocated by waiting for the vout to release them. */
-            pic_pacer_AccountAllocation(p_sys->pic_pacer);
+            pic_pacer_AccountAllocation(p_sys->pic_pacer, p_info->b_field);
         }
     }
 
@@ -2350,7 +2210,7 @@ static void DecoderCallback(void *decompressionOutputRefCon,
 end:
     free(p_info);
     vlc_mutex_unlock(&p_sys->lock);
-    pic_pacer_AccountFinishedDecode(p_sys->pic_pacer);
+    pic_pacer_AccountFinishedDecode(p_sys->pic_pacer, b_field);
     return;
 }
 
@@ -2403,7 +2263,7 @@ vlc_module_begin()
     set_callbacks(OpenDecoder, CloseDecoder)
 
     add_bool("videotoolbox-hw-decoder-only", true, VT_REQUIRE_HW_DEC, VT_REQUIRE_HW_DEC)
-    add_string("videotoolbox-cvpx-chroma", "", VT_FORCE_CVPX_CHROMA, VT_FORCE_CVPX_CHROMA_LONG);
+    add_string("videotoolbox-cvpx-chroma", "", VT_FORCE_CVPX_CHROMA, VT_FORCE_CVPX_CHROMA_LONG)
         change_string_list(chroma_list_values, chroma_list_names)
 
     /* Deprecated options */

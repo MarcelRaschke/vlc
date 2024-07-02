@@ -22,61 +22,97 @@
 
 #import "VLCLibraryAlbumTracksDataSource.h"
 
-#import "extensions/NSFont+VLCAdditions.h"
-#import "extensions/NSString+Helpers.h"
-#import "views/VLCImageView.h"
-#import "views/VLCTrackingView.h"
-#import "main/VLCMain.h"
-#import "library/VLCLibraryController.h"
+#import "extensions/NSPasteboardItem+VLCAdditions.h"
 #import "library/VLCLibraryDataTypes.h"
-#import "library/VLCLibraryTableCellView.h"
-#import "library/VLCLibraryTableView.h"
-#import "library/audio-library/VLCLibraryAlbumTracksDataSource.h"
 #import "library/audio-library/VLCLibrarySongTableCellView.h"
 
 const CGFloat VLCLibraryTracksRowHeight = 40.;
 
 @interface VLCLibraryAlbumTracksDataSource ()
-{
-    NSArray *_tracks;
-}
+
+@property (readwrite, atomic) NSArray<VLCMediaLibraryMediaItem*> *tracks;
+@property (readwrite, atomic) VLCMediaLibraryAlbum *internalAlbum;
+
 @end
 
 @implementation VLCLibraryAlbumTracksDataSource
 
+// TODO: Connect to library model
+
+- (VLCMediaLibraryAlbum*)representedAlbum
+{
+    return self.internalAlbum;
+}
+
 - (void)setRepresentedAlbum:(VLCMediaLibraryAlbum *)representedAlbum
 {
-    _representedAlbum = representedAlbum;
-    _tracks = [_representedAlbum tracksAsMediaItems];
+    [self setRepresentedAlbum:representedAlbum withCompletion:nil];
+}
+
+- (void)setRepresentedAlbum:(id)album
+             withCompletion:(nullable void (^)(void))completionHandler
+{
+    self.internalAlbum = album;
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+        self.tracks = self.representedAlbum.mediaItems;
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (completionHandler != nil) {
+                completionHandler();
+            }
+        });
+    });
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView
 {
-    if (_representedAlbum != nil) {
-        return _representedAlbum.numberOfTracks;
+    if (self.representedAlbum != nil) {
+        return self.representedAlbum.numberOfTracks;
     }
 
     return 0;
 }
 
-- (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)row
+- (id<NSPasteboardWriting>)tableView:(NSTableView *)tableView pasteboardWriterForRow:(NSInteger)row
 {
-    VLCLibrarySongTableCellView *cellView = [tableView makeViewWithIdentifier:VLCAudioLibrarySongCellIdentifier owner:self];
+    const id<VLCMediaLibraryItemProtocol> libraryItem = [self libraryItemAtRow:row forTableView:tableView];
 
-    if (cellView == nil) {
-        cellView = [VLCLibrarySongTableCellView fromNibWithOwner:self];
-        cellView.identifier = VLCAudioLibrarySongCellIdentifier;
-    }
-
-    cellView.representedMediaItem = (VLCMediaLibraryMediaItem *)[self libraryItemAtRow:row
-                                                                          forTableView:tableView];
-    return cellView;
+    return [NSPasteboardItem pasteboardItemWithLibraryItem:libraryItem];
 }
 
 - (id<VLCMediaLibraryItemProtocol>)libraryItemAtRow:(NSInteger)row
                                        forTableView:(NSTableView *)tableView
 {
-    return _tracks[row];
+    if (row < 0 || row >= self.tracks.count) {
+        return nil;
+    }
+
+    return self.tracks[row];
+}
+
+- (NSInteger)rowForLibraryItem:(id<VLCMediaLibraryItemProtocol>)libraryItem
+{
+    if (libraryItem == nil) {
+        return NSNotFound;
+    }
+
+    NSArray<id<VLCMediaLibraryItemProtocol>> * const libraryItems = self.tracks;
+    const NSUInteger itemCount = libraryItems.count;
+
+    for (NSUInteger i = 0; i < itemCount; ++i) {
+        const id<VLCMediaLibraryItemProtocol> collectionItem = [libraryItems objectAtIndex:i];
+        if (collectionItem.libraryID == libraryItem.libraryID) {
+            return i;
+        }
+    }
+
+    return NSNotFound;
+}
+
+- (VLCMediaLibraryParentGroupType)currentParentType
+{
+    return VLCMediaLibraryParentGroupTypeAlbum;
 }
 
 @end

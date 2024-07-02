@@ -1,6 +1,6 @@
 # LIBARCHIVE
-LIBARCHIVE_VERSION := 3.6.1
-LIBARCHIVE_URL := http://www.libarchive.org/downloads/libarchive-$(LIBARCHIVE_VERSION).tar.gz
+LIBARCHIVE_VERSION := 3.7.0
+LIBARCHIVE_URL := $(GITHUB)/libarchive/libarchive/releases/download/v$(LIBARCHIVE_VERSION)/libarchive-$(LIBARCHIVE_VERSION).tar.gz
 
 PKGS += libarchive
 ifeq ($(call need_pkg,"libarchive >= 3.2.0"),)
@@ -8,14 +8,25 @@ PKGS_FOUND += libarchive
 endif
 
 DEPS_libarchive = zlib $(DEPS_zlib)
+ifdef HAVE_WINSTORE
+# libarchive uses CreateHardLinkW and wincrypt
+DEPS_libarchive += alloweduwp $(DEPS_alloweduwp)
+endif
 
 LIBARCHIVE_CONF := \
-		--disable-bsdcpio --disable-bsdtar --disable-bsdcat \
-		--without-nettle --without-cng \
-		--without-xml2 --without-lzma --without-iconv --without-expat
+		-DENABLE_CPIO=OFF -DENABLE_TAR=OFF -DENABLE_CAT=OFF \
+		-DENABLE_NETTLE=OFF \
+		-DENABLE_LIBXML2=OFF -DENABLE_LZMA=OFF -DENABLE_ICONV=OFF -DENABLE_EXPAT=OFF \
+		-DENABLE_TEST=OFF -DENABLE_WERROR=OFF
+
+# CNG enables bcrypt on Windows and useless otherwise, it's OK we build for Win7+
+LIBARCHIVE_CONF +=-DENABLE_CNG=ON
+
+# bsdunzip doesn't build on macos, android and emscripten and it's disabled on Windows
+LIBARCHIVE_CONF +=-DENABLE_UNZIP=OFF
 
 ifdef HAVE_WIN32
-LIBARCHIVE_CONF += --without-openssl
+LIBARCHIVE_CONF += -DENABLE_OPENSSL=OFF
 endif
 
 $(TARBALLS)/libarchive-$(LIBARCHIVE_VERSION).tar.gz:
@@ -25,19 +36,13 @@ $(TARBALLS)/libarchive-$(LIBARCHIVE_VERSION).tar.gz:
 
 libarchive: libarchive-$(LIBARCHIVE_VERSION).tar.gz .sum-libarchive
 	$(UNPACK)
-ifdef HAVE_ANDROID
-	$(APPLY) $(SRC)/libarchive/android.patch
-endif
-ifdef HAVE_WINSTORE
-	$(APPLY) $(SRC)/libarchive/winrt.patch
-endif
+	$(APPLY) $(SRC)/libarchive/0001-Fix-usage-of-GetVolumePathNameW-in-UWP-before-20H1.patch
 	$(call pkg_static,"build/pkgconfig/libarchive.pc.in")
 	$(MOVE)
 
-.libarchive: libarchive
-	$(RECONF)
-	$(MAKEBUILDDIR)
-	$(MAKECONFIGURE) $(LIBARCHIVE_CONF)
-	+$(MAKEBUILD)
-	+$(MAKEBUILD) install
+.libarchive: libarchive toolchain.cmake
+	$(CMAKECLEAN)
+	$(HOSTVARS_CMAKE) $(CMAKE) $(LIBARCHIVE_CONF)
+	+$(CMAKEBUILD)
+	$(CMAKEINSTALL)
 	touch $@

@@ -16,10 +16,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick          2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts  1.11
-import QtQml.Models     2.2
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import QtQml.Models
 
 import org.videolan.medialib 0.1
 import org.videolan.vlc 0.1
@@ -35,29 +35,48 @@ MainInterface.MainViewLoader {
 
     // Properties
 
-    readonly property int contentMargin: Helpers.get(currentItem, "contentLeftMargin", 0)
+    readonly property int contentLeftMargin: currentItem?.contentLeftMargin ?? 0
+    readonly property int contentRightMargin: currentItem?.contentRightMargin ?? 0
+
+    property bool fadingEdgeList: true
 
     // NOTE: Specify an optional header for the view.
     property Component header: null
 
-    property Item headerItem: Helpers.get(currentItem, "headerItem", null)
+    property Item headerItem: currentItem?.headerItem ?? null
 
-    readonly property int currentIndex: Helpers.get(currentItem, "currentIndex", -1)
+    property int headerPositioning: ListView.OverlayHeader
+
+    readonly property int currentIndex: currentItem?.currentIndex ?? -1
+
+    // 'role' used for tableview's section text
+    required  property string sectionProperty
 
     // NOTE: The ContextMenu depends on the model so we have to provide it too.
-    /* required */ property var contextMenu
+    required property Util.MLContextMenu contextMenu
 
-    property var sortModel: [
-        { text: I18n.qtr("Alphabetic"), criteria: "title"    },
-        { text: I18n.qtr("Duration"),   criteria: "duration" }
-    ]
+    // function(model) -> [strings....]
+    // used to get grid labels per model item
+    property var gridLabels: getLabel
+    property var listLabels: getLabel
+
+    // Aliases
 
     property alias dragItem: dragItem
 
+    // Settings
+
+    isSearchable: true
     list: list
     grid: grid
     emptyLabel: emptylabel
 
+    sortModel: [
+        { text: qsTr("Alphabetic"), criteria: "title"    },
+        { text: qsTr("Duration"),   criteria: "duration" }
+    ]
+
+    // Functions
 
     function getLabel(model) {
         if (!model) return ""
@@ -76,23 +95,27 @@ MainInterface.MainViewLoader {
     // Events
 
     function onAction(indexes) {
-        MediaLib.addAndPlay(model.getIdsForIndexes(indexes))
-        g_mainDisplay.showPlayer()
+        model.addAndPlay( indexes )
+        History.push(["player"])
     }
 
     function onDoubleClick(object) {
-        g_mainDisplay.play(MediaLib, object.id)
+        MediaLib.addAndPlay(object.id)
+        History.push(["player"])
     }
-
-    function onLabelGrid(object) { return getLabel(object) }
-    function onLabelList(object) { return getLabel(object) }
 
     // Private events
 
+    setCurrentItemFocus: function (reason) {
+        if (headerItem && headerItem.Navigation.navigable)
+            headerItem.setCurrentItemFocus(reason)
+        else
+            setCurrentItemFocusDefault(reason)
+    }
+
     function _onNavigationUp() {
-        // NOTE: We are calling the header focus function when we have one.
-        if (headerItem && headerItem.focus)
-            headerItem.forceActiveFocus(Qt.TabFocusReason)
+        if (headerItem && headerItem.Navigation.navigable)
+            headerItem.setCurrentItemFocus(Qt.BacktabFocusReason)
         else
             Navigation.defaultNavigationUp()
     }
@@ -102,7 +125,9 @@ MainInterface.MainViewLoader {
 
         mlModel: root.model
 
-        indexes: selectionModel.selectedIndexes
+        indexes: indexesFlat ? selectionModel.selectedIndexesFlat
+                             : selectionModel.selectedIndexes
+        indexesFlat: !!selectionModel.selectedIndexesFlat
 
         coverRole: "thumbnail"
 
@@ -112,23 +137,22 @@ MainInterface.MainViewLoader {
     Component {
         id: grid
 
-        MainInterface.MainGridView {
+        VideoGridDisplay {
             id: gridView
 
             // Settings
 
-            cellWidth : VLCStyle.gridItem_video_width
-            cellHeight: VLCStyle.gridItem_video_height
-
-            topMargin: VLCStyle.margin_normal
-
             model: root.model
 
-            selectionDelegateModel: selectionModel
+            selectionModel: root.selectionModel
 
             headerDelegate: root.header
 
-            activeFocusOnTab: true
+            dragItem: root.dragItem
+
+            contextMenu: root.contextMenu
+
+            labels: root.gridLabels
 
             // Navigation
 
@@ -136,96 +160,17 @@ MainInterface.MainViewLoader {
 
             Navigation.upAction: _onNavigationUp
 
-            // Events
+            // Functions
 
-            // NOTE: Define the initial position and selection. This is done on activeFocus rather
-            //       than Component.onCompleted because selectionModel.selectedGroup update itself
-            //       after this event.
-            onActiveFocusChanged: {
-                if (activeFocus == false || model.count === 0 || selectionModel.hasSelection)
-                    return;
-
-                resetFocus() // restores initialIndex
+            function isInfoExpandPanelAvailable(modelIndexData) {
+                return root.isInfoExpandPanelAvailable(modelIndexData)
             }
+
+            // Events
 
             onActionAtIndex: root.onAction(selectionModel.selectedIndexes)
 
-            // Connections
-
-            Connections {
-                target: root.contextMenu
-
-                onShowMediaInformation: {
-                    gridView.switchExpandItem(index)
-
-                    if (gridView.focus)
-                        expandItem.setCurrentItemFocus(Qt.TabFocusReason)
-                }
-            }
-
-            // Children
-
-            delegate: VideoGridItem {
-                id: gridItem
-
-                // properties required by ExpandGridView
-
-                property var model: ({})
-                property int index: -1
-
-                // Settings
-
-                opacity: (gridView.expandIndex !== -1
-                          &&
-                          gridView.expandIndex !== gridItem.index) ? 0.7 : 1
-
-                labels: root.onLabelGrid(model)
-
-                // FIXME: Sometimes MLBaseModel::getDataAt returns {} so we use 'isNew === true'.
-                showNewIndicator: (model.isNew === true)
-
-                dragItem: root.dragItem
-
-                // Events
-
-                onItemClicked: gridView.leftClickOnItem(modifier, index)
-
-                onItemDoubleClicked: root.onDoubleClick(model)
-
-                onContextMenuButtonClicked: {
-                    gridView.rightClickOnItem(index);
-
-                    var options = {}
-                    if (root.isInfoExpandPanelAvailable(model))
-                        options["information"] = index
-
-                    root.contextMenu.popup(selectionModel.selectedIndexes, globalMousePos, options);
-                }
-
-                // Animations
-
-                Behavior on opacity { NumberAnimation { duration: VLCStyle.duration_short } }
-            }
-
-            expandDelegate: VideoInfoExpandPanel {
-                width: gridView.width
-
-                x: 0
-
-                model: root.model
-
-                Navigation.parentItem: gridView
-
-                Navigation.cancelAction: gridView.forceFocus
-                Navigation.upAction: gridView.forceFocus
-                Navigation.downAction: gridView.forceFocus
-
-                onRetract: gridView.retract()
-            }
-
-            function forceFocus() {
-                setCurrentItemFocus(Qt.TabFocus)
-            }
+            onItemDoubleClicked: model => root.onDoubleClick(model)
         }
     }
 
@@ -239,17 +184,19 @@ MainInterface.MainViewLoader {
 
             model: root.model
 
-            selectionDelegateModel: selectionModel
+            selectionModel: root.selectionModel
 
             dragItem: root.dragItem
 
             header: root.header
 
-            topMargin: VLCStyle.margin_normal
-
-            headerPositioning: ListView.InlineHeader
+            headerPositioning: root.headerPositioning
 
             activeFocusOnTab: true
+
+            section.property: root.sectionProperty
+
+            fadingEdge.enableEndFade: root.fadingEdgeList
 
             // Navigation
 
@@ -259,30 +206,34 @@ MainInterface.MainViewLoader {
 
             // Events
 
-            onActionForSelection: root.onAction(selectionModel.selectedIndexes)
+            onActionForSelection: (selection) => {
+                root.onAction(selectionModel.selectedIndexes)
+            }
 
-            onItemDoubleClicked: root.onDoubleClick(model)
+            onItemDoubleClicked: (index, model) => root.onDoubleClick(model)
 
-            onContextMenuButtonClicked: root.contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
+            onContextMenuButtonClicked: (_,_,globalMousePos) => {
+                root.contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
+            }
 
-            onRightClick: root.contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
+            onRightClick: (_,_,globalMousePos) => {
+                root.contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
+            }
 
-            // Functions
-
-            function onLabels(model) { return root.onLabelList(model); }
+            coverLabels: root.listLabels
         }
     }
 
     Component {
         id: emptylabel
 
-        EmptyLabelButton {
+        Widgets.EmptyLabelButton {
             coverWidth : VLCStyle.dp(182, VLCStyle.scale)
             coverHeight: VLCStyle.dp(114, VLCStyle.scale)
 
             focus: true
 
-            text: I18n.qtr("No video found\nPlease try adding sources, by going to the Browse tab")
+            text: qsTr("No video found\nPlease try adding sources, by going to the Browse tab")
 
             cover: VLCStyle.noArtVideoCover
 

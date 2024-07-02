@@ -277,34 +277,8 @@ int config_LoadConfigFile( libvlc_int_t *p_this )
  *****************************************************************************/
 static int config_CreateDir( libvlc_int_t *p_this, char *psz_dirname )
 {
-    if( !psz_dirname || !*psz_dirname ) return -1;
-
-    if( vlc_mkdir( psz_dirname, 0700 ) == 0 )
+    if (vlc_mkdir_parent(psz_dirname, 0700) == 0)
         return 0;
-
-    switch( errno )
-    {
-        case EEXIST:
-            return 0;
-
-        case ENOENT:
-        {
-            /* Let's try to create the parent directory */
-            char *psz_end = strrchr( psz_dirname, DIR_SEP_CHAR );
-            if( psz_end && psz_end != psz_dirname )
-            {
-                *psz_end = '\0';
-                int res = config_CreateDir( p_this, psz_dirname );
-                *psz_end = DIR_SEP_CHAR;
-                if( res == 0 )
-                {
-                    if( !vlc_mkdir( psz_dirname, 0700 ) )
-                        return 0;
-                }
-            }
-        }
-    }
-
     msg_Warn( p_this, "could not create %s: %s", psz_dirname,
               vlc_strerror_c(errno) );
     return -1;
@@ -367,7 +341,7 @@ int (config_SaveConfigFile) (libvlc_int_t *p_this)
     char *permanent = config_GetConfigFile (p_this);
     if (permanent == NULL)
         return -1;
-    if (asprintf (&temporary, "%s.%u", permanent, getpid ()) == -1)
+    if (asprintf (&temporary, "%s.%"PRIu32, permanent, (uint32_t)getpid ()) == -1)
     {
         free (permanent);
         return -1;

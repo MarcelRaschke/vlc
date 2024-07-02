@@ -37,11 +37,14 @@
 #include <QBitmap>
 #include <QTimer>
 
-#include <assert.h>
+#include <cassert>
 
 #include <QWindow>
-#include QPNI_HEADER
 
+#ifndef QT_GUI_PRIVATE
+#warning "qplatformnativeinterface.h header is required for MainCtxWin32"
+#endif
+#include <QtGui/qpa/qplatformnativeinterface.h>
 #include <dwmapi.h>
 
 #define WM_APPCOMMAND 0x0319
@@ -139,7 +142,7 @@ public:
         connect(this, &CSDButton::doubleClicked, this, &WinSystemMenuButton::handleDoubleClick);
     }
 
-    void showSystemMenu() override
+    void showSystemMenu(const QPoint &windowpos) override
     {
         HWND hwnd = (HWND)m_window->winId();
         HMENU hmenu = ::GetSystemMenu(hwnd, FALSE);
@@ -159,10 +162,8 @@ public:
         EnableMenuItem(hmenu, SC_MAXIMIZE, (MF_BYCOMMAND | ((!maxOrFull && !fixedSize) ? MFS_ENABLED : MFS_DISABLED)));
         EnableMenuItem(hmenu, SC_CLOSE, (MF_BYCOMMAND | MFS_ENABLED));
 
-        // calculate screen point 'margin' down from system menu button's rect
-        const QPoint margin {0, 4};
-        const auto bottomLeft = rect().bottomLeft();
-        const auto screenPoints = m_window->mapToGlobal(bottomLeft) + margin;
+        // map pos to screen points and convert according to device DPR, required on HI-DPI displays
+        const auto screenPoints = m_window->mapToGlobal(windowpos) * m_window->devicePixelRatio();
 
         const auto alignment = (QGuiApplication::isRightToLeft() ? TPM_RIGHTALIGN : TPM_LEFTALIGN);
 
@@ -199,7 +200,9 @@ private:
             if (!m_triggerSystemMenu)
                 return;
 
-            showSystemMenu();
+            // show system menu 'margin' below the rect
+            constexpr QPoint margin {0, 4};
+            showSystemMenu(rect().bottomLeft() + margin);
         });
     }
 
@@ -215,12 +218,11 @@ private:
 class CSDWin32EventHandler : public QObject, public QAbstractNativeEventFilter
 {
 public:
-    CSDWin32EventHandler(const bool useClientSideDecoration, const bool isWin7Compositor, QWindow *window, CSDButtonModel *buttonmodel, QObject *parent)
+    CSDWin32EventHandler(MainCtx* mainctx, QWindow *window, QObject *parent)
         : QObject {parent}
-        , m_useClientSideDecoration {useClientSideDecoration}
+        , m_useClientSideDecoration {mainctx->useClientSideDecoration()}
         , m_window {window}
-        , m_buttonmodel {buttonmodel}
-        , m_isWin7Compositor {isWin7Compositor}
+        , m_buttonmodel {mainctx->csdButtonModel()}
     {
         QApplication::instance()->installNativeEventFilter(this);
         updateCSDSettings();
@@ -244,7 +246,7 @@ public:
             return qRound(static_cast<qreal>(8) * window->devicePixelRatio());
     }
 
-    bool nativeEventFilter(const QByteArray &, void *message, long *result) override
+    bool nativeEventFilter(const QByteArray &, void *message, qintptr *result) override
     {
         MSG* msg = static_cast<MSG*>( message );
 
@@ -253,6 +255,13 @@ public:
 
         switch ( msg->message )
         {
+        case WM_SHOWWINDOW:
+        {
+            // on window show, update client frame in case DWM settings were updated
+            if (msg->wParam) updateClientFrame();
+            return false;
+        }
+
         case WM_NCCALCSIZE:
         {
             /* This is used to remove the decoration instead of using FramelessWindowHint because
@@ -319,7 +328,16 @@ public:
             // Map the point to client coordinates.
             ::MapWindowPoints(nullptr, msg->hwnd, &point, 1);
 
-            const QPoint qtPoint {point.x, point.y};
+            // excluse resize handle area
+            if ((m_window->windowState() != Qt::WindowFullScreen)
+                && (point.y < resizeBorderHeight(m_window)
+                    || point.x > (m_window->width() * m_window->devicePixelRatio() - resizeBorderWidth(m_window))))
+                return false;
+
+            const double scaleFactor = m_window->devicePixelRatio();
+
+            //divide by scale factor as buttons coordinates will be in dpr
+            const QPoint qtPoint {static_cast<int>(point.x / scaleFactor), static_cast<int>(point.y / scaleFactor)};
             auto button = overlappingButton(qtPoint);
             if (!button)
                 return false;
@@ -385,6 +403,30 @@ public:
             break;
         }
 
+        case WM_NCLBUTTONDOWN:
+        {
+
+            // manually trigger button here, UI will never get click
+            // signal because we have captured the mouse in non client area
+            switch ( msg->wParam )
+            {
+            case HTCLOSE:
+                trigger(CSDButton::Close);
+                break;
+            case HTMINBUTTON:
+                trigger(CSDButton::Minimize);
+                break;
+            case HTMAXBUTTON:
+                trigger(CSDButton::MaximizeRestore);
+                break;
+            }
+
+
+            // required for win7 compositor, otherwise this
+            // paints default min/max/close buttons
+            return true;
+        }
+
         case WM_NCMOUSELEAVE:
         case WM_MOUSELEAVE:
         {
@@ -408,34 +450,35 @@ public:
     }
 
 private:
+    void updateClientFrame()
+    {
+        auto hwnd = (HWND)m_window->winId();
+
+        MARGINS margin {};
+
+        // set top client area to 1 pixel tall in case of user decorations
+        // with winapi magic, this add rounded corners and shadows to the window
+        //
+        // warning1: if you set margin.cyTopHeight to 1
+        // that somehow breaks snaplayouts menu with WS_CAPTION style ^_____^
+        //
+        // warning2: if you set negative margin, the window will start painting
+        // default CSD button underneath the qml layer, you won't be able to see
+        // it but those will capture all your CSD events.
+        margin.cxLeftWidth = (m_useClientSideDecoration ? 1 : 0);
+
+        DwmExtendFrameIntoClientArea(hwnd, &margin);
+    }
+
     void updateCSDSettings()
     {
         HWND winId = WinId(m_window);
         if ( !winId )
             return;
 
-        if (m_isWin7Compositor)
-        {
-            // special case for win7 compositor
-            // removing CSD borders with win7 compositor works with Qt::FramelessWindowHint
-            // but with that the shadows don't work, so manually remove WS_CAPTION style
-            DWORD style = m_nonCSDGwlStyle == 0 ? GetWindowLong(winId, GWL_STYLE) : m_nonCSDGwlStyle;
-            if (m_nonCSDGwlStyle == 0)
-                m_nonCSDGwlStyle = style;
-            if (m_useClientSideDecoration)
-            {
-                style &= ~WS_CAPTION;
-                style |= (WS_MAXIMIZEBOX | WS_THICKFRAME);
-            }
-            SetWindowLong (winId, GWL_STYLE, style);
-        }
+        updateClientFrame();
 
-        // add back shadows
-        // with positive margins, snap layouts menu (windows 11) won't appear
-        const int margin = (m_useClientSideDecoration ? - 1 : 0);
-        const MARGINS m {margin, margin, margin, margin};
-        DwmExtendFrameIntoClientArea(winId, &m);
-
+        // trigger window update, this applies changes done in updateClientFrame
         SetWindowPos(winId, NULL, 0, 0, 0, 0,
             SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOCOPYBITS |
             SWP_NOMOVE | SWP_NOOWNERZORDER | SWP_NOREPOSITION |
@@ -464,6 +507,18 @@ private:
         vlc_assert_unreachable();
     }
 
+    void trigger(CSDButton::ButtonType type)
+    {
+        for (auto button : m_buttonmodel->windowCSDButtons()) {
+            if (button->type() == type) {
+                button->click();
+                return ;
+            }
+        }
+
+        vlc_assert_unreachable();
+    }
+
     void setAllUnhovered()
     {
         for (auto button : m_buttonmodel->windowCSDButtons())
@@ -472,12 +527,10 @@ private:
         }
     }
 
-    DWORD m_nonCSDGwlStyle = 0;
     bool m_useClientSideDecoration;
     QWindow *m_window;
     CSDButtonModel *m_buttonmodel;
     bool m_trackingMouse = false;
-    const bool m_isWin7Compositor;
 };
 
 }
@@ -490,7 +543,7 @@ WinTaskbarWidget::WinTaskbarWidget(qt_intf_t *_p_intf, QWindow* windowHandle, QO
     taskbar_wmsg = RegisterWindowMessage(TEXT("TaskbarButtonCreated"));
     if (taskbar_wmsg == 0)
         msg_Warn( p_intf, "Failed to register TaskbarButtonCreated message" );
-    connect(THEMPL, &PlaylistControllerModel::countChanged,
+    connect(THEMPL, &PlaylistController::countChanged,
             this, &WinTaskbarWidget::playlistItemCountChanged);
     connect(THEMIM, &PlayerController::fullscreenChanged,
             this, &WinTaskbarWidget::onVideoFullscreenChanged);
@@ -503,7 +556,6 @@ WinTaskbarWidget::~WinTaskbarWidget()
         ImageList_Destroy( himl );
     if(p_taskbl)
         p_taskbl->Release();
-    CoUninitialize();
 }
 
 Q_GUI_EXPORT HBITMAP qt_pixmapToWinHBITMAP(const QPixmap &p, int hbitmapFormat = 0);
@@ -527,16 +579,22 @@ void WinTaskbarWidget::createTaskBarButtons()
     if (!winId)
         return;
 
-    HRESULT hr = CoInitializeEx( NULL, COINIT_APARTMENTTHREADED );
-    if( FAILED(hr) )
+    try
+    {
+        m_comHolder = ComHolder();
+    }
+    catch( const std::exception& exception )
+    {
+        msg_Err( p_intf, "%s", exception.what() );
         return;
+    }
 
     void *pv;
-    hr = CoCreateInstance( CLSID_TaskbarList, NULL, CLSCTX_INPROC_SERVER,
-                           IID_ITaskbarList3, &pv);
+    HRESULT hr = CoCreateInstance( CLSID_TaskbarList, NULL, CLSCTX_INPROC_SERVER,
+                                   IID_ITaskbarList3, &pv);
     if( FAILED(hr) )
     {
-        CoUninitialize();
+        m_comHolder.reset();
         return;
     }
 
@@ -551,7 +609,7 @@ void WinTaskbarWidget::createTaskBarButtons()
     {
         p_taskbl->Release();
         p_taskbl = NULL;
-        CoUninitialize();
+        m_comHolder.reset();
         return;
     }
 
@@ -606,13 +664,13 @@ void WinTaskbarWidget::createTaskBarButtons()
     }
     connect( THEMIM, &PlayerController::playingStateChanged,
              this, &WinTaskbarWidget::changeThumbbarButtons);
-    connect( THEMPL, &vlc::playlist::PlaylistControllerModel::countChanged,
+    connect( THEMPL, &vlc::playlist::PlaylistController::countChanged,
             this, &WinTaskbarWidget::playlistItemCountChanged );
     if( THEMIM->getPlayingState() == PlayerController::PLAYING_STATE_PLAYING )
         changeThumbbarButtons( THEMIM->getPlayingState() );
 }
 
-bool WinTaskbarWidget::nativeEventFilter(const QByteArray &, void *message, long* /* result */)
+bool WinTaskbarWidget::nativeEventFilter(const QByteArray &, void *message, qintptr* /* result */)
 {
     MSG * msg = static_cast<MSG*>( message );
     if (msg->hwnd != WinId(m_window))
@@ -742,15 +800,9 @@ void MainCtxWin32::reloadPrefs()
 
 // InterfaceWindowHandlerWin32
 
-InterfaceWindowHandlerWin32::InterfaceWindowHandlerWin32(qt_intf_t *_p_intf, MainCtx* mainCtx, QWindow* window, QWidget* widget, QObject *parent)
-    : InterfaceWindowHandler(_p_intf, mainCtx, window, widget, parent)
-
-#if QT_CLIENT_SIDE_DECORATION_AVAILABLE
-    , m_CSDWindowEventHandler(new CSDWin32EventHandler(mainCtx->useClientSideDecoration(),
-                                                       _p_intf->p_compositor->type() == vlc::Compositor::Win7Compositor,
-                                                       window, mainCtx->csdButtonModel(), window))
-#endif
-
+InterfaceWindowHandlerWin32::InterfaceWindowHandlerWin32(qt_intf_t *_p_intf, MainCtx* mainCtx, QWindow* window, QObject *parent)
+    : InterfaceWindowHandler(_p_intf, mainCtx, window, parent)
+    , m_CSDWindowEventHandler(new CSDWin32EventHandler(mainCtx, window, window))
 {
     auto systemMenuButton = std::make_shared<WinSystemMenuButton>(mainCtx->intfMainWindow(), nullptr);
     mainCtx->csdButtonModel()->setSystemMenuButton(systemMenuButton);
@@ -854,7 +906,7 @@ bool InterfaceWindowHandlerWin32::eventFilter(QObject* obj, QEvent* ev)
     return ret;
 }
 
-bool InterfaceWindowHandlerWin32::nativeEventFilter(const QByteArray &, void *message, long *result)
+    bool InterfaceWindowHandlerWin32::nativeEventFilter(const QByteArray &, void *message, qintptr *result)
 {
     MSG* msg = static_cast<MSG*>( message );
 
@@ -933,9 +985,7 @@ bool InterfaceWindowHandlerWin32::nativeEventFilter(const QByteArray &, void *me
 
 
 
-#if QT_CLIENT_SIDE_DECORATION_AVAILABLE
 void InterfaceWindowHandlerWin32::updateCSDWindowSettings()
 {
     static_cast<CSDWin32EventHandler *>(m_CSDWindowEventHandler)->setUseClientSideDecoration(m_mainCtx->useClientSideDecoration());
 }
-#endif

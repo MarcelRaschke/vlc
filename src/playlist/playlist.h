@@ -31,15 +31,14 @@ typedef struct input_item_t input_item_t;
 
 #ifdef TEST_PLAYLIST
 /* mock the player in tests */
-# define vlc_player_New(a,b,c,d) (VLC_UNUSED(a), VLC_UNUSED(b), VLC_UNUSED(c), \
-                                 malloc(1))
+# define vlc_player_New(a,b) (VLC_UNUSED(a), malloc(1))
 # define vlc_player_Delete(p) free(p)
 # define vlc_player_Lock(p) VLC_UNUSED(p)
 # define vlc_player_Unlock(p) VLC_UNUSED(p)
 # define vlc_player_AddListener(a,b,c) (VLC_UNUSED(b), malloc(1))
 # define vlc_player_RemoveListener(a,b) free(b)
 # define vlc_player_SetCurrentMedia(a,b) (VLC_UNUSED(b), VLC_SUCCESS)
-# define vlc_player_InvalidateNextMedia(p) VLC_UNUSED(p)
+# define vlc_player_SetNextMedia(a,b) (VLC_UNUSED(b), VLC_SUCCESS)
 # define vlc_player_osd_Message(p, fmt...) VLC_UNUSED(p)
 #endif /* TEST_PLAYLIST */
 
@@ -49,6 +48,7 @@ struct vlc_playlist
 {
     vlc_player_t *player;
     libvlc_int_t *libvlc;
+    enum vlc_playlist_media_stopped_action stopped_action;
     bool auto_preparse;
     /* all remaining fields are protected by the lock of the player */
     struct vlc_player_listener_id *player_listener;

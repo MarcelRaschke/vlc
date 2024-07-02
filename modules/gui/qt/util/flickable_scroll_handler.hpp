@@ -74,7 +74,7 @@ private:
 
 private:
     QPointer<QQuickItem> m_target = nullptr;
-    qreal m_scaleFactor;
+    qreal m_scaleFactor = 1.;
     qreal m_effectiveScaleFactor;
     bool m_enabled = true;
     bool m_fallbackScroll = false;
@@ -89,7 +89,7 @@ private:
         QMetaMethod increaseMethod;
         QMetaMethod decreaseMethod;
         QQuickItem* item = nullptr;
-        bool valid() const { return item != nullptr; };
+        bool valid() const { return item != nullptr; }
     } m_scrollBarV, m_scrollBarH;
 
     void adjustScrollBar(ScrollBar& scrollBar);

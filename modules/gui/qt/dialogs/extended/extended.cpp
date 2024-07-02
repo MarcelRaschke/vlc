@@ -24,7 +24,7 @@
 # include "config.h"
 #endif
 
-#include <assert.h>
+#include <cassert>
 
 #include "extended.hpp"
 
@@ -36,6 +36,7 @@
 #include <QDialogButtonBox>
 #include <QPushButton>
 #include <QWindow>
+#include <vlc_configuration.h>
 #include <vlc_modules.h>
 
 ExtendedDialog::ExtendedDialog( qt_intf_t *_p_intf )
@@ -210,7 +211,7 @@ void ExtendedDialog::saveConfig()
          i != hashConfig->end(); ++i )
     {
         QVariant &value = i.value();
-        switch( static_cast<QMetaType::Type>(value.type()) )
+        switch( static_cast<QMetaType::Type>(value.typeId()) )
         {
             case QMetaType::QString:
                 config_PutPsz( qtu(i.key()), qtu(value.toString()) );

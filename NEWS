@@ -7,7 +7,7 @@ Platform support changes:
      - macOS 10.11 or later
      - iOS 9 or later
      - Android 4.1.x or later (API-16)
-     - GCC 5.0 or Clang 3.4 (or equivalent)
+     - GCC 8.0 or Clang 8 (or equivalent)
  * Windows on ARM is now supported
  * Universal Windows is only supported for Windows 10 (not Windows 8 anymore)
 
@@ -29,6 +29,7 @@ Core:
      - Flat, new random implementation
      - Can't browse anymore (cf. mediatree)
  * Add support for dual subtitles selection (via the player)
+ * Support of HTML help (via the vlc_plugin.h:set_help_html macro)
 
 Audio output:
  * ALSA: HDMI passthrough support.
@@ -68,6 +69,7 @@ Access:
  * Deprecates Audio CD CDDB lookups in favor of more accurate Musicbrainz
  * Improved CD-TEXT and added Shift-JIS encoding support
  * Support for YoutubeDL (where available).
+ * On-the-fly Zstandard (zstd) file decompression (where available).
 
 Access output:
  * Added support for the RIST (Reliable Internet Stream Transport) Protocol

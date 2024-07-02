@@ -19,18 +19,21 @@ AM_CFLAGS = $(CFLAGS_vlc)
 if HAVE_DBUS
 AM_CPPFLAGS += -DHAVE_DBUS
 endif
+if HAVE_EMSCRIPTEN
+AM_CFLAGS += -sMAIN_MODULE=1
+endif
 
 #
 # Main VLC executable
 #
-vlc_LDADD = ../lib/libvlc.la
+vlc_LDADD = ../lib/libvlc.la ../src/libvlccore.la
 vlc_CPPFLAGS = $(AM_CPPFLAGS)
 if !HAVE_WIN32
 vlc_SOURCES = vlc.c override.c
 vlc_LDADD += $(LIBDL)
 else
 vlc_SOURCES = winvlc.c
-vlc_DEPENDENCIES = vlc_win32_rc.$(OBJEXT)
+EXTRA_vlc_DEPENDENCIES = vlc_win32_rc.$(OBJEXT)
 vlc_LDFLAGS = -mwindows -Wc,-static
 vlc_LDADD += vlc_win32_rc.$(OBJEXT)
 libbreakpad_wrapper_la_SOURCES = breakpad.cpp
@@ -40,7 +43,7 @@ libbreakpad_wrapper_la_CXXFLAGS = $(AM_CXXFLAGS) $(BREAKPAD_CFLAGS) -DBREAKPAD_U
 if HAVE_BREAKPAD
 noinst_LTLIBRARIES = libbreakpad_wrapper.la
 vlc_LDADD += libbreakpad_wrapper.la -lstdc++ -lwininet
-vlc_DEPENDENCIES += libbreakpad_wrapper.la
+EXTRA_vlc_DEPENDENCIES += libbreakpad_wrapper.la
 vlc_CPPFLAGS += -DHAVE_BREAKPAD
 endif
 endif
@@ -57,8 +60,8 @@ vlc_osx_LDADD = ../lib/libvlc.la
 
 vlc_osx_static_SOURCES = $(vlc_osx_SOURCES)
 vlc_osx_static_OBJCFLAGS = $(AM_OBJCFLAGS) \
-	-DTOP_BUILDDIR=\"$$(cd "$(top_builddir)"; pwd)\" \
-	-DTOP_SRCDIR=\"$$(cd "$(top_srcdir)"; pwd)\" \
+	-DTOP_BUILDDIR=\"$(abs_top_builddir)\" \
+	-DTOP_SRCDIR=\"$(abs_top_srcdir)\" \
 	$(NULL)
 vlc_osx_static_LDFLAGS = $(vlc_osx_LDFLAGS) -static
 vlc_osx_static_LDFLAGS += -Xlinker -rpath -Xlinker "@executable_path/../lib/.libs/"
@@ -77,11 +80,11 @@ endif
 #
 vlc_static_SOURCES = $(vlc_SOURCES)
 vlc_static_CFLAGS = $(AM_CFLAGS) \
-	-DTOP_BUILDDIR=\"$$(cd "$(top_builddir)"; pwd)\" \
-	-DTOP_SRCDIR=\"$$(cd "$(top_srcdir)"; pwd)\" \
+	-DTOP_BUILDDIR=\"$(abs_top_builddir)\" \
+	-DTOP_SRCDIR=\"$(abs_top_srcdir)\" \
 	$(NULL)
 vlc_static_CPPFLAGS = $(vlc_CPPFLAGS)
-vlc_static_DEPENDENCIES = $(vlc_DEPENDENCIES)
+EXTRA_vlc_static_DEPENDENCIES = $(EXTRA_vlc_DEPENDENCIES)
 vlc_static_LDADD = $(vlc_LDADD)
 vlc_static_LDFLAGS = $(vlc_LDFLAGS) -no-install -static
 
@@ -119,7 +122,7 @@ vlc_cache_gen_LDADD = \
 if HAVE_WIN32
 vlc_cache_gen_LDADD += vlc_win32_rc.$(OBJEXT)
 vlc_cache_gen_LDFLAGS = -Wc,-static
-vlc_cache_gen_DEPENDENCIES = vlc_win32_rc.$(OBJEXT)
+EXTRA_vlc_cache_gen_DEPENDENCIES = vlc_win32_rc.$(OBJEXT)
 endif
 
 #
@@ -143,7 +146,7 @@ endif
 ../modules/plugins.dat: vlc-cache-gen$(EXEEXT)
 	$(AM_V_at)rm -f ../modules/plugins.dat
 	$(AM_V_GEN)if test "$(build)" = "$(host)"; then \
-		./vlc-cache-gen$(EXEEXT) `realpath ../modules` ; \
+		./vlc-cache-gen$(EXEEXT) `cd "../modules" ; pwd -P` ; \
 	else \
 		echo "Cross-compilation: cache generation skipped!" ; \
 	fi

@@ -25,6 +25,7 @@
 #include <limits.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
@@ -161,7 +162,7 @@ vlc_module_begin()
     set_description(N_("Video cropping filter"))
     set_callback_video_filter(Open)
 
-    set_subcategory(SUBCAT_VIDEO_VFILTER);
+    set_subcategory(SUBCAT_VIDEO_VFILTER)
 
     add_integer_with_range(CFG_PREFIX "top", 0, 0, INT_MAX,
                            CROPTOP_TEXT, CROPTOP_LONGTEXT)

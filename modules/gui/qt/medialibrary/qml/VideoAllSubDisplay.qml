@@ -18,13 +18,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///util/" as Util
+import "qrc:///util/Helpers.js" as Helpers
 import "qrc:///style/"
 
 VideoAll {
@@ -36,7 +37,7 @@ VideoAll {
     property SortMenuVideo sortMenu: SortMenuVideo {
         ctx: MainCtx
 
-        onGrouping: MainCtx.grouping = grouping
+        onGrouping: (grouping) => { MainCtx.grouping = grouping }
     }
 
     // Private
@@ -49,11 +50,17 @@ VideoAll {
 
     // Settings
 
-    anchors.fill: parent
-
-    model: !!_meta ? _meta.model : null
+    model: _meta?.model ?? null
 
     contextMenu: Util.MLContextMenu { model: _meta ? _meta.model : null; showPlayAsAudioAction: true }
+
+    gridLabels: _meta?.gridLabels ?? root.getLabel
+
+    listLabels: _meta?.listLabels ?? root.getLabel
+
+    sectionProperty: _meta?.sectionProperty ?? ""
+
+    headerPositioning: headerItem.model.count > 0 ? ListView.InlineHeader : ListView.OverlayHeader
 
     // Functions
 
@@ -73,7 +80,7 @@ VideoAll {
     function getLabelGroup(model, string) {
         if (!model) return ""
 
-        var count = model.count
+        const count = model.count
 
         if (count === 1) {
             return getLabel(model)
@@ -85,23 +92,11 @@ VideoAll {
         }
     }
 
-    // VideoAll reimplementation
-
-    function setCurrentItemFocus(reason) {
-        if (headerItem && headerItem.focus)
-            headerItem.forceActiveFocus(reason)
-        else
-            currentItem.setCurrentItemFocus(reason)
-    }
-
     // VideoAll events reimplementation
 
     function onAction(indexes) { _meta.onAction(indexes) }
 
     function onDoubleClick(object) { _meta.onDoubleClick(object) }
-
-    function onLabelGrid(object) { return _meta.onLabelGrid(object) }
-    function onLabelList(object) { return _meta.onLabelList(object) }
 
     function isInfoExpandPanelAvailable(modelIndexData) {
         return _meta.isInfoExpandPanelAvailable(modelIndexData)
@@ -111,7 +106,9 @@ VideoAll {
 
     Connections {
         target: MainCtx
-        onGroupingChanged: root._updateMetaModel(MainCtx.grouping)
+        function onGroupingChanged() {
+            root._updateMetaModel(MainCtx.grouping)
+        }
     }
 
     Component.onCompleted: root._updateMetaModel(MainCtx.grouping)
@@ -122,17 +119,35 @@ VideoAll {
         QtObject {
             id: metaVideo
 
-            property var model: MLVideoModel { ml: MediaLib }
-
-            function onAction(indexes) {
-                MediaLib.addAndPlay(model.getIdsForIndexes(indexes))
-                g_mainDisplay.showPlayer()
+            property var model: MLVideoModel {
+                ml: MediaLib
+                searchPattern: MainCtx.search.pattern
+                sortOrder: MainCtx.sort.order
+                sortCriteria: MainCtx.sort.criteria
             }
 
-            function onDoubleClick(object) { g_mainDisplay.play(MediaLib, object.id) }
+            property var gridLabels: root.getLabel
 
-            function onLabelGrid(object) { return root.getLabel(object) }
-            function onLabelList(object) { return root.getLabel(object) }
+            property var listLabels: root.getLabel
+
+            property string sectionProperty: {
+                switch (model.sortCriteria) {
+                case "title":
+                    return "title_first_symbol"
+                default:
+                    return ""
+                }
+            }
+
+            function onAction(indexes) {
+                model.addAndPlay( indexes )
+                History.push(["player"])
+            }
+
+            function onDoubleClick(object) {
+                MediaLib.addAndPlay(object.id)
+                History.push(["player"])
+            }
 
             function isInfoExpandPanelAvailable(modelIndexData) { return true }
         }
@@ -144,16 +159,38 @@ VideoAll {
         QtObject {
             id: metaGroup
 
-            property var model: MLVideoGroupsModel { ml: MediaLib }
+            property var model: MLVideoGroupsModel {
+                ml: MediaLib
+                searchPattern: MainCtx.search.pattern
+                sortOrder: MainCtx.sort.order
+                sortCriteria: MainCtx.sort.criteria
+            }
+
+            property string sectionProperty: {
+                switch (model.sortCriteria) {
+                case "title":
+                    return "group_title_first_symbol"
+                default:
+                    return ""
+                }
+            }
+
+            property var gridLabels: function (model) {
+                return root.getLabelGroup(model, qsTr("%1 Videos"))
+            }
+
+            property var listLabels: function (model) {
+                return root.getLabelGroup(model, qsTr("%1"))
+            }
 
             function onAction(indexes) {
-                var index = indexes[0]
+                const index = indexes[0]
 
-                var object = model.getDataAt(index);
+                const object = model.getDataAt(index);
 
                 if (object.isVideo) {
-                    MediaLib.addAndPlay(model.getIdsForIndexes(indexes))
-                    g_mainDisplay.showPlayer()
+                    model.addAndPlay( indexes )
+                    History.push(["player"])
 
                     return
                 }
@@ -163,20 +200,12 @@ VideoAll {
 
             function onDoubleClick(object) {
                 if (object.isVideo) {
-                    g_mainDisplay.play(MediaLib, object.id)
-
+                    MediaLib.addAndPlay(object.id)
+                    History.push(["player"])
                     return
                 }
 
                 root.showList(object, Qt.MouseFocusReason)
-            }
-
-            function onLabelGrid(object) {
-                return root.getLabelGroup(object, I18n.qtr("%1 Videos"))
-            }
-
-            function onLabelList(object) {
-                return root.getLabelGroup(object, I18n.qtr("%1"))
             }
 
             function isInfoExpandPanelAvailable(modelIndexData) {
@@ -191,10 +220,32 @@ VideoAll {
         QtObject {
             id: metaFolder
 
-            property var model: MLVideoFoldersModel { ml: MediaLib }
+            property var model: MLVideoFoldersModel {
+                ml: MediaLib
+                searchPattern: MainCtx.search.pattern
+                sortOrder: MainCtx.sort.order
+                sortCriteria: MainCtx.sort.criteria
+            }
+
+            property string sectionProperty: {
+                switch (model.sortCriteria) {
+                case "title":
+                    return "title_first_symbol"
+                default:
+                    return ""
+                }
+            }
+
+            property var gridLabels: function (model) {
+                return root.getLabelGroup(model, qsTr("%1 Videos"))
+            }
+
+            property var listLabels: function (model) {
+                return root.getLabelGroup(model, qsTr("%1"))
+            }
 
             function onAction(indexes) {
-                var index = indexes[0]
+                const index = indexes[0]
 
                 root.showList(model.getDataAt(index), Qt.TabFocusReason)
             }
@@ -203,33 +254,21 @@ VideoAll {
                 root.showList(object, Qt.MouseFocusReason)
             }
 
-            function onLabelGrid(object) {
-                return root.getLabelGroup(object, I18n.qtr("%1 Videos"))
-            }
-
-            function onLabelList(object) {
-                return root.getLabelGroup(object, I18n.qtr("%1"))
-            }
-
             function isInfoExpandPanelAvailable(modelIndexData) {
                 return false
             }
         }
     }
 
-    header: VideoDisplayRecentVideos {
-        width: root.width - displayMarginBeginning - displayMarginEnd
+    header: VideoRecentVideos {
+        width: root.width
 
-        x: displayMarginBeginning
+        leftPadding: root.leftPadding
+        rightPadding: root.rightPadding
 
-        // spacing between header and content
-        bottomPadding: VLCStyle.margin_normal
+        nbItemPerRow: root.currentItem?.nbItemPerRow ?? 0
 
-        subtitleText: (root.model && root.model.count > 0) ? I18n.qtr("Videos") : ""
-
-        // NOTE: We want grid items to be visible on the sides.
-        displayMarginBeginning: root.contentMargin
-        displayMarginEnd: displayMarginBeginning
+        subtitleText: (root.model && root.model.count > 0) ? qsTr("Videos") : ""
 
         Navigation.parentItem: root
 

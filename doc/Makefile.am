@@ -11,13 +11,25 @@ LIBVLC_SAMPLES = \
 	libvlc/QtGL/qtvlcwidget.cpp \
 	libvlc/QtGL/qtvlcwidget.h \
 	libvlc/QtGL/QtGl.pro \
-	libvlc/vlc-thumb.c \
+	libvlc/thumbnailer.c \
 	libvlc/wx_player.cpp \
 	libvlc/d3d11_player.cpp \
 	libvlc/d3d9_player.c \
 	libvlc/win_player.c \
 	libvlc/CMakeLists.txt \
 	libvlc/appkit_player.m \
+	$(NULL)
+
+# Check that samples that depends only on LibVLC can build
+AUTOMAKE_OPTIONS = subdir-objects
+AM_LDFLAGS = -no-install $(LDFLAGS_vlc) -L../src/ -lvlccore -L../lib -lvlc
+
+samples_libvlc_example_SOURCES = libvlc/example.c
+samples_libvlc_thumbnailer_SOURCES = libvlc/thumbnailer.c
+
+check_PROGRAMS = \
+	samples_libvlc_example \
+	samples_libvlc_thumbnailer \
 	$(NULL)
 
 nobase_doc_DATA = $(LIBVLC_SAMPLES)
@@ -52,6 +64,7 @@ CHANGELOGS = \
 	ChangeLog-2021 \
 	ChangeLog-2022 \
 	ChangeLog-2023 \
+	ChangeLog-2024 \
 	$(NULL)
 
 man1_MANS = \
@@ -98,7 +111,7 @@ $(CHANGELOGS): Makefile.am
 	fi
 
 # This one needs to be rebuilt all the time :)
-.PHONY: ChangeLog-2021 changelogs doc
+.PHONY: ChangeLog-2024 changelogs doc
 
 changelogs: $(CHANGELOGS)
 

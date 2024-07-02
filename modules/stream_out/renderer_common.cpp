@@ -27,7 +27,7 @@
 # include "config.h"
 #endif
 
-#include <assert.h>
+#include <cassert>
 #include <map>
 #include <sstream>
 
@@ -112,7 +112,8 @@ GetVencOption( sout_stream_t *p_stream, std::vector<vlc_fourcc_t> codecs,
 
                 es_format_t fmt;
                 es_format_InitFromVideo( &fmt, p_vid );
-                fmt.i_codec = fmt.video.i_chroma = VLC_CODEC_I420;
+                fmt.i_codec =
+                fmt.video.i_chroma = VLC_CODEC_I420;
 
                 /* Test the maximum size/fps we will encode */
                 fmt.video.i_visible_width = fmt.video.i_width = 1920;
@@ -120,7 +121,7 @@ GetVencOption( sout_stream_t *p_stream, std::vector<vlc_fourcc_t> codecs,
                 fmt.video.i_frame_rate = 30;
                 fmt.video.i_frame_rate_base = 1;
 
-                void *id = sout_StreamIdAdd( p_sout_test, &fmt );
+                void *id = sout_StreamIdAdd( p_sout_test, &fmt, "video/1" );
 
                 es_format_Clean( &fmt );
                 const bool success = id != NULL;
@@ -262,7 +263,7 @@ std::string GetVencX264Option( sout_stream_t * /* p_stream */,
 
 #ifdef __APPLE__
 std::string GetVencAvcodecVTOption( sout_stream_t * /* p_stream */,
-                                           const video_format_t * p_vid,
+                                           const video_format_t * /* p_vid */,
                                            int i_quality )
 {
     std::stringstream ssout;

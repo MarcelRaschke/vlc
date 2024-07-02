@@ -24,84 +24,24 @@
 
 @implementation NSFont (VLCAdditions)
 
-+ (instancetype)VLClibrarySectionHeaderFont
++ (NSFont *)VLClibrarySectionHeaderFont
 {
     return [NSFont systemFontOfSize:24. weight:NSFontWeightBold];
 }
 
-+ (instancetype)VLClibraryHighlightCellTitleFont
++ (NSFont *)VLCLibrarySubsectionHeaderFont
 {
-    return [NSFont systemFontOfSize:21. weight:NSFontWeightMedium];
+    return [NSFont systemFontOfSize:17. weight:NSFontWeightSemibold];
 }
 
-+ (instancetype)VLClibraryHighlightCellSubtitleFont
++ (NSFont *)VLCLibrarySubsectionSubheaderFont
 {
-    return [NSFont systemFontOfSize:13. weight:NSFontWeightSemibold];
+    return [NSFont systemFontOfSize:15. weight:NSFontWeightMedium];
 }
 
-+ (instancetype)VLClibraryHighlightCellHighlightLabelFont
++ (NSFont *)VLCLibraryItemAnnotationFont
 {
-    return [NSFont systemFontOfSize:11. weight:NSFontWeightBold];
-}
-
-+ (instancetype)VLClibraryLargeCellTitleFont
-{
-    return [NSFont systemFontOfSize:17. weight:NSFontWeightMedium];
-}
-
-+ (instancetype)VLClibraryLargeCellSubtitleFont
-{
-    return [NSFont systemFontOfSize:13. weight:NSFontWeightSemibold];
-}
-
-+ (instancetype)VLClibrarySmallCellTitleFont
-{
-    return [NSFont systemFontOfSize:13. weight:NSFontWeightMedium];
-}
-
-+ (instancetype)VLClibrarySmallCellSubtitleFont
-{
-    return [NSFont systemFontOfSize:10. weight:NSFontWeightSemibold];
-}
-
-+ (instancetype)VLClibraryCellAnnotationFont
-{
-    return [NSFont systemFontOfSize:15. weight:NSFontWeightBold];
-}
-
-+ (instancetype)VLClibraryButtonFont
-{
-    return [NSFont systemFontOfSize:15. weight:NSFontWeightBold];
-}
-
-+ (instancetype)VLCplaylistLabelFont
-{
-    return [NSFont systemFontOfSize:13. weight:NSFontWeightRegular];
-}
-
-+ (instancetype)VLCplaylistSelectedItemLabelFont
-{
-    return [NSFont systemFontOfSize:13. weight:NSFontWeightBold];
-}
-
-+ (instancetype)VLCsmallPlaylistLabelFont
-{
-    return [NSFont systemFontOfSize:10. weight:NSFontWeightRegular];
-}
-
-+ (instancetype)VLCsmallPlaylistSelectedItemLabelFont
-{
-    return [NSFont systemFontOfSize:10. weight:NSFontWeightBold];
-}
-
-+ (instancetype)VLCLibrarySupplementaryDetailViewTitleFont
-{
-    return [NSFont systemFontOfSize:20. weight:NSFontWeightSemibold];
-}
-
-+ (instancetype)VLCLibrarySupplementaryDetailViewSubtitleFont
-{
-    return [NSFont systemFontOfSize:18. weight:NSFontWeightMedium];
+    return [NSFont systemFontOfSize:NSFont.systemFontSize weight:NSFontWeightBold];
 }
 
 @end

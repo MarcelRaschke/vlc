@@ -28,6 +28,8 @@ namespace smooth
     {
         using namespace adaptive::playlist;
 
+        static std::string NS_SMOOTH = "";
+
         class Manifest : public BasePlaylist
         {
             friend class ManifestParser;
@@ -36,7 +38,7 @@ namespace smooth
                 Manifest(vlc_object_t *);
                 virtual ~Manifest();
 
-                virtual bool                    isLive() const override;
+                bool                    isLive() const override;
 
             private:
                 bool b_live;

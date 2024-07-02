@@ -51,6 +51,7 @@
 #import <string.h>
 
 #import <vlc_common.h>
+#import <vlc_configuration.h>
 #import <vlc_actions.h>
 #import <vlc_config_cat.h>
 #import <vlc_modules.h>
@@ -217,7 +218,7 @@ enum VLCTreeBranchType {
     [_rootTreeItem applyChanges];
     fixIntfSettings();
     config_SaveConfigFile(getIntf());
-    [[NSNotificationCenter defaultCenter] postNotificationName:VLCConfigurationChangedNotification object:nil];
+    [NSNotificationCenter.defaultCenter postNotificationName:VLCConfigurationChangedNotification object:nil];
     [self.window orderOut:self];
 }
 
@@ -229,12 +230,12 @@ enum VLCTreeBranchType {
 - (IBAction)showSimplePrefs: (id)sender
 {
     [self.window orderOut: self];
-    [[[VLCMain sharedInstance] simplePreferences] showSimplePrefs];
+    [VLCMain.sharedInstance.simplePreferences showSimplePrefs];
 }
 
 - (IBAction)resetPrefs:(id)sender
 {
-    [[[VLCMain sharedInstance] simplePreferences] resetPreferences:sender];
+    [VLCMain.sharedInstance.simplePreferences resetPreferences:sender];
 }
 
 - (void)loadConfigTree
@@ -564,11 +565,11 @@ enum VLCTreeBranchType {
     // Sort the top-level cat items into preferred order
     NSUInteger index = 0;
     NSUInteger childrenCount = [[self children] count];
-    for (unsigned i = 0; i < ARRAY_SIZE(categories_array); i++) {
+    for (unsigned i = 0; i < vlc_config_cat_Count(); i++) {
         // Try to find index of current cat
         for (NSUInteger j = index; j < childrenCount; j++) {
             VLCTreeBranchItem * item = [[self children] objectAtIndex:j];
-            if ([item category] == categories_array[i].id) {
+            if ([item category] == vlc_config_cat_GetAt(i)->id) {
                 if (j != index) {
                     [[self children] exchangeObjectAtIndex:j withObjectAtIndex:index];
                 }

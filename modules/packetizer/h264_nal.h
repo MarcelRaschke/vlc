@@ -89,6 +89,8 @@ typedef struct h264_sequence_parameter_set_t h264_sequence_parameter_set_t;
 typedef struct h264_picture_parameter_set_t h264_picture_parameter_set_t;
 typedef struct h264_sequence_parameter_set_extension_t h264_sequence_parameter_set_extension_t;
 
+bool h264_get_xps_id(const uint8_t *p_nalbuf, size_t i_nalbuf, uint8_t *pi_id);
+
 h264_sequence_parameter_set_t * h264_decode_sps( const uint8_t *, size_t, bool );
 h264_picture_parameter_set_t *  h264_decode_pps( const uint8_t *, size_t, bool );
 h264_sequence_parameter_set_extension_t * h264_decode_sps_extension( const uint8_t *, size_t, bool );
@@ -96,6 +98,9 @@ h264_sequence_parameter_set_extension_t * h264_decode_sps_extension( const uint8
 void h264_release_sps( h264_sequence_parameter_set_t * );
 void h264_release_pps( h264_picture_parameter_set_t * );
 void h264_release_sps_extension( h264_sequence_parameter_set_extension_t * );
+
+uint8_t h264_get_sps_id( const h264_sequence_parameter_set_t * );
+uint8_t h264_get_pps_sps_id( const h264_picture_parameter_set_t * );
 
 struct h264_sequence_parameter_set_t
 {
@@ -128,8 +133,8 @@ struct h264_sequence_parameter_set_t
     int32_t offset_for_ref_frame[255];
     int i_log2_max_pic_order_cnt_lsb;
 
+    bool vui_parameters_present_flag;
     struct {
-        bool b_valid;
         int i_sar_num, i_sar_den;
         struct {
             bool b_full_range;
@@ -205,8 +210,22 @@ uint8_t * h264_avcC_to_AnnexB_NAL( const uint8_t *p_buf, size_t i_buf,
 bool h264_get_dpb_values( const h264_sequence_parameter_set_t *,
                           uint8_t *pi_depth, unsigned *pi_delay );
 
-bool h264_get_picture_size( const h264_sequence_parameter_set_t *, unsigned *p_w, unsigned *p_h,
+unsigned h264_get_max_frame_num( const h264_sequence_parameter_set_t * );
+bool h264_is_frames_only( const h264_sequence_parameter_set_t * );
+bool h264_using_adaptive_frames( const h264_sequence_parameter_set_t * );
+
+bool h264_get_sps_profile_tier_level( const h264_sequence_parameter_set_t *,
+                                     uint8_t *pi_profile, uint8_t *pi_level );
+bool h264_get_constraints_set( const h264_sequence_parameter_set_t *p_sps,
+                               uint8_t *pi_constraints );
+bool h264_get_picture_size( const h264_sequence_parameter_set_t *,
+                            unsigned *p_ox, unsigned *p_oy,
+                            unsigned *p_w, unsigned *p_h,
                             unsigned *p_vw, unsigned *p_vh );
+bool h264_get_frame_rate( const h264_sequence_parameter_set_t *,
+                          unsigned *pi_num, unsigned *pi_den );
+bool h264_get_aspect_ratio( const h264_sequence_parameter_set_t *,
+                           unsigned *pi_num, unsigned *pi_den );
 bool h264_get_chroma_luma( const h264_sequence_parameter_set_t *, uint8_t *pi_chroma_format,
                            uint8_t *pi_depth_luma, uint8_t *pi_depth_chroma );
 bool h264_get_colorimetry( const h264_sequence_parameter_set_t *p_sps,
@@ -225,6 +244,9 @@ typedef struct
 } h264_sei_recovery_point_t;
 
 bool h264_decode_sei_recovery_point( bs_t *, h264_sei_recovery_point_t * );
+bool h264_decode_sei_pic_timing(  bs_t *, const h264_sequence_parameter_set_t *,
+                                  uint8_t *, uint8_t *  );
+
 
 #ifdef __cplusplus
 }

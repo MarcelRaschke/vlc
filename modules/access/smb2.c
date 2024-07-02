@@ -383,7 +383,7 @@ FileControl(stream_t *access, int i_query, va_list args)
     return VLC_SUCCESS;
 }
 
-static char *
+VLC_MALLOC static char *
 vlc_smb2_get_url(vlc_url_t *url, const char *file)
 {
     /* smb2://<psz_host><i_port><psz_path><file>?<psz_option> */
@@ -429,7 +429,7 @@ static int AddItem(stream_t *access, struct vlc_readdir_helper *rdh,
     if (url == NULL)
         return VLC_ENOMEM;
 
-    input_item_t *p_item; 
+    input_item_t *p_item;
     int ret = vlc_readdir_helper_additem(rdh, url, NULL, name, i_type,
                                          ITEM_NET, &p_item);
 
@@ -658,24 +658,45 @@ vlc_smb2_FreeContext(void *context)
 }
 
 static int
+vlc_smb2_connect_share(stream_t *access, const char *server,
+                       const char *share, const char *username)
+{
+    struct access_sys *sys = access->p_sys;
+
+    struct vlc_smb2_op op = VLC_SMB2_OP(access, &sys->smb2);
+    int err = smb2_connect_share_async(sys->smb2, server, share,
+                                       username, smb2_generic_cb, &op);
+    if (err < 0)
+    {
+        VLC_SMB2_SET_ERROR(&op, "smb2_connect_share_async", err);
+        return op.error_status;
+    }
+
+    return vlc_smb2_mainloop(&op);
+}
+
+static int
 vlc_smb2_connect_open_share(stream_t *access, const char *url,
-                            const vlc_credential *credential)
+                            const vlc_credential *credential,
+                            bool guest_with_valid_passwd)
 {
     struct access_sys *sys = access->p_sys;
 
     struct smb2_url *smb2_url = NULL;
 
+    int err;
     sys->smb2 = smb2_init_context();
     if (sys->smb2 == NULL)
     {
         msg_Err(access, "smb2_init_context failed");
-        return -1;
+        return -ENOMEM;
     }
     smb2_url = smb2_parse_url(sys->smb2, url);
 
     if (!smb2_url || !smb2_url->share || !smb2_url->server)
     {
         msg_Err(access, "smb2_parse_url failed");
+        err = -EINVAL;
         goto error;
     }
 
@@ -688,7 +709,7 @@ vlc_smb2_connect_open_share(stream_t *access, const char *url,
     {
         username = "Guest";
         /* A NULL password enable ntlmssp anonymous login */
-        password = NULL;
+        password = guest_with_valid_passwd ? "" : NULL;
     }
 
     struct vlc_access_cache_entry *cache_entry =
@@ -697,7 +718,7 @@ vlc_smb2_connect_open_share(stream_t *access, const char *url,
     if (cache_entry != NULL)
     {
         struct smb2_context *smb2 = cache_entry->context;
-        int err = vlc_smb2_open_share(access, &smb2, smb2_url, do_enum);
+        err = vlc_smb2_open_share(access, &smb2, smb2_url, do_enum);
         if (err == 0)
         {
             assert(smb2 != NULL);
@@ -719,15 +740,8 @@ vlc_smb2_connect_open_share(stream_t *access, const char *url,
     smb2_set_password(sys->smb2, password);
     smb2_set_domain(sys->smb2, domain ? domain : "");
 
-    struct vlc_smb2_op op = VLC_SMB2_OP(access, &sys->smb2);
-    int err = smb2_connect_share_async(sys->smb2, smb2_url->server, share,
-                                       username, smb2_generic_cb, &op);
+    err = vlc_smb2_connect_share(access, smb2_url->server, share, username);
     if (err < 0)
-    {
-        VLC_SMB2_SET_ERROR(&op, "smb2_connect_share_async", err);
-        goto error;
-    }
-    if (vlc_smb2_mainloop(&op) != 0)
         goto error;
 
     sys->smb2_connected = true;
@@ -736,17 +750,14 @@ vlc_smb2_connect_open_share(stream_t *access, const char *url,
 
     err = vlc_smb2_open_share(access, &sys->smb2, smb2_url, do_enum);
     if (err < 0)
-    {
-        op.error_status = err;
         goto error;
-    }
 
     sys->cache_entry = vlc_access_cache_entry_NewSmb(sys->smb2, smb2_url->server, share,
                                                      credential->psz_username,
                                                      vlc_smb2_FreeContext);
     if (sys->cache_entry == NULL)
     {
-        op.error_status = -ENOMEM;
+        err = -ENOMEM;
         goto error;
     }
 
@@ -770,7 +781,7 @@ error:
             sys->smb2 = NULL;
         }
     }
-    return op.error_status;
+    return err;
 }
 
 static int
@@ -890,13 +901,27 @@ Open(vlc_object_t *p_obj)
         goto error;
     }
 
-    ret = vlc_smb2_connect_open_share(access, url, &credential);
+    ret = vlc_smb2_connect_open_share(access, url, &credential, false);
+    if (ret == -EINVAL && credential.psz_username == NULL)
+    {
+        /* Since last Windows 11 update (KB5026436), Windows SMB servers need a
+         * valid Auth (user + password) even for a guest/anonymous login. The
+         * server will return 'STATUS_INVALID_PARAMETER' (so, libsmb2 will
+         * return '-EINVAL') if the password is invalid. Therefore, try to
+         * connect again with a valid password in that case.
+         *
+         * We don't try to connect with a valid password on the first try since
+         * it seems to break anonymous login with other samba servers (but
+         * samba.c doesn't have this problem so this might be libsmb2 issue).
+         * */
+        ret = vlc_smb2_connect_open_share(access, url, &credential, true);
+    }
 
     while (VLC_SMB2_STATUS_DENIED(ret)
         && vlc_credential_get(&credential, access, "smb-user", "smb-pwd",
                               SMB_LOGIN_DIALOG_TITLE, SMB_LOGIN_DIALOG_TEXT,
                               sys->encoded_url.psz_host) == 0)
-        ret = vlc_smb2_connect_open_share(access, url, &credential);
+        ret = vlc_smb2_connect_open_share(access, url, &credential, false);
     free(resolved_host);
     free(url);
     if (ret == 0)

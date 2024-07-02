@@ -23,6 +23,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_atomic.h>
 #include <vlc_modules.h>
 #include <vlc_arrays.h>
@@ -234,8 +235,8 @@ void addons_manager_Gather( addons_manager_t *p_manager, const char *psz_uri )
         p_manager->p_priv->finder.b_live = true;
     }
 
-    vlc_mutex_unlock( &p_manager->p_priv->finder.lock );
     vlc_cond_signal( &p_manager->p_priv->finder.waitcond );
+    vlc_mutex_unlock( &p_manager->p_priv->finder.lock );
 }
 
 /*****************************************************************************
@@ -552,8 +553,8 @@ static int InstallEntry( addons_manager_t *p_manager, addon_entry_t *p_entry )
         else
             p_manager->p_priv->installer.b_live = true;
     }
-    vlc_mutex_unlock( &p_manager->p_priv->installer.lock );
     vlc_cond_signal( &p_manager->p_priv->installer.waitcond );
+    vlc_mutex_unlock( &p_manager->p_priv->installer.lock );
     return VLC_SUCCESS;
 }
 

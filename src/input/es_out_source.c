@@ -36,50 +36,74 @@
 #include "input_internal.h"
 #include "es_out.h"
 
-typedef struct
+struct es_out_source
 {
-    es_out_t out;
+    struct vlc_input_es_out out;
     input_source_t *in;
-    es_out_t *parent_out;
-} es_out_sys_t;
+    struct vlc_input_es_out *parent_out;
+} ;
+
+static struct es_out_source *
+PRIV(es_out_t *out)
+{
+    struct vlc_input_es_out *parent = container_of(out, struct vlc_input_es_out, out);
+    struct es_out_source *source = container_of(parent, struct es_out_source, out);
+    return source;
+}
 
 static es_out_id_t *EsOutSourceAdd(es_out_t *out, input_source_t *in,
                                     const es_format_t *fmt)
 {
     assert(in == NULL);
-    es_out_sys_t *sys = container_of(out, es_out_sys_t, out);
-    return sys->parent_out->cbs->add(sys->parent_out, sys->in, fmt);
+    struct es_out_source *sys = PRIV(out);
+    return sys->parent_out->out.cbs->add(&sys->parent_out->out, sys->in, fmt);
 }
 
 static int EsOutSourceSend(es_out_t *out, es_out_id_t *es, block_t *block)
 {
-    es_out_sys_t *sys = container_of(out, es_out_sys_t, out);
-    return es_out_Send(sys->parent_out, es, block);
+    struct es_out_source *sys = PRIV(out);
+    return es_out_Send(&sys->parent_out->out, es, block);
 }
 
 static void EsOutSourceDel(es_out_t *out, es_out_id_t *es)
 {
-    es_out_sys_t *sys = container_of(out, es_out_sys_t, out);
-    es_out_Del(sys->parent_out, es);
+    struct es_out_source *sys = PRIV(out);
+    es_out_Del(&sys->parent_out->out, es);
 }
 
 static int EsOutSourceControl(es_out_t *out, input_source_t *in, int query,
                                va_list args)
 {
     assert(in == NULL);
-    es_out_sys_t *sys = container_of(out, es_out_sys_t, out);
-    return sys->parent_out->cbs->control(sys->parent_out, sys->in, query, args);
+    struct es_out_source *sys = PRIV(out);
+    return sys->parent_out->out.cbs->control(&sys->parent_out->out, sys->in, query, args);
+}
+
+static int EsOutSourcePrivControl(struct vlc_input_es_out *out, input_source_t *in, int query,
+                                  va_list args)
+{
+    assert(in == NULL);
+    struct es_out_source *sys = PRIV(&out->out);
+    return sys->parent_out->ops->priv_control(sys->parent_out, sys->in, query, args);
 }
 
 static void EsOutSourceDestroy(es_out_t *out)
 {
-    es_out_sys_t *sys = container_of(out, es_out_sys_t, out);
+    struct es_out_source *sys = PRIV(out);
     free(sys);
 }
 
-es_out_t *input_EsOutSourceNew(es_out_t *parent_out, input_source_t *in)
+struct vlc_input_es_out *
+input_EsOutSourceNew(struct vlc_input_es_out *parent_out, input_source_t *in)
 {
     assert(parent_out && in);
+
+    struct es_out_source *sys = malloc(sizeof(*sys));
+    if (!sys)
+        return NULL;
+
+    sys->in = in;
+    sys->parent_out = parent_out;
 
     static const struct es_out_callbacks es_out_cbs =
     {
@@ -89,13 +113,15 @@ es_out_t *input_EsOutSourceNew(es_out_t *parent_out, input_source_t *in)
         .control = EsOutSourceControl,
         .destroy = EsOutSourceDestroy,
     };
+    sys->out.out.cbs = &es_out_cbs;
 
-    es_out_sys_t *sys = malloc(sizeof(*sys));
-    if (!sys)
-        return NULL;
+    static const struct vlc_input_es_out_ops ops =
+    {
+        .priv_control = EsOutSourcePrivControl,
+    };
 
     sys->in = in;
-    sys->out.cbs = &es_out_cbs;
+    sys->out.ops = &ops;
     sys->parent_out = parent_out;
 
     return &sys->out;

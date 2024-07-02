@@ -15,9 +15,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Window 2.11
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Window
+import QtQuick.Layouts
 
 import org.videolan.vlc 0.1
 
@@ -26,11 +26,17 @@ import "qrc:///style/"
 Rectangle {
     id: root
 
-    readonly property bool hovered: minimizeButton.hovered || maximizeButton.hovered || closeButton.hovered
+    readonly property bool buttonHovered: {
+        for (let i = 0; i < loader.count; ++i) {
+            const button = loader.itemAt(i)
+            if (button.hovered) return true
+        }
+        return false
+    }
 
-    readonly property int _frameMarginLeft: VLCStyle.palette.csdMetrics ? VLCStyle.palette.csdMetrics.csdFrameMarginLeft : 0
-    readonly property int _frameMarginRight: VLCStyle.palette.csdMetrics ? VLCStyle.palette.csdMetrics.csdFrameMarginRight : 0
-    readonly property int _interNavButtonSpacing: VLCStyle.palette.csdMetrics ? VLCStyle.palette.csdMetrics.interNavButtonSpacing : 0
+    readonly property int _frameMarginLeft: VLCStyle.palette.csdMetrics?.csdFrameMarginLeft ?? 0
+    readonly property int _frameMarginRight: VLCStyle.palette.csdMetrics?.csdFrameMarginRight ?? 0
+    readonly property int _interNavButtonSpacing: VLCStyle.palette.csdMetrics?.interNavButtonSpacing ?? 0
 
     implicitWidth: layout.implicitWidth + _frameMarginLeft + _frameMarginRight
     implicitHeight: layout.implicitHeight
@@ -47,9 +53,13 @@ Rectangle {
         spacing: root._interNavButtonSpacing
 
         Repeater {
+            id: loader
+
             model: MainCtx.csdButtonModel.windowCSDButtons
 
             CSDThemeButton {
+
+                required property var modelData
 
                 anchors.verticalCenter: parent.verticalCenter
 
@@ -66,7 +76,7 @@ Rectangle {
                                 : CSDThemeImage.MAXIMIZE
 
                     case CSDButton.Close:
-                        return CSDThemeButton.CLOSE
+                        return CSDThemeImage.CLOSE
                     }
 
                     console.assert(false, "unreachable")

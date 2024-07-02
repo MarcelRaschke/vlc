@@ -27,14 +27,16 @@
 #endif
 
 #include <vlc_common.h>
-#include <vlc_media_library.h>
-#include <vlc_player.h>
 #include <vlc_threads.h>
+#include <vlc_input_item.h>
+#include <vlc_player.h>
 #include <vlc_cxx_helpers.hpp>
 
 #include "mlhelper.hpp"
 #include "mlevent.hpp"
 
+Q_MOC_INCLUDE( "medialibrary/medialib.hpp" )
+Q_MOC_INCLUDE( "player/player_controller.hpp" )
 
 class PlayerController;
 class MediaLib;
@@ -56,7 +58,7 @@ public:
         PositionRole = Qt::UserRole + 2,
         DescriptionRole = Qt::UserRole + 3
     };
-    virtual QHash<int, QByteArray> roleNames() const override;
+    QHash<int, QByteArray> roleNames() const override;
 
     QVariant data(const QModelIndex& index, int role = Qt::DisplayRole ) const override;
     bool setData( const QModelIndex& index, const QVariant& value, int role = Qt::EditRole ) override;

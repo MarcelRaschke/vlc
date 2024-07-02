@@ -16,25 +16,25 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
+import QtQuick.Layouts
+import QtQml.Models
 
 import org.videolan.vlc 0.1
-import org.videolan.compat 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 
-T.Control {
+T.ItemDelegate {
     id: delegate
 
     // Properties
 
-    readonly property int selectionLength: root.model.selectedCount
+    property Flickable view: ListView.view
 
-    readonly property bool selected : model.selected
+    readonly property bool selected : view.selectionModel.selectedIndexesFlat.includes(index)
 
     readonly property bool topContainsDrag: higherDropArea.containsDrag
 
@@ -42,29 +42,51 @@ T.Control {
 
     readonly property bool containsDrag: (topContainsDrag || bottomContainsDrag)
 
+    // drag -> point
+    // current drag pos inside the item
+    readonly property point drag: {
+        if (!containsDrag)
+            return Qt.point(0, 0)
+
+        const d = topContainsDrag ? higherDropArea : lowerDropArea
+        const p = d.drag
+        return mapFromItem(d, p.x, p.y)
+    }
+
+
+    // Optional
+    property var contextMenu
+
+    // Optional, an item to show as drag target
+    property Item dragItem
+
+    // Optional, used to show the drop indicator
+    property var isDropAcceptable
+
+    // Optional, but required to drop a drag
+    property var acceptDrop
+
     // Settings
 
-    topPadding: VLCStyle.margin_xxsmall
-
-    bottomPadding: VLCStyle.margin_xxsmall
+    verticalPadding: VLCStyle.playlistDelegate_verticalPadding
 
     leftPadding: VLCStyle.margin_normal
 
-    rightPadding: Math.max(listView.scrollBarWidth, VLCStyle.margin_normal)
+    rightPadding: VLCStyle.margin_normal
 
-    implicitWidth: Math.max(background.implicitWidth,
-                            contentItem.implicitWidth + leftPadding + rightPadding)
-
-    implicitHeight: Math.max(background.implicitHeight,
-                            contentItem.implicitHeight + topPadding + bottomPadding)
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            implicitContentWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             implicitContentHeight + topPadding + bottomPadding)
 
     ListView.delayRemove: mouseArea.drag.active
 
-    T.ToolTip.visible: ( (visualFocus || hovered) &&
-                         !overlayMenu.shown && MainCtx.playlistVisible &&
+    T.ToolTip.visible: ( visible && (visualFocus || hovered) &&
                          (textInfoColumn.implicitWidth > textInfoColumn.width) )
 
-    T.ToolTip.timeout: (hovered ? 0 : VLCStyle.duration_humanMoment)
+    // NOTE: This is useful for keyboard navigation on a column, to avoid blocking visibility on
+    //       the surrounding items.
+    T.ToolTip.timeout: (visualFocus) ? VLCStyle.duration_humanMoment : 0
 
     T.ToolTip.text: (textInfo.text + '\n' + textArtist.text)
 
@@ -73,19 +95,6 @@ T.Control {
     // Events
 
     // Functions
-
-    function moveSelected() {
-        var selectedIndexes = root.model.getSelection()
-        if (selectedIndexes.length === 0)
-            return
-        var preTarget = index
-        /* move to _above_ the clicked item if move up, but
-         * _below_ the clicked item if move down */
-        if (preTarget > selectedIndexes[0])
-            preTarget++
-        listView.currentIndex = selectedIndexes[0]
-        root.model.moveItemsPre(selectedIndexes, preTarget)
-    }
 
     // Childs
 
@@ -99,14 +108,32 @@ T.Control {
     }
 
     background: Widgets.AnimatedBackground {
-        backgroundColor: selected ? theme.bg.highlight : theme.bg.primary
+        color: selected ? theme.bg.highlight : theme.bg.primary
 
-        active: delegate.visualFocus
-        animate: theme.initialized
+        enabled: theme.initialized
 
-        activeBorderColor: theme.visualFocus
+        border.color: delegate.visualFocus ? theme.visualFocus : "transparent"
 
-        visible: animationRunning || active || selected || hovered
+        Widgets.CurrentIndicator {
+            anchors {
+                left: parent.left
+                leftMargin: VLCStyle.margin_xxsmall
+                verticalCenter: parent.verticalCenter
+            }
+
+            implicitHeight: parent.height * 3 / 4
+
+            color: {
+                if (model.isCurrent)
+                    return theme.accent
+
+                // based on design, ColorContext can't handle this case
+                if (!delegate.hovered)
+                    return theme.indicator.alpha(0)
+
+                return theme.indicator
+            }
+        }
     }
 
     contentItem: RowLayout {
@@ -115,31 +142,37 @@ T.Control {
         Item {
             id: artworkItem
 
-            Layout.preferredHeight: VLCStyle.icon_normal
-            Layout.preferredWidth: VLCStyle.icon_normal
+            Layout.preferredHeight: VLCStyle.icon_playlistArt
+            Layout.preferredWidth: VLCStyle.icon_playlistArt
             Layout.alignment: Qt.AlignVCenter
+
+            Accessible.role: Accessible.Graphic
+            Accessible.name: qsTr("Cover")
+            Accessible.description: {
+                if (model.isCurrent) {
+                    if (Player.playingState === Player.PLAYING_STATE_PLAYING)
+                        return qsTr("Playing")
+                    else if (Player.playingState === Player.PLAYING_STATE_PAUSED)
+                        return qsTr("Paused")
+                }
+                return qsTr("Media cover")
+            }
 
             Widgets.ScaledImage {
                 id: artwork
 
                 anchors.fill: parent
                 fillMode: Image.PreserveAspectFit
-                source: (model.artwork && model.artwork.toString()) ? model.artwork : VLCStyle.noArtAlbumCover
+                source: (model?.artwork.toString()) ? VLCAccessImage.uri(model.artwork) : VLCStyle.noArtAlbumCover
                 visible: !statusIcon.visible
                 asynchronous: true
 
-                Widgets.DoubleShadow {
+                Widgets.DefaultShadow {
                     anchors.centerIn: parent
-                    width: parent.paintedWidth
-                    height: parent.paintedHeight
 
-                    z: -1
+                    sourceItem: parent
 
-                    primaryBlurRadius: VLCStyle.dp(3)
-                    primaryVerticalOffset: VLCStyle.dp(1)
-
-                    secondaryBlurRadius: VLCStyle.dp(14)
-                    secondaryVerticalOffset: VLCStyle.dp(6)
+                    visible: (artwork.status === Image.Ready)
                 }
             }
 
@@ -153,7 +186,7 @@ T.Control {
                     if (Player.playingState === Player.PLAYING_STATE_PLAYING)
                         return VLCIcons.volume_high
                     else if (Player.playingState === Player.PLAYING_STATE_PAUSED)
-                        return VLCIcons.pause
+                        return VLCIcons.pause_filled
                     else
                         return ""
                 }
@@ -166,7 +199,7 @@ T.Control {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.leftMargin: VLCStyle.margin_large
-            spacing: 0
+            spacing: VLCStyle.margin_xsmall
 
             Widgets.ListLabel {
                 id: textInfo
@@ -186,8 +219,7 @@ T.Control {
                 Layout.fillHeight: true
                 Layout.fillWidth: true
 
-                font.weight: model.isCurrent ? Font.DemiBold : Font.Normal
-                text: (model.artist ? model.artist : I18n.qtr("Unknown Artist"))
+                text: model.artist || qsTr("Unknown Artist")
                 color: theme.fg.primary
                 verticalAlignment: Text.AlignBottom
             }
@@ -213,70 +245,57 @@ T.Control {
 
         acceptedButtons: Qt.LeftButton | Qt.RightButton
 
-        onClicked: {
+        onClicked: (mouse) => {
             /* to receive keys events */
-            listView.forceActiveFocus()
-            if (root.mode === PlaylistListView.Mode.Move) {
-                moveSelected()
-                return
-            } else if (root.mode === PlaylistListView.Mode.Select) {
-            } else if (!(root.model.isSelected(index) && mouse.button === Qt.RightButton)) {
-                listView.updateSelection(mouse.modifiers, listView.currentIndex, index)
-                listView.currentIndex = index
+            if (!(delegate.selected && mouse.button === Qt.RightButton)) {
+                view.selectionModel.updateSelection(mouse.modifiers, view.currentIndex, index)
+                view.currentIndex = index
             }
 
-            if (mouse.button === Qt.RightButton)
-                contextMenu.popup(index, this.mapToGlobal(mouse.x, mouse.y))
+            if (contextMenu && mouse.button === Qt.RightButton)
+                contextMenu.popup(index, mapToGlobal(mouse.x, mouse.y))
         }
 
-        onDoubleClicked: {
-            if (mouse.button !== Qt.RightButton && root.mode === PlaylistListView.Mode.Normal)
-                mainPlaylistController.goTo(index, true)
+        onDoubleClicked: (mouse) => {
+            if (mouse.button !== Qt.RightButton)
+                MainPlaylistController.goTo(index, true)
+        }
+
+        onPressed: (mouse) => {
+            delegate.forceActiveFocus(Qt.MouseFocusReason)
         }
 
         drag.target: dragItem
 
+        drag.smoothed: false
+
         drag.onActiveChanged: {
-            if (drag.active) {
-                if (!selected) {
-                    /* the dragged item is not in the selection, replace the selection */
-                    root.model.setSelection([index])
-                }
+            if (dragItem) {
+                if (drag.active) {
+                    if (!selected) {
+                        /* the dragged item is not in the selection, replace the selection */
+                        view.selectionModel.select(index, ItemSelectionModel.ClearAndSelect)
+                    }
 
-                if (contains(mapFromItem(dragItem.parent, dragItem.x, dragItem.y))) {
-                    // Force trigger entered signal in drop areas
-                    // so that containsDrag work properly
-                    dragItem.x = -1
-                    dragItem.y = -1
+                    dragItem.indexes = view.selectionModel.selectedIndexesFlat
+                    dragItem.indexesFlat = true
+                    dragItem.Drag.active = true
+                } else {
+                    dragItem.Drag.drop()
                 }
-
-                dragItem.Drag.active = drag.active
-            }
-            else {
-                dragItem.Drag.drop()
             }
         }
 
-        onPositionChanged: {
-            if (drag.active) {
-                // FIXME: Override dragItem's position
-                var pos = mapToItem(dragItem.parent, mouseX, mouseY)
-                dragItem.x = pos.x + VLCStyle.dp(15)
-                dragItem.y = pos.y
-            }
-        }
-
-        TouchScreenTapHandlerCompat {
+        TapHandler {
+            acceptedDevices: PointerDevice.TouchScreen
+            
             onTapped: {
-                if (root.mode === PlaylistListView.Mode.Normal) {
-                    mainPlaylistController.goTo(index, true)
-                } else if (root.mode === PlaylistListView.Mode.Move) {
-                    moveSelected()
-                }
+                MainPlaylistController.goTo(index, true)
             }
 
-            onLongPressed: {
-                contextMenu.popup(index, point.scenePosition)
+            onLongPressed: (eventPoint, button) => {
+                if (contextMenu)
+                    contextMenu.popup(index, point.scenePosition)
             }
         }
     }
@@ -291,15 +310,21 @@ T.Control {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            onEntered: {
-                if (!isDropAcceptable(drag, index)) {
+            onEntered: (drag) => {
+                if (!acceptDrop) {
+                    drag.accept = false
+                    return
+                }
+
+                if (isDropAcceptable && !isDropAcceptable(drag, index)) {
                     drag.accepted = false
                     return
                 }
             }
 
-            onDropped: {
-                root.acceptDrop(index, drop)
+            onDropped: (drop) => {
+                console.assert(acceptDrop)
+                acceptDrop(index, drop)
             }
         }
 
@@ -309,15 +334,21 @@ T.Control {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            onEntered: {
-                if (!isDropAcceptable(drag, index + 1)) {
+            onEntered: (drag) =>  {
+                if (!acceptDrop) {
+                    drag.accept = false
+                    return
+                }
+
+                if (isDropAcceptable && !isDropAcceptable(drag, index + 1)) {
                     drag.accepted = false
                     return
                 }
             }
 
-            onDropped: {
-                root.acceptDrop(index + 1, drop)
+            onDropped: (drop) => {
+                console.assert(acceptDrop)
+                acceptDrop(index + 1, drop)
             }
         }
     }

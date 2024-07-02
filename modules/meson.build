@@ -53,10 +53,10 @@ if (host_system != 'darwin' and host_system != 'windows') or get_option('xcb').e
 
     if have_wayland
         wayland_scanner = find_program(
-            wayland_scanner_dep.get_pkgconfig_variable('wayland_scanner'),
+            wayland_scanner_dep.get_variable(pkgconfig: 'wayland_scanner'),
             native: true
         )
-        wayland_protocols_dir = wayland_protocols_dep.get_pkgconfig_variable('pkgdatadir')
+        wayland_protocols_dir = wayland_protocols_dep.get_variable(pkgconfig: 'pkgdatadir')
     endif
 else
     have_wayland = false
@@ -76,43 +76,88 @@ if not jack_dep.found()
         required: false)
 endif
 
+frameworks = {}
+framework_conditions = [
+    {
+        'frameworks': [
+            'Foundation',
+            'CoreFoundation',
+            'Security',
+            'CoreMedia',
+            'AVFoundation',
+            'CoreVideo',
+            'VideoToolbox',
+            'AudioToolbox',
+            'IOKit',
+            'QuartzCore',
+            'QuartzText',
+            'CoreText',
+            'CoreAudio',
+            'CoreImage',
+            'CoreGraphics',
+            'AVKit',
+        ],
+        'condition': host_system == 'darwin'
+    },
+    {
+        'frameworks': [
+            'Cocoa',
+            'OpenGL',
+            'AudioUnit',
+        ],
+        'condition': have_osx
+    },
+    {
+        'frameworks': [
+            'UIKit',
+            'OpenGLES',
+        ],
+        'condition': have_ios or have_tvos
+    },
+]
+
+foreach framework_spec : framework_conditions
+    foreach framework_name : framework_spec['frameworks']
+        if framework_spec['condition']
+            # Not-found dependency
+            frameworks += { framework_name: disabler() }
+        else
+            frameworks += { framework_name: dependency(framework_name, required: framework_spec['condition']) }
+        endif
+    endforeach
+endforeach
+
 # Darwin-specific dependencies
-if host_system == 'darwin'
-    security_dep = dependency('Security', required: true)
-    coremedia_dep = dependency('CoreMedia', required: true)
-    avfoundation_dep = dependency('AVFoundation', required: true)
-    corevideo_dep = dependency('CoreVideo', required: true)
-    videotoolbox_dep = dependency('VideoToolbox', required: true)
-    audiotoolbox_dep = dependency('AudioToolbox', required: true)
-    iokit_dep = dependency('IOKit', required: true)
-    quartz_dep = dependency('QuartzCore', required: true)
-    coretext_dep = dependency('CoreText', required: true)
-    coreaudio_dep = dependency('CoreAudio', required: true)
-    coreimage_dep = dependency('CoreImage', required: true)
-    coregraphics_dep = dependency('CoreGraphics', required: true)
-endif
+security_dep = frameworks['Security']
+coremedia_dep = frameworks['CoreMedia']
+avfoundation_dep = frameworks['AVFoundation']
+corevideo_dep = frameworks['CoreVideo']
+videotoolbox_dep = frameworks['VideoToolbox']
+audiotoolbox_dep = frameworks['AudioToolbox']
+iokit_dep = frameworks['IOKit']
+quartz_dep = frameworks['QuartzCore']
+coretext_dep = frameworks['CoreText']
+coreaudio_dep = frameworks['CoreAudio']
+coreimage_dep = frameworks['CoreImage']
+coregraphics_dep = frameworks['CoreGraphics']
+avkit_dep = frameworks['AVKit']
 
 # macOS specific dependencies
-if have_osx
-    cocoa_dep = dependency('Cocoa', required: true)
-    opengl_dep = dependency('OpenGL', required: true)
-    audiounit_dep = dependency('AudioUnit', required: true)
-endif
+cocoa_dep = frameworks['Cocoa']
+opengl_dep = frameworks['OpenGL']
+audiounit_dep = frameworks['AudioUnit']
 
 # iOS/tvOS specific dependencies
-if have_ios or have_tvos
-    uikit_dep = dependency('UIKit', required: true)
-    opengles_dep = dependency('OpenGLES', required: true)
-endif
+uikit_dep = frameworks['UIKit']
+opengles_dep = frameworks['OpenGLES']
+
 
 # Windows-specific dependencies
-if host_system == 'windows'
 
-    # WASAPI-related dependency
-    ksuser_lib = cc.find_library('ksuser',
-                                 has_headers: ['audioclient.h'],
-                                 required: get_option('wasapi'))
-endif
+# WASAPI-related dependency
+ksuser_lib = cc.find_library('ksuser',
+                             has_headers: ['audioclient.h'],
+                             required: host_system == 'windows' and get_option('wasapi'))
 
 # Helper libraries for modules
 # These are helper libraries used by some modules
@@ -135,9 +180,9 @@ librist_dep = dependency('librist', required: get_option('rist'))
 mtp_dep = dependency('libmtp', version: '>=1.0.0', required: get_option('mtp'))
 
 # FFmpeg
-avformat_dep = dependency('libavformat', version: '>= 53.21.0', required: get_option('avformat'))
-avcodec_dep  = dependency('libavcodec', version: '>= 57.37.100', required: get_option('avcodec'))
-avutil_dep   = dependency('libavutil', version: '>= 55.22.101', required: false)
+avformat_dep = dependency('libavformat', version: '>= 58.29.100', required: get_option('avformat'))
+avcodec_dep  = dependency('libavcodec', version: '>= 58.54.100', required: get_option('avcodec'))
+avutil_dep   = dependency('libavutil', version: '>= 56.31.100', required: false)
 
 # Freetype, used by text_renderer and ASS access
 freetype_dep = dependency('freetype2', required: get_option('freetype'))
@@ -148,8 +193,16 @@ zvbi_dep = dependency('zvbi-0.2', version: '>= 0.2.28', required: false)
 # rsvg, used by SVG codec and text renderer
 rsvg_dep = dependency('librsvg-2.0', version: '>= 2.9.0', required: get_option('rsvg'))
 
+# libgcrypt, used by rtp, access, stream_out
+libgcrypt_dep = dependency('libgcrypt',
+                            version: '>= 1.6.0',
+                            required: get_option('libgcrypt'))
+
 # Array that holds all enabled VLC module dicts
 vlc_modules = []
+
+# video chroma modules
+subdir('video_chroma')
 
 # codec modules
 subdir('codec')
@@ -208,9 +261,6 @@ subdir('spu')
 # text renderer modules
 subdir('text_renderer')
 
-# video chroma modules
-subdir('video_chroma')
-
 # video filter modules
 subdir('video_filter')
 
@@ -230,16 +280,17 @@ subdir('lua')
 # This has to be declared here as it needs to end up
 # in the modules folder, not in gui/qt/ subfolder as
 # vlc-static would not find it there.
-if qt5_dep.found()
+if qt6_dep.found()
     executable('vlc-qt-check',
         files('gui/qt/vlc-qt-check.cpp'),
-        dependencies: [qt5_dep, qt_extra_deps],
+        dependencies: [qt6_dep, qt_extra_deps],
         include_directories: [vlc_include_dirs],
         build_by_default: true,
         install: true,
         install_dir: get_option('libexecdir'),
         c_args : qt_extra_flags,
         cpp_args : qt_extra_flags,
+        link_args : qt_link_args,
     )
 endif
 
@@ -251,6 +302,8 @@ endif
 # array is then iterated over and a library is defined for each
 # entry with the needed build definition for a VLC plugin.
 #
+vlc_plugins_targets = {}
+vlc_plugins_manifest = {}
 foreach module : vlc_modules
     if not module.has_key('name')
         error('Got invalid vlc_modules entry without \'name\' key')
@@ -272,6 +325,8 @@ foreach module : vlc_modules
         'c_args',
         'cpp_args',
         'objc_args',
+        'extra_files',
+        'enabled',
     ]
     foreach key : module.keys()
         if key not in valid_dict_keys
@@ -280,24 +335,42 @@ foreach module : vlc_modules
         endif
     endforeach
 
+    if not module.get('enabled', true)
+        continue
+    endif
+
     common_args = [
         '-DMODULE_STRING="@0@"'.format(module['name']),
         '-DVLC_DYNAMIC_PLUGIN'
     ]
 
-    library(module['name'] + '_plugin',
+    kwargs = {}
+
+    if module.has_key('link_language')
+        kwargs += { link_language: module.get('link_language') }
+    endif
+
+    vlc_plugin = library(
+        module['name'] + '_plugin',
         module['sources'],
         link_with: [module.get('link_with', []), vlc_libcompat],
         link_args: module.get('link_args', []),
         link_depends: module.get('link_depends', []),
-        link_language: module.get('link_language', []),
         include_directories: [module.get('include_directories', []), vlc_include_dirs],
         dependencies: [module.get('dependencies', []), libvlccore_dep],
         c_args: [module.get('c_args', []), common_args],
         cpp_args: [module.get('cpp_args', []), common_args],
         objc_args: [module.get('objc_args', []), common_args],
+        extra_files: module.get('extra_files', []),
         build_by_default: true,
         install: true,
-        install_dir: get_option('libdir') / 'vlc/plugins'
+        install_dir: get_option('libdir') / 'vlc/plugins',
+        kwargs: kwargs
     )
+    vlc_plugins_targets += {
+        module['name']: vlc_plugin
+    }
+    vlc_plugins_manifest += {
+        module['name']: module
+    }
 endforeach

@@ -29,39 +29,27 @@ class MLRecentsVideoModel : public MLVideoModel
 {
     Q_OBJECT
 
-    Q_PROPERTY(int numberOfItemsToShow READ getNumberOfItemsToShow
-               WRITE setNumberOfItemsToShow FINAL)
-
 public:
     explicit MLRecentsVideoModel(QObject * parent = nullptr);
 
     virtual ~MLRecentsVideoModel() = default;
 
 protected: // MLBaseModel implementation
-    std::unique_ptr<MLBaseModel::BaseLoader> createLoader() const override;
-
-private: // Functions
-    int  getNumberOfItemsToShow();
-    void setNumberOfItemsToShow(int number);
+    std::unique_ptr<MLListCacheLoader> createMLLoader() const override;
 
 protected: // MLVideoModel reimplementation
     void onVlcMlEvent(const MLEvent & event) override;
 
-private: // Variables
-    int m_numberOfItemsToShow = 10;
-
 private:
-    struct Loader : public BaseLoader
+    struct Loader : public MLListCacheLoader::MLOp
     {
-        Loader(const MLRecentsVideoModel & model, int numberOfItemsToShow);
+        using MLListCacheLoader::MLOp::MLOp;
 
-        size_t count(vlc_medialibrary_t* ml) const override;
+        size_t count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t*) const override;
 
-        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, size_t index, size_t count) const override;
+        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t*) const override;
 
         std::unique_ptr<MLItem> loadItemById(vlc_medialibrary_t* ml, MLItemId itemId) const override;
-    private:
-        int m_numberOfItemsToShow;
     };
 };
 

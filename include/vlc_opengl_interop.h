@@ -24,6 +24,7 @@
 #include <vlc_es.h>
 #include <vlc_picture.h>
 
+typedef struct vlc_gl_t vlc_gl_t;
 struct vlc_gl_interop;
 struct vlc_video_context;
 
@@ -45,6 +46,16 @@ struct vlc_gl_interop_ops {
     int (*allocate_textures)(const struct vlc_gl_interop *interop,
             uint32_t textures[], const int32_t tex_width[],
             const int32_t tex_height[]);
+
+    /**
+     * Callback to deallocate data for bound texture
+     *
+     * This function pointer can be NULL. it will be called before calling glDeleteTextures
+     *
+     * \param interop the OpenGL interop
+     * \param textures array of textures to bind (one per plane)
+     */
+    void (*deallocate_textures)(const struct vlc_gl_interop *interop, uint32_t textures[]);
 
     /**
      * Callback to update a picture
@@ -155,6 +166,9 @@ struct vlc_gl_interop {
     (*get_tex_format_size)(struct vlc_gl_interop *interop, uint32_t target,
                            uint32_t format, int32_t internal, uint32_t type);
 };
+
+/* Activation function for the OpenGL interop implementations. */
+typedef int (*vlc_gl_interop_probe)(struct vlc_gl_interop *interop);
 
 static inline int
 vlc_gl_interop_GetTexFormatSize(struct vlc_gl_interop *interop, uint32_t target,

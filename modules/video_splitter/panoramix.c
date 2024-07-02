@@ -32,6 +32,7 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_video_splitter.h>
 #include <vlc_window.h>
@@ -318,11 +319,8 @@ static const panoramix_chroma_t p_chroma_array[] = {
     { VLC_CODEC_I411, { 1, 4, 4, }, { 1, 4, 4, }, { 0, 128, 128 }, true },
     { VLC_CODEC_YV12, { 1, 2, 2, }, { 1, 2, 2, }, { 0, 128, 128 }, true },
     { VLC_CODEC_I420, { 1, 2, 2, }, { 1, 2, 2, }, { 0, 128, 128 }, true },
-    { VLC_CODEC_J420, { 1, 2, 2, }, { 1, 2, 2, }, { 0, 128, 128 }, true },
     { VLC_CODEC_I422, { 1, 2, 2, }, { 1, 1, 1, }, { 0, 128, 128 }, true },
-    { VLC_CODEC_J422, { 1, 2, 2, }, { 1, 1, 1, }, { 0, 128, 128 }, true },
     { VLC_CODEC_I440, { 1, 1, 1, }, { 1, 2, 2, }, { 0, 128, 128 }, true },
-    { VLC_CODEC_J440, { 1, 1, 1, }, { 1, 2, 2, }, { 0, 128, 128 }, true },
     { VLC_CODEC_I444, { 1, 1, 1, }, { 1, 1, 1, }, { 0, 128, 128 }, true },
     /* TODO packed chroma (yuv/rgb) ? */
 

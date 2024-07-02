@@ -35,6 +35,7 @@
 # include "../xcb/vlc_xkb.h"
 #endif
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_window.h>
 #include <vlc_mouse.h>
 #include <vlc_fs.h>
@@ -208,6 +209,9 @@ static const struct wl_pointer_listener pointer_cbs =
     pointer_axis_discrete,
 #ifdef WL_POINTER_AXIS_VALUE120_SINCE_VERSION
     NULL, /* We don't support axis_value120 for now */
+#endif
+#ifdef WL_POINTER_AXIS_RELATIVE_DIRECTION_SINCE_VERSION
+    NULL, /* We don't support axis_relative_direction for now */
 #endif
 };
 

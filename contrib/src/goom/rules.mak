@@ -17,9 +17,11 @@ $(TARBALLS)/goom-$(GOOM_VERSION)-src.tar.gz:
 goom: UNPACK_DIR=goom2k4-0
 goom: goom-$(GOOM_VERSION)-src.tar.gz .sum-goom
 	$(UNPACK)
+	# $(call update_autoconfig,.)
 	$(APPLY) $(SRC)/goom/goom2k4-0-memleaks.patch
 	$(APPLY) $(SRC)/goom/goom2k4-autotools.patch
 	$(APPLY) $(SRC)/goom/goom2k4-noxmmx.patch
+	$(APPLY) $(SRC)/goom/goom2k4-mmx-only.patch
 	$(APPLY) $(SRC)/goom/goom2k4-xmmslibdir.patch
 ifdef HAVE_WIN32
 ifdef MSYS_BUILD

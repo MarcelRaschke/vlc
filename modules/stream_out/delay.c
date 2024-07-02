@@ -28,6 +28,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 #include <vlc_block.h>
@@ -41,7 +42,8 @@ typedef struct
     vlc_tick_t i_delay;
 } sout_stream_sys_t;
 
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *
+Add( sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
 
@@ -49,11 +51,11 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
     {
         msg_Dbg( p_stream, "delaying ID %d by %"PRId64,
                  p_sys->i_id, p_sys->i_delay );
-        p_sys->id = sout_StreamIdAdd( p_stream->p_next, p_fmt );
+        p_sys->id = sout_StreamIdAdd( p_stream->p_next, p_fmt, es_id );
         return p_sys->id;
     }
 
-    return sout_StreamIdAdd( p_stream->p_next, p_fmt );
+    return sout_StreamIdAdd( p_stream->p_next, p_fmt, es_id );
 }
 
 static void Del( sout_stream_t *p_stream, void *id )
@@ -99,8 +101,20 @@ static void SetPCR( sout_stream_t *stream, vlc_tick_t pcr )
     sout_StreamSetPCR( stream->p_next, pcr );
 }
 
+/*****************************************************************************
+ * Close:
+ *****************************************************************************/
+static void Close( sout_stream_t *p_stream )
+{
+    free( p_stream->p_sys );
+}
+
 static const struct sout_stream_operations ops = {
-    Add, Del, Send, NULL, NULL, SetPCR,
+    .add = Add,
+    .del = Del,
+    .send = Send,
+    .set_pcr = SetPCR,
+    .close = Close,
 };
 
 static const char *ppsz_sout_options[] = {
@@ -132,17 +146,6 @@ static int Open( vlc_object_t *p_this )
 }
 
 /*****************************************************************************
- * Close:
- *****************************************************************************/
-static void Close( vlc_object_t * p_this )
-{
-    sout_stream_t     *p_stream = (sout_stream_t*)p_this;
-    sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
-
-    free( p_sys );
-}
-
-/*****************************************************************************
  * Module descriptor
  *****************************************************************************/
 #define ID_TEXT N_("Elementary Stream ID")
@@ -160,7 +163,7 @@ vlc_module_begin()
     set_capability("sout filter", 50)
     add_shortcut("delay")
     set_subcategory(SUBCAT_SOUT_STREAM)
-    set_callbacks(Open, Close)
+    set_callback(Open)
     add_integer(SOUT_CFG_PREFIX "id", 0, ID_TEXT, ID_LONGTEXT)
     add_integer(SOUT_CFG_PREFIX "delay", 0, DELAY_TEXT, DELAY_LONGTEXT)
 vlc_module_end()

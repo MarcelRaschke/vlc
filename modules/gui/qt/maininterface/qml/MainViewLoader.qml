@@ -18,8 +18,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQml.Models 2.11
+import QtQuick
+import QtQml.Models
 
 import org.videolan.vlc 0.1
 
@@ -40,18 +40,34 @@ Widgets.StackViewExt {
     */
 
     // components to load depending on MainCtx.gridView
-    /* required */ property Component grid
-    /* required */ property Component list
+    required property Component grid
+    required property Component list
 
     // component to load when provided model is empty
-    /* required */ property Component emptyLabel
+    required property Component emptyLabel
 
     // view's model
-    /* required */ property var model
+    required property BaseModel model
 
+    // behave like a Page
+    property var pagePrefix: []
 
+    // optional, loaded when isLoading is true
+    // only loaded on initial load, when count is less then 1
+    property Component loadingComponent: null
 
-    property var selectionModel: Util.SelectableDelegateModel {
+    // NOTE: Sometimes the model has no 'loading' property.
+    readonly property bool isLoading: model.loading ?? false
+
+    readonly property int count: model.count
+
+    readonly property bool hasGridListMode: !!grid && !!list
+
+    property bool isSearchable: false
+
+    property var sortModel: []
+
+    property ItemSelectionModel selectionModel: ListSelectionModel {
         model: root.model
     }
 
@@ -65,23 +81,47 @@ Widgets.StackViewExt {
     property int initialIndex: -1
 
     // used in custom focus management for explicit "focusReason" transfer
-    readonly property var setCurrentItemFocus: {
-        return Helpers.get(currentItem, "setCurrentItemFocus", _setCurrentItemFocusDefault)
-    }
+    property var setCurrentItemFocus: currentItem?.setCurrentItemFocus ?? setCurrentItemFocusDefault
 
-    property var currentComponent: {
-        if (typeof model === "undefined" || !model)
-            return null // invalid state
-        if (!model.ready && model.count === 0)
+    // NOTE: We have to use a Component here. When using a var the onCurrentComponentChanged event
+    //       gets called multiple times even when the currentComponent stays the same.
+    property Component currentComponent: {
+        if (isLoading && count < 1) {
+            if (loadingComponent)
+                return loadingComponent
+            // fall through to load 'grid' or 'list' view
+        } else if (count === 0)
             return emptyLabel
-        else if (MainCtx.gridView)
+
+        if (MainCtx.gridView)
             return grid
         else
             return list
     }
 
-    onCurrentComponentChanged: {
-        _loadCurrentViewType()
+    // Navigation
+
+    // handle cancelAction, if currentIndex is set reset it to 0
+    // otherwise perform default Navigation action
+    Navigation.cancelAction: function () {
+        if (isLoading || count === 0 || currentItem === null || currentItem.currentIndex === 0)
+            return false // transfer cancel action to parent
+
+        if (currentItem.hasOwnProperty("positionViewAtIndex"))
+            currentItem.positionViewAtIndex(0, ItemView.Contain)
+
+        currentItem.setCurrentItem(0)
+
+        return true
+    }
+
+    // Events
+
+    Component.onCompleted: {
+        _updateView()
+
+        // NOTE: This call is useful to avoid a binding loop on currentComponent.
+        currentComponentChanged.connect(_updateView)
     }
 
     onModelChanged: resetFocus()
@@ -91,57 +131,57 @@ Widgets.StackViewExt {
     Connections {
         target: model
 
-        onCountChanged: {
-            if (model.count === 0 || selectionModel.hasSelection)
+        function onCountChanged() {
+            if (selectionModel.hasSelection)
                 return
 
             resetFocus()
         }
     }
 
-    function _setCurrentItemFocusDefault(reason) {
-        if (currentItem)
-            currentItem.forceActiveFocus(reason)
-    }
-
-    function _loadCurrentViewType() {
-        if (typeof currentComponent === "undefined" || !currentComponent) {
-            // invalid case, don't show anything
-            clear()
-            return
-        }
-
-        replace(null, currentComponent)
-    }
-
     // makes the views currentIndex initial index and position view at that index
     function resetFocus() {
-        if (!model || model.count === 0) return
+        if (isLoading || count === 0 || initialIndex === -1) return
 
-        var initialIndex = root.initialIndex
-        if (initialIndex >= model.count)
-            initialIndex = 0
+        var index
 
-        selectionModel.select(model.index(initialIndex, 0), ItemSelectionModel.ClearAndSelect)
-        if (currentItem && currentItem.hasOwnProperty("positionViewAtIndex")) {
-            currentItem.positionViewAtIndex(initialIndex, ItemView.Contain)
+        if (initialIndex < count)
+            index = initialIndex
+        else
+            index = 0
 
-            // Table View require this for focus handling
-            if (!MainCtx.gridView)
-                currentItem.currentIndex = initialIndex
-        }
+        selectionModel.select(model.index(index, 0), ItemSelectionModel.ClearAndSelect)
+
+        if (currentItem.hasOwnProperty("positionViewAtIndex"))
+            currentItem.positionViewAtIndex(index, ItemView.Contain)
+
+        currentItem.setCurrentItem(index)
     }
 
-    // handle cancelAction, if currentIndex is set reset it to 0
-    // otherwise perform default Navigation action
-    Navigation.cancelAction: function () {
-        if (Helpers.get(currentItem, "currentIndex", 0) <= 0) {
-            return false // transfer cancel action to parent
-        }
-
-        currentItem.currentIndex = 0
-        currentItem.positionViewAtIndex(0, ItemView.Contain)
-        return true
+    function setCurrentItemFocusDefault(reason) {
+        if (currentItem) {
+            if (currentItem.setCurrentItemFocus)
+                currentItem.setCurrentItemFocus(reason)
+            else
+                currentItem.forceActiveFocus(reason)
+        } else
+            Helpers.enforceFocus(root, reason)
     }
 
+    function _updateView() {
+        // NOTE: When the currentItem is null we default to the StackView focusReason.
+        if (currentItem && currentItem.activeFocus)
+            _loadView(currentItem.focusReason)
+        else if (activeFocus)
+            _loadView(focusReason)
+        else
+            _loadView()
+    }
+
+    function _loadView(reason) {
+        replace(null, currentComponent)
+
+        if (typeof reason !== "undefined")
+            setCurrentItemFocus(reason)
+    }
 }

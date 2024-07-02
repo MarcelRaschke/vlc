@@ -28,6 +28,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_codec.h>
 
@@ -200,10 +201,11 @@ static gboolean autoplug_query_cb( GstElement *p_bin, GstPad *p_pad,
         switch( GST_QUERY_TYPE ( p_query ) ){
         case GST_QUERY_CAPS:
             return gst_vlc_video_sink_query_caps( p_query );
-        case GST_QUERY_ALLOCATION:
+        case GST_QUERY_ALLOCATION: {
             GstBaseSink *p_bsink = GST_BASE_SINK_CAST( p_sys->p_decode_out );
             GstBaseSinkClass *p_bclass = GST_BASE_SINK_GET_CLASS( p_bsink );
             return p_bclass->propose_allocation( p_bsink, p_query );
+        }
         default:
             return FALSE;
         }
@@ -406,9 +408,13 @@ static GstStructure* vlc_to_gst_fmt( const es_format_t *p_fmt )
                 "systemstream", G_TYPE_BOOLEAN, FALSE, NULL );
         break;
     case VLC_CODEC_VP8:
+        if (p_fmt->i_level != 0 && p_fmt->i_level != -1) // contains alpha extradata
+            return NULL;
         p_str = gst_structure_new_empty( "video/x-vp8" );
         break;
     case VLC_CODEC_VP9:
+        if (p_fmt->i_level != 0 && p_fmt->i_level != -1) // contains alpha extradata
+            return NULL;
         p_str = gst_structure_new_empty( "video/x-vp9" );
         break;
     case VLC_CODEC_AV1:

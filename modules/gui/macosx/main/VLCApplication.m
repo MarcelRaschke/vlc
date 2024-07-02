@@ -30,6 +30,8 @@
 #import "VLCApplication.h"
 #import "extensions/NSString+Helpers.h"
 
+#import <vlc_configuration.h>
+
 /*****************************************************************************
  * VLCApplication implementation
  *****************************************************************************/
@@ -48,7 +50,7 @@
 {
     self = [super init];
     if (self) {
-        [[NSNotificationCenter defaultCenter] addObserver:self
+        [NSNotificationCenter.defaultCenter addObserver:self
                                                  selector:@selector(appBecameActive:)
                                                      name:NSApplicationDidBecomeActiveNotification
                                                    object:nil];
@@ -62,7 +64,7 @@
 
 - (void)dealloc
 {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
 - (NSImage *)vlcAppIconImage
@@ -114,7 +116,7 @@
     if (alertButton == NSAlertFirstButtonReturn) {
         /* terminate and restart
          * NOTE you may not use [VLCMain relaunchApplication] here as it depends on the app not having moved and WILL crash */
-        [[NSWorkspace sharedWorkspace] launchApplicationAtURL:_appLocationURL.absoluteURL
+        [NSWorkspace.sharedWorkspace launchApplicationAtURL:_appLocationURL.absoluteURL
                                                       options:NSWorkspaceLaunchNewInstance
                                                 configuration:@{}
                                                         error:nil];

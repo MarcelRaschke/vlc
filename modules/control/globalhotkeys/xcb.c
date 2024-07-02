@@ -25,9 +25,11 @@
 #endif
 #define VLC_MODULE_LICENSE VLC_LICENSE_GPL_2_PLUS
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_interface.h>
 #include <vlc_actions.h>
+#include <vlc_poll.h>
 #include <errno.h>
 
 #include <xcb/xcb.h>

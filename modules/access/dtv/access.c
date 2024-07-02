@@ -24,6 +24,8 @@
 # include <config.h>
 #endif
 
+#include <stdbit.h>
+
 #include <vlc_common.h>
 #include <vlc_access.h>
 #include <vlc_plugin.h>
@@ -575,7 +577,7 @@ static int Control (stream_t *access, int query, va_list args)
 
         case STREAM_SET_PRIVATE_ID_CA:
         {
-            en50221_capmt_info_t *pmt = va_arg(args, void *);
+            const en50221_capmt_info_t *pmt = va_arg(args, void *);
 
             if( !dvb_set_ca_pmt (dev, pmt) )
                 return VLC_EGENERIC;
@@ -684,7 +686,9 @@ static const char *var_InheritModulation (vlc_object_t *obj, const char *var)
         case 64:  str = "64QAM";  break;
         case 128: str = "128QAM"; break;
         case 256: str = "256QAM"; break;
-        default:  return "";
+        default:
+            free (mod);
+            return "";
     }
 
     msg_Warn (obj, "\"modulation=%s\" option is obsolete. "
@@ -915,7 +919,7 @@ static inline dtv_delivery_t GetSingleDelivery( dtv_delivery_t d )
     if( d == 0 )
         return DTV_DELIVERY_NONE;
     else
-        return 1 << ctz( d );
+        return 1 << stdc_trailing_zeros((unsigned)d);
 }
 
 /** Determines which delivery system to use. */

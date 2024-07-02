@@ -36,7 +36,7 @@ extern NSString *VLCPlaybackOrderChanged;
 extern NSString *VLCPlaybackRepeatChanged;
 extern NSString *VLCPlaybackHasPreviousChanged;
 extern NSString *VLCPlaybackHasNextChanged;
-extern NSString *VLCPlaylistCurrentItemChanged;
+extern NSString *VLCPlaylistCurrentItemIndexChanged;
 extern NSString *VLCPlaylistItemsAdded;
 extern NSString *VLCPlaylistItemsRemoved;
 
@@ -77,7 +77,6 @@ extern NSString *VLCPlaylistItemsRemoved;
  * input of the currently playing item
  @return returns the input item for the currently playing playlist item
  @note the receiver is responsible for releasing the input item
- @note Subscribe to the VLCPlaylistCurrentItemChanged notification to be notified about changes
  */
 @property (readonly, nullable) VLCInputItem *currentlyPlayingInputItem;
 
@@ -104,6 +103,16 @@ extern NSString *VLCPlaylistItemsRemoved;
  * @note Subscribe to the VLCPlaybackOrderChanged notification to be notified about changes
  */
 @property (readwrite, nonatomic) enum vlc_playlist_playback_order playbackOrder;
+
+@property (readwrite) BOOL libraryPlaylistMode;
+
+/**
+ * Define the action to perform after playback of the current media stopped (for any reason)
+ * Options are: continue with next time, pause on last frame, stop even if there is a next item and quit VLC
+ * @see the vlc_playlist_media_stopped_action enum for details
+ */
+@property (readwrite, nonatomic) enum vlc_playlist_media_stopped_action actionAfterStop;
+
 
 /**
  * Simplified version to add new items to the end of the current playlist

@@ -15,9 +15,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQml.Models 2.2
+import QtQuick
+import QtQuick.Controls
+import QtQml.Models
 
 import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
@@ -37,6 +37,8 @@ MainInterface.MainTableView {
     // NOTE: This is useful for groups because our main criteria is 'name' instead of 'title'.
     property string mainCriteria: "title"
 
+    property var coverLabels
+
     //---------------------------------------------------------------------------------------------
     // Private
 
@@ -52,7 +54,7 @@ MainInterface.MainTableView {
 
             showSection: "title",
 
-            text: I18n.qtr("Title"),
+            text: qsTr("Title"),
 
             placeHolder: VLCStyle.noArtVideoCover,
 
@@ -69,6 +71,10 @@ MainInterface.MainTableView {
 
             criteria: "thumbnail",
 
+            text: qsTr("Cover"),
+
+            isSortable: false,
+
             showSection: "",
 
             placeHolder: VLCStyle.noArtVideoCover,
@@ -84,13 +90,15 @@ MainInterface.MainTableView {
 
             showSection: "title",
 
-            text: I18n.qtr("Title")
+            text: qsTr("Title")
         })
     }, {
         size: 1,
 
         model: ({
             criteria: "duration",
+
+            text: qsTr("Duration"),
 
             showSection: "",
             showContextButton: true,
@@ -110,43 +118,10 @@ MainInterface.MainTableView {
     rowHeight: VLCStyle.tableCoverRow_height
 
     //---------------------------------------------------------------------------------------------
-    // Connections
-    //---------------------------------------------------------------------------------------------
-
-    Connections {
-        target: model
-        onSortCriteriaChanged: {
-            switch (model.sortCriteria) {
-            case "title":
-                listView_id.section.property = "title_first_symbol"
-                break;
-            default:
-                listView_id.section.property = ""
-            }
-        }
-    }
-
-    //---------------------------------------------------------------------------------------------
-    // Functions
-    //---------------------------------------------------------------------------------------------
-    // Events
-
-    function onLabels(model)
-    {
-        if (model === null)
-            return [];
-
-        return [
-            model.resolution_name || "",
-            model.channel         || ""
-        ].filter(function(a) { return a !== "" });
-    }
-
-    //---------------------------------------------------------------------------------------------
     // Childs
     //---------------------------------------------------------------------------------------------
 
-    Widgets.TableColumns {
+    Widgets.MLTableColumns {
         id: tableColumns
 
         showTitleText: (listView_id.sortModel === listView_id._modelSmall)
@@ -158,8 +133,6 @@ MainInterface.MainTableView {
         titleCover_width: VLCStyle.listAlbumCover_width
         titleCover_radius: VLCStyle.listAlbumCover_radius
 
-        function titlecoverLabels(model) {
-            return listView_id.onLabels(model);
-        }
+        titlecoverLabels: listView_id.coverLabels
     }
 }

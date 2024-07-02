@@ -8,6 +8,7 @@ $(TARBALLS)/libpthread-stubs-$(PTHREAD_STUBS_VERSION).tar.bz2:
 
 libpthread-stubs: libpthread-stubs-$(PTHREAD_STUBS_VERSION).tar.bz2 .sum-pthread-stubs
 	$(UNPACK)
+	$(call update_autoconfig,.)
 	$(call pkg_static,"pthread-stubs.pc.in")
 	$(MOVE)
 

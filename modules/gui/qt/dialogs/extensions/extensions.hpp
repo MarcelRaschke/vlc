@@ -24,10 +24,9 @@
 #define EXTENSIONS_HPP
 
 #include "qt.hpp"
-#include <vlc_extensions.h>
 #include "util/singleton.hpp"
 
-#include "assert.h"
+#include <cassert>
 
 #include <QDialog>
 class QObject;
@@ -38,6 +37,13 @@ class QKeyEvent;
 
 class ExtensionsDialogProvider;
 class ExtensionDialog;
+
+extern "C" {
+    struct extensions_manager_t;
+    struct extension_widget_t;
+    typedef struct extension_dialog_t extension_dialog_t;
+    typedef struct extension_t extension_t;
+};
 
 class ExtensionsDialogProvider : public QObject, public Singleton<ExtensionsDialogProvider>
 {

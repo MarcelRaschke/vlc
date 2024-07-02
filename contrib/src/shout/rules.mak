@@ -20,6 +20,7 @@ $(TARBALLS)/libshout-$(SHOUT_VERSION).tar.gz:
 # TODO: fix socket stuff on POSIX and Linux
 libshout: libshout-$(SHOUT_VERSION).tar.gz .sum-shout
 	$(UNPACK)
+	# $(call update_autoconfig,.)
 	$(APPLY) $(SRC)/shout/fix-xiph_openssl.patch
 	$(APPLY) $(SRC)/shout/shout-strings.patch
 	$(APPLY) $(SRC)/shout/shout-timeval.patch
@@ -28,8 +29,11 @@ libshout: libshout-$(SHOUT_VERSION).tar.gz .sum-shout
 	$(APPLY) $(SRC)/shout/should-win32-ws2tcpip.patch
 	$(APPLY) $(SRC)/shout/win32-gettimeofday.patch
 	$(APPLY) $(SRC)/shout/add-missing-stdlib-stdio.patch
+
+	# don't use getpid in UWP as it's not actually available
+	$(APPLY) $(SRC)/shout/0001-Favor-GetCurrentProcessId-on-Windows.patch
+
 	$(call pkg_static,"shout.pc.in")
-	$(UPDATE_AUTOCONFIG)
 	$(MOVE)
 
 DEPS_shout = ogg $(DEPS_ogg) theora $(DEPS_theora) speex $(DEPS_speex)

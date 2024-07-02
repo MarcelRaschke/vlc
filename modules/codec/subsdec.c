@@ -161,7 +161,7 @@ static const char *const ppsz_encoding_names[] = {
     N_("Vietnamese (Windows-1258)"),
 };
 
-static const int  pi_justification[] = { -1, 0, 1, 2 };
+static const int  pi_justification[] = { -1, 0, SUBPICTURE_ALIGN_LEFT, SUBPICTURE_ALIGN_RIGHT };
 static const char *const ppsz_justification_text[] = {
     N_("Auto"),N_("Center"),N_("Left"),N_("Right")
 };
@@ -454,14 +454,14 @@ static subpicture_t *ParseText( decoder_t *p_dec, block_t *p_block )
     }
     p_spu->i_start    = p_block->i_pts;
     p_spu->i_stop     = p_block->i_pts + p_block->i_length;
-    p_spu->b_ephemer  = (p_block->i_length == VLC_TICK_INVALID);
-    p_spu->b_absolute = false;
+    p_spu->b_ephemer  = (p_block->i_length == 0);
 
-    subtext_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
+    subtext_updater_sys_t *p_spu_sys = p_spu->updater.sys;
 
     int i_inline_align = -1;
     p_spu_sys->region.p_segments = ParseSubtitles( &i_inline_align, psz_subtitle );
     free( psz_subtitle );
+    p_spu_sys->region.b_absolute = false;
     if( p_sys->i_align >= 0 ) /* bottom ; left, right or centered */
     {
         p_spu_sys->region.align = SUBPICTURE_ALIGN_BOTTOM | p_sys->i_align;

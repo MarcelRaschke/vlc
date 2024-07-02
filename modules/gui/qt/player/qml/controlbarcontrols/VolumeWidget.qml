@@ -15,14 +15,15 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Layouts 1.11
-import QtQuick.Templates 2.4 as T
-import QtGraphicalEffects 1.0
+import QtQuick
+import QtQuick.Layouts
+import QtQuick.Templates as T
+import Qt5Compat.GraphicalEffects
 
 import org.videolan.vlc 0.1
 
 import "qrc:///widgets/" as Widgets
+import "qrc:///util/Helpers.js" as Helpers
 import "qrc:///style/"
 
 T.Pane {
@@ -31,7 +32,7 @@ T.Pane {
     property bool paintOnly: false
 
     readonly property color sliderColor: {
-        var theme = volControl.colorContext
+        const theme = volControl.colorContext
         return (volControl.position > _fullvolpos) ? theme.fg.negative : theme.fg.primary
     }
 
@@ -40,14 +41,16 @@ T.Pane {
     readonly property real _fullvolpos: 100 / _maxvol
     readonly property real _maxvolpos: _maxvol / 100
 
-    implicitWidth: Math.max(background ? background.implicitWidth : 0, contentWidth + leftPadding + rightPadding)
-    implicitHeight: Math.max(background ? background.implicitHeight : 0, contentHeight + topPadding + bottomPadding)
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            implicitContentWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             implicitContentHeight + topPadding + bottomPadding)
 
     contentWidth: volumeWidget.implicitWidth
     contentHeight: volumeWidget.implicitHeight
 
     Keys.priority: Keys.AfterItem
-    Keys.onPressed: Navigation.defaultKeyAction(event)
+    Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
 
     RowLayout {
         id: volumeWidget
@@ -60,7 +63,7 @@ T.Pane {
 
             focus: true
             paintOnly: root.paintOnly
-            iconText:
+            text:
                 if( _player.muted )
                     VLCIcons.volume_muted
                 else if ( _player.volume === 0 )
@@ -71,14 +74,24 @@ T.Pane {
                     VLCIcons.volume_medium
                 else
                     VLCIcons.volume_high
-            text: I18n.qtr("Mute")
+            description: qsTr("Mute")
             onClicked: Player.muted = !Player.muted
+
+            Accessible.onIncreaseAction: {
+                Player.muted = false
+                Player.setVolumeUp()
+            }
+
+            Accessible.onDecreaseAction: {
+                Player.muted = false
+                Player.setVolumeDown()
+            }
 
             Navigation.parentItem: root
             Navigation.rightItem: volControl
         }
 
-        Widgets.Slider {
+        Widgets.SliderExt {
             id: volControl
 
             // FIXME: use VLCStyle
@@ -105,13 +118,17 @@ T.Pane {
 
             enabled: !root.paintOnly // disables event handling depending on this
 
-            valueText: function (value) {
-                return Math.round(value * 100) + "%"
+            toolTipTextProvider: function (value) {
+                // the real value i.e 'Player.volume' bounds can be different
+                // from bounds of this widget and we want to show the current
+                // volume here, so directly use Player.volume instead of "value"
+
+                return Math.round(Player.volume * 100) + "%"
             }
 
-            Accessible.name: I18n.qtr("Volume")
+            Accessible.name: qsTr("Volume")
 
-            Keys.onPressed: {
+            Keys.onPressed: (event) => {
                 if (KeyHelper.matchOk(event)) {
                     event.accepted = true
 
@@ -121,7 +138,7 @@ T.Pane {
                 }
             }
 
-            Keys.onReleased: {
+            Keys.onReleased: (event) => {
                 if (_keyPressed === false)
                     return
 
@@ -141,7 +158,7 @@ T.Pane {
             function _adjustPlayerVolume() {
                 Player.muted = false
 
-                var value = volControl.value
+                let value = volControl.value
 
                 // NOTE: We are clamping the value to make it easier to restore the default volume.
                 if (_shiftPressed === false) {
@@ -165,18 +182,23 @@ T.Pane {
                 target: Player
                 enabled: !paintOnly
 
-                onVolumeChanged: volControl._syncVolumeWithPlayer()
+                function onVolumeChanged() { volControl._syncVolumeWithPlayer() }
+            }
+
+            Binding on toolTip.visible {
+                when: sliderMouseArea.pressed
+                value: true
             }
 
             Navigation.leftItem: volumeBtn
             Navigation.parentItem: root
 
-            Keys.onUpPressed: {
+            Keys.onUpPressed: (event) => {
                 Player.muted = false
                 Player.setVolumeUp()
             }
 
-            Keys.onDownPressed: {
+            Keys.onDownPressed: (event) => {
                 Player.muted = false
                 Player.setVolumeDown()
             }
@@ -216,7 +238,7 @@ T.Pane {
 
                     anchors.margins: -(VLCStyle.dp(4, VLCStyle.scale))
 
-                    onPressed: {
+                    onPressed: (mouse) => {
                         mouse.accepted = false
 
                         if (mouse.modifiers === Qt.ShiftModifier)
@@ -234,7 +256,7 @@ T.Pane {
 
                 acceptedButtons: (Qt.LeftButton | Qt.RightButton)
 
-                onPressed: {
+                onPressed: (mouse) => {
                     if (root.paintOnly) {
                         mouse.accepted = true
                         return
@@ -251,10 +273,13 @@ T.Pane {
                     adjustVolume(mouse)
                 }
 
-                onPositionChanged: if (mouse.buttons & Qt.RightButton) adjustVolume(mouse)
+                onPositionChanged: (mouse) => {
+                    if (mouse.buttons & Qt.RightButton)
+                        adjustVolume(mouse)
+                }
 
-                onWheel: {
-                    var delta = 0, fineControl = false
+                onWheel: (wheel) => {
+                    let delta = 0, fineControl = false
 
                     if ((Math.abs(wheel.pixelDelta.x) % 120 > 0) || (Math.abs(wheel.pixelDelta.y) % 120 > 0)) {
                         if (Math.abs(wheel.pixelDelta.x) > Math.abs(wheel.pixelDelta.y))
@@ -276,19 +301,8 @@ T.Pane {
 
                     if (fineControl)
                         volControl.value += 0.001 * delta
-                    else {
-                        // Degrees to steps for standard mouse
-                        delta = delta / 8 / 15
-
-                        var steps = Math.ceil(Math.abs(delta))
-
-                        Player.muted = false
-
-                        if (delta > 0)
-                            Player.setVolumeUp(steps)
-                        else
-                            Player.setVolumeDown(steps)
-                    }
+                    else
+                        Helpers.applyVolume(Player, delta)
 
                     wheel.accepted = true
                 }
@@ -296,7 +310,7 @@ T.Pane {
                 function adjustVolume(mouse) {
                     mouse.accepted = true
 
-                    var pos = mouse.x * root._maxvolpos / width
+                    const pos = mouse.x * root._maxvolpos / width
 
                     if (pos < 0.25)
                         volControl.value = 0

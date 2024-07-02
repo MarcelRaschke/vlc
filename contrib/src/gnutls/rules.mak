@@ -1,11 +1,23 @@
 # GnuTLS
 
-GNUTLS_VERSION := 3.6.16
-GNUTLS_URL := https://www.gnupg.org/ftp/gcrypt/gnutls/v3.6/gnutls-$(GNUTLS_VERSION).tar.xz
+GNUTLS_MAJVERSION := 3.8
+GNUTLS_VERSION := $(GNUTLS_MAJVERSION).3
+GNUTLS_URL := $(GNUGPG)/gnutls/v$(GNUTLS_MAJVERSION)/gnutls-$(GNUTLS_VERSION).tar.xz
+
+# nettle/gmp can't be used with the LGPLv2 license
+ifdef GPL
+GNUTLS_PKG=1
+else
+ifdef GNUV3
+GNUTLS_PKG=1
+endif
+endif
 
 ifdef BUILD_NETWORK
 ifndef HAVE_DARWIN_OS
+ifdef GNUTLS_PKG
 PKGS += gnutls
+endif
 endif
 endif
 ifeq ($(call need_pkg,"gnutls >= 3.5.0"),)
@@ -19,35 +31,13 @@ $(TARBALLS)/gnutls-$(GNUTLS_VERSION).tar.xz:
 
 gnutls: gnutls-$(GNUTLS_VERSION).tar.xz .sum-gnutls
 	$(UNPACK)
-	$(APPLY) $(SRC)/gnutls/gnutls-fix-mangling.patch
-
-	# backport gnulib patch
-	$(APPLY) $(SRC)/gnutls/0001-Don-t-assume-that-UNICODE-is-not-defined.patch
-
-	# fix forbidden UWP call which can't be upstreamed as they won't
-	# differentiate for winstore, only _WIN32_WINNT
-	$(APPLY) $(SRC)/gnutls/0001-fcntl-do-not-call-GetHandleInformation-in-Winstore-a.patch
-
-	# forbidden RtlSecureZeroMemory call in winstore builds
-	$(APPLY) $(SRC)/gnutls/0001-explicit_bzero-Do-not-call-SecureZeroMemory-on-UWP-b.patch
-
+	$(call update_autoconfig,build-aux)
 	# disable the dllimport in static linking (pkg-config --static doesn't handle Cflags.private)
 	sed -i.orig -e s/"_SYM_EXPORT __declspec(dllimport)"/"_SYM_EXPORT"/g $(UNPACK_DIR)/lib/includes/gnutls/gnutls.h.in
 
-	# fix i686 UWP builds as they were using CertEnumCRLsInStore via invalid LoadLibrary
-	$(APPLY) $(SRC)/gnutls/0001-fix-mingw64-detection.patch
+	# use CreateFile2 in Win8 as CreateFileW is forbidden in UWP
+	$(APPLY) $(SRC)/gnutls/0001-Use-CreateFile2-in-UWP-builds.patch
 
-	# fix AArch64 builds for Apple OS by removing unsupported compiler flag (gnutls#1347, gnutls#1317)
-ifdef HAVE_DARWIN_OS
-	$(APPLY) $(SRC)/gnutls/gnutls-fix-aarch64-compilation-appleos.patch
-endif
-ifdef HAVE_ANDROID
-	$(APPLY) $(SRC)/gnutls/gnutls-fix-aarch64-compilation-appleos.patch
-endif
-
-	$(APPLY) $(SRC)/gnutls/0001-windows-Avoid-Wint-conversion-errors.patch
-
-	$(UPDATE_AUTOCONFIG)
 	$(MOVE)
 
 GNUTLS_CONF := \
@@ -67,14 +57,13 @@ GNUTLS_CONF := \
 	--with-included-unistring
 
 DEPS_gnutls = nettle $(DEPS_nettle)
+ifdef HAVE_WINSTORE
+# gnulib uses GetFileInformationByHandle / SecureZeroMemory
+DEPS_gnutls += alloweduwp $(DEPS_alloweduwp)
+endif
 
 ifdef HAVE_ANDROID
 GNUTLS_ENV := gl_cv_header_working_stdint_h=yes
-endif
-ifdef HAVE_WINSTORE
-ifeq ($(ARCH),x86_64)
-	GNUTLS_CONF += --disable-hardware-acceleration
-endif
 endif
 ifdef HAVE_WIN32
 	GNUTLS_CONF += --without-idn

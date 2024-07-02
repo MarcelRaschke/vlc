@@ -20,7 +20,8 @@
 #include "mlhelper.hpp"
 
 // VLC includes
-#include <qt.hpp>
+#include "qt.hpp"
+#include "util/vlctick.hpp"
 
 //-------------------------------------------------------------------------------------------------
 // Ctor / dtor

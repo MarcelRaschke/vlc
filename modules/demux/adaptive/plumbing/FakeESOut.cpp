@@ -51,15 +51,16 @@ namespace adaptive
     };
 }
 
-const struct es_out_callbacks EsOutCallbacks::cbs =
+const struct es_out_callbacks EsOutCallbacks::cbs = []() constexpr
 {
-    EsOutCallbacks::es_out_Add,
-    EsOutCallbacks::es_out_Send,
-    EsOutCallbacks::es_out_Del,
-    EsOutCallbacks::es_out_Control,
-    EsOutCallbacks::es_out_Destroy,
-    nullptr,
-};
+    struct es_out_callbacks cbs {};
+    cbs.add = EsOutCallbacks::es_out_Add;
+    cbs.send = EsOutCallbacks::es_out_Send;
+    cbs.del = EsOutCallbacks::es_out_Del;
+    cbs.control = EsOutCallbacks::es_out_Control;
+    cbs.destroy = EsOutCallbacks::es_out_Destroy;
+    return cbs;
+}();
 
 es_out_id_t * EsOutCallbacks::es_out_Add(es_out_t *fakees, input_source_t *, const es_format_t *p_fmt)
 {
@@ -243,7 +244,7 @@ FakeESOutID * FakeESOut::createNewID( const es_format_t *p_fmt )
     if( extrainfo )
         extrainfo->fillExtraFMTInfo( &fmtcopy );
 
-    FakeESOutID *es_id = new (std::nothrow) FakeESOutID( this, &fmtcopy );
+    FakeESOutID *es_id = new (std::nothrow) FakeESOutID( this, &fmtcopy, srcID );
 
     es_format_Clean( &fmtcopy );
 
@@ -283,7 +284,7 @@ void FakeESOut::createOrRecycleRealEsID( AbstractFakeESOutID *es_id_ )
                    Otherwise the es will select any other compatible track
                    and will end this in a activate/select loop when reactivating a track */
                 if( !b_select )
-                    es_out_Control( real_es_out, ES_OUT_GET_ES_STATE, cand->realESID(), &b_select );
+                    b_select = hasSelectedEs( cand );
             }
             else /* replace format instead of new ES */
             {
@@ -377,6 +378,11 @@ void FakeESOut::setSynchronizationReference(const SynchronizationReference &r)
     synchronizationReference = r;
 }
 
+void FakeESOut::setSrcID( const SrcID &s )
+{
+    srcID = s;
+}
+
 void FakeESOut::schedulePCRReset()
 {
     AbstractCommand *command = commandsfactory->creatEsOutControlResetPCRCommand();
@@ -435,19 +441,25 @@ void FakeESOut::gc()
 
 bool FakeESOut::hasSelectedEs() const
 {
-    bool b_selected = false;
     std::list<FakeESOutID *> const * lists[2] = {&declared, &fakeesidlist};
     std::list<FakeESOutID *>::const_iterator it;
     for(int i=0; i<2; i++)
+        for( it=lists[i]->begin(); it!=lists[i]->end(); ++it )
+            if( hasSelectedEs( *it ) )
+                return true;
+    return false;
+}
+
+bool FakeESOut::hasSelectedEs(const AbstractFakeESOutID *id) const
+{
+    if( id->realESID() )
     {
-        for( it=lists[i]->begin(); it!=lists[i]->end() && !b_selected; ++it )
-        {
-            FakeESOutID *esID = *it;
-            if( esID->realESID() )
-                es_out_Control( real_es_out, ES_OUT_GET_ES_STATE, esID->realESID(), &b_selected );
-        }
+        bool b_selected;
+        return es_out_Control( real_es_out, ES_OUT_GET_ES_STATE,
+                               id->realESID(), &b_selected ) == VLC_SUCCESS
+               && b_selected;
     }
-    return b_selected;
+    return false;
 }
 
 bool FakeESOut::decodersDrained()

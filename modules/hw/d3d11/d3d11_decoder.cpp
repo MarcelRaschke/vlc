@@ -112,13 +112,7 @@ static int DecodeFrame( decoder_t *p_dec, block_t *p_block )
         D3D11_TEXTURE2D_DESC outDesc;
         src_sys->texture[0]->GetDesc(&outDesc);
 
-        for (p_sys->output_format = DxgiGetRenderFormatList();
-            p_sys->output_format->name != nullptr; ++p_sys->output_format)
-        {
-            if (p_sys->output_format->formatTexture == outDesc.Format &&
-                is_d3d11_opaque(p_sys->output_format->fourcc))
-                break;
-        }
+        p_sys->output_format = D3D11_RenderFormat(outDesc.Format, DXGI_FORMAT_UNKNOWN ,true);
         if (unlikely(!p_sys->output_format->name))
         {
             msg_Err(p_dec, "Unknown texture format %d", outDesc.Format);
@@ -130,13 +124,12 @@ static int DecodeFrame( decoder_t *p_dec, block_t *p_block )
     if (unlikely(p_sys->vctx == nullptr))
     {
         p_sys->vctx =
-            D3D11CreateVideoContext(p_sys->dec_dev, p_sys->output_format->formatTexture);
+            D3D11CreateVideoContext(p_sys->dec_dev, p_sys->output_format->formatTexture, p_sys->output_format->alphaTexture);
         if (!p_sys->vctx)
         {
             block_Release( p_block );
             return VLCDEC_ECRITICAL;
         }
-        DxgiFormatMask( p_sys->output_format->formatTexture, &p_dec->fmt_out.video );
 
         if( decoder_UpdateVideoOutput( p_dec, p_sys->vctx ) )
         {
@@ -284,13 +277,12 @@ int D3D11OpenBlockDecoder( vlc_object_t *obj )
         }
 
         p_sys->vctx =
-            D3D11CreateVideoContext(p_sys->dec_dev, p_sys->output_format->formatTexture);
+            D3D11CreateVideoContext(p_sys->dec_dev, p_sys->output_format->formatTexture, p_sys->output_format->alphaTexture);
         if (!p_sys->vctx)
         {
             vlc_decoder_device_Release(dec_dev);
             return VLC_EGENERIC;
         }
-        DxgiFormatMask( p_sys->output_format->formatTexture, &p_dec->fmt_out.video );
 
         if( decoder_UpdateVideoOutput( p_dec, p_sys->vctx ) )
         {

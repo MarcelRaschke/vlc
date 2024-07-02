@@ -17,8 +17,6 @@ if test "$#" != "0"; then
   exit 1
 fi
 
-ACLOCAL_ARGS="-I m4 ${ACLOCAL_ARGS}"
-
 # Check for tools directory
 if test -z ${VLC_TOOLS}; then
   VLC_TOOLS=extras/tools/build
@@ -26,6 +24,13 @@ fi
 if test -d ${VLC_TOOLS}/bin; then
   VLC_TOOLS_PATH="$( cd "${VLC_TOOLS}/bin" ; pwd -P )"
   PATH="$VLC_TOOLS_PATH:$PATH"
+fi
+if test -d ${VLC_TOOLS}/share/aclocal; then
+  # https://www.gnu.org/software/automake/manual/html_node/Macro-Search-Path.html
+  ACLOCAL_ARGS="${ACLOCAL_ARGS} -I ${VLC_TOOLS}/share/aclocal/"
+fi
+if test -f ${VLC_TOOLS}/share/autoconf-vlc/build-aux/config.guess -a -f ${VLC_TOOLS}/share/autoconf-vlc/build-aux/config.sub; then
+  export autom4te_buildauxdir="$( cd "${VLC_TOOLS}/share/autoconf-vlc/build-aux" ; pwd -P )"
 fi
 
 ###

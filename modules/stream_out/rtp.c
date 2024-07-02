@@ -32,6 +32,9 @@
 
 #define VLC_MODULE_LICENSE VLC_LICENSE_GPL_2_PLUS
 #include <vlc_common.h>
+#include <vlc_arrays.h>
+#include <vlc_configuration.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 #include <vlc_block.h>
@@ -170,7 +173,7 @@ static const char *const ppsz_protocols[] = {
                               "requested to access the stream." )
 
 static int  Open ( vlc_object_t * );
-static void Close( vlc_object_t * );
+static void Close( sout_stream_t * );
 
 #define SOUT_CFG_PREFIX "sout-rtp-"
 #define MAX_EMPTY_BLOCKS 200
@@ -231,7 +234,7 @@ vlc_module_begin ()
     add_bool( SOUT_CFG_PREFIX "mp4a-latm", false, RFC3016_TEXT,
                  RFC3016_LONGTEXT )
 
-    set_callbacks( Open, Close )
+    set_callback( Open )
 vlc_module_end ()
 
 /*****************************************************************************
@@ -246,11 +249,11 @@ static const char *const ppsz_sout_options[] = {
     "mp4a-latm", NULL
 };
 
-static void *Add( sout_stream_t *, const es_format_t * );
+static void *Add( sout_stream_t *, const es_format_t *, const char * );
 static void  Del( sout_stream_t *, void * );
 static int   Send( sout_stream_t *, void *, block_t * );
 
-static void *MuxAdd( sout_stream_t *, const es_format_t * );
+static void *MuxAdd( sout_stream_t *, const es_format_t *, const char * );
 static void  MuxDel( sout_stream_t *, void * );
 static int   MuxSend( sout_stream_t *, void *, block_t * );
 
@@ -374,11 +377,19 @@ static int Control(sout_stream_t *stream, int query, va_list args)
 }
 
 static const struct sout_stream_operations stream_ops = {
-    Add, Del, Send, Control, NULL, NULL,
+    .add = Add,
+    .del = Del,
+    .send = Send,
+    .control = Control,
+    .close = Close,
 };
 
 static const struct sout_stream_operations mux_ops = {
-    MuxAdd, MuxDel, MuxSend, Control, NULL, NULL,
+    .add = MuxAdd,
+    .del = MuxDel,
+    .send = MuxSend,
+    .control = Control,
+    .close = Close,
 };
 
 /*****************************************************************************
@@ -579,10 +590,10 @@ static int Open( vlc_object_t *p_this )
 
     if( p_sys->p_mux != NULL )
     {
-        sout_stream_id_sys_t *id = Add( p_stream, NULL );
+        sout_stream_id_sys_t *id = Add( p_stream, NULL, NULL );
         if( id == NULL )
         {
-            Close( p_this );
+            Close( p_stream );
             return VLC_EGENERIC;
         }
     }
@@ -593,9 +604,8 @@ static int Open( vlc_object_t *p_this )
 /*****************************************************************************
  * Close:
  *****************************************************************************/
-static void Close( vlc_object_t * p_this )
+static void Close( sout_stream_t *p_stream )
 {
-    sout_stream_t     *p_stream = (sout_stream_t*)p_this;
     sout_stream_sys_t *p_sys = p_stream->p_sys;
 
     if( p_sys->p_mux )
@@ -914,8 +924,9 @@ uint32_t rtp_compute_ts( unsigned i_clock_rate, vlc_tick_t i_pts )
 }
 
 /** Add an ES as a new RTP stream */
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt, const char * es_id )
 {
+    (void)es_id;
     /* NOTE: As a special case, if we use a non-RTP
      * mux (TS/PS), then p_fmt is NULL. */
     sout_stream_sys_t *p_sys = p_stream->p_sys;
@@ -1275,7 +1286,7 @@ static int FileSetup( sout_stream_t *p_stream )
  ****************************************************************************/
 static int  HttpCallback( httpd_file_sys_t *p_args,
                           httpd_file_t *, uint8_t *p_request,
-                          uint8_t **pp_data, int *pi_data );
+                          uint8_t **pp_data, size_t *pi_data );
 
 static int HttpSetup( sout_stream_t *p_stream, const vlc_url_t *url)
 {
@@ -1299,7 +1310,7 @@ static int HttpSetup( sout_stream_t *p_stream, const vlc_url_t *url)
 
 static int  HttpCallback( httpd_file_sys_t *p_args,
                           httpd_file_t *f, uint8_t *p_request,
-                          uint8_t **pp_data, int *pi_data )
+                          uint8_t **pp_data, size_t *pi_data )
 {
     VLC_UNUSED(f); VLC_UNUSED(p_request);
     sout_stream_sys_t *p_sys = (sout_stream_sys_t*)p_args;
@@ -1309,6 +1320,11 @@ static int  HttpCallback( httpd_file_sys_t *p_args,
     {
         *pi_data = strlen( p_sys->psz_sdp );
         *pp_data = malloc( *pi_data );
+        if (*pp_data == NULL)
+        {
+            vlc_mutex_unlock(&p_sys->lock_sdp);
+            return VLC_ENOMEM;
+        }
         memcpy( *pp_data, p_sys->psz_sdp, *pi_data );
     }
     else
@@ -1578,7 +1594,8 @@ size_t rtp_mtu (const sout_stream_id_sys_t *id)
  *****************************************************************************/
 
 /** Add an ES to a non-RTP muxed stream */
-static void *MuxAdd( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *
+MuxAdd( sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id )
 {
     sout_input_t      *p_input;
     sout_stream_sys_t *p_sys = p_stream->p_sys;
@@ -1593,6 +1610,7 @@ static void *MuxAdd( sout_stream_t *p_stream, const es_format_t *p_fmt )
     }
 
     return (sout_stream_id_sys_t *)p_input;
+    (void)es_id;
 }
 
 
@@ -1710,8 +1728,11 @@ static sout_access_out_t *GrabberCreate( sout_stream_t *p_stream )
     return p_grab;
 }
 
-void rtp_get_video_geometry( sout_stream_id_sys_t *id, int *width, int *height )
+int rtp_get_video_geometry( sout_stream_id_sys_t *id, int *width, int *height )
 {
     int ret = sscanf( id->rtp_fmt.fmtp, "%*s width=%d; height=%d; ", width, height );
-    assert( ret == 2 );
+    if( ret != 2 )
+        return VLC_EGENERIC;
+
+    return VLC_SUCCESS;
 }

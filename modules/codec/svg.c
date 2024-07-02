@@ -107,7 +107,11 @@ static int OpenDecoder( vlc_object_t *p_this )
 #endif
 
     /* Set output properties */
+#ifdef WORDS_BIGENDIAN
+    p_dec->fmt_out.i_codec = VLC_CODEC_ARGB;
+#else
     p_dec->fmt_out.i_codec = VLC_CODEC_BGRA;
+#endif
 
     /* Set callbacks */
     p_dec->pf_decode = DecodeBlock;
@@ -177,17 +181,17 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
     }
 
     p_dec->fmt_out.i_codec =
+#ifdef WORDS_BIGENDIAN
+    p_dec->fmt_out.video.i_chroma = VLC_CODEC_ARGB;
+#else
     p_dec->fmt_out.video.i_chroma = VLC_CODEC_BGRA;
+#endif
     p_dec->fmt_out.video.i_width  = i_width;
     p_dec->fmt_out.video.i_height = i_height;
     p_dec->fmt_out.video.i_visible_width  = i_width;
     p_dec->fmt_out.video.i_visible_height = i_height;
     p_dec->fmt_out.video.i_sar_num = 1;
     p_dec->fmt_out.video.i_sar_den = 1;
-    p_dec->fmt_out.video.i_rmask = 0x80800000; /* Since librsvg v1.0 */
-    p_dec->fmt_out.video.i_gmask = 0x0000ff00;
-    p_dec->fmt_out.video.i_bmask = 0x000000ff;
-    video_format_FixRgb(&p_dec->fmt_out.video);
 
     /* Get a new picture */
     if( decoder_UpdateVideoFormat( p_dec ) )

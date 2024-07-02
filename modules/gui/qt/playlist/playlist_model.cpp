@@ -23,8 +23,9 @@
 #include "playlist_model.hpp"
 #include "playlist_model_p.hpp"
 #include <algorithm>
-#include <assert.h>
-#include "util/qmlinputitem.hpp"
+#include <cassert>
+#include "util/shared_input_item.hpp"
+#include "playlist_controller.hpp"
 
 namespace vlc {
 namespace playlist {
@@ -165,7 +166,7 @@ PlaylistListModelPrivate::~PlaylistListModelPrivate()
 {
     if (m_playlist && m_listener)
     {
-        PlaylistLocker locker(m_playlist);
+        vlc_playlist_locker locker(m_playlist);
         vlc_playlist_RemoveListener(m_playlist, m_listener);
     }
 }
@@ -187,7 +188,6 @@ void PlaylistListModelPrivate::onItemsReset(const QVector<PlaylistItem>& newCont
     }
 
     emit q->countChanged(m_items.size());
-    emit q->selectedCountChanged();
 }
 
 void PlaylistListModelPrivate::onItemsAdded(const QVector<PlaylistItem>& added, size_t index)
@@ -243,7 +243,6 @@ void PlaylistListModelPrivate::onItemsRemoved(size_t index, size_t count)
     q->endRemoveRows();
 
     emit q->countChanged(m_items.size());
-    emit q->selectedCountChanged();
 }
 
 
@@ -259,37 +258,20 @@ PlaylistListModelPrivate::notifyItemsChanged(int idx, int count, const QVector<i
 // public API
 
 PlaylistListModel::PlaylistListModel(QObject *parent)
-    : SelectableListModel(parent)
+    : QAbstractListModel(parent)
     , d_ptr(new PlaylistListModelPrivate(this))
 {
 }
 
 PlaylistListModel::PlaylistListModel(vlc_playlist_t *raw_playlist, QObject *parent)
-    : SelectableListModel(parent)
+    : QAbstractListModel(parent)
     , d_ptr(new PlaylistListModelPrivate(this))
 {
-    setPlaylistId(PlaylistPtr(raw_playlist));
+    setPlaylist(Playlist(raw_playlist));
 }
 
 PlaylistListModel::~PlaylistListModel()
 {
-}
-
-bool PlaylistListModel::isRowSelected(int row) const
-{
-    Q_D(const PlaylistListModel);
-    return d->m_items[row].isSelected();
-}
-
-void PlaylistListModel::setRowSelected(int row, bool selected)
-{
-    Q_D(PlaylistListModel);
-    return d->m_items[row].setSelected(selected);
-}
-
-int PlaylistListModel::getSelectedRole() const
-{
-    return SelectedRole;
 }
 
 QHash<int, QByteArray>
@@ -301,8 +283,7 @@ PlaylistListModel::roleNames() const
         { IsCurrentRole, "isCurrent" },
         { ArtistRole , "artist" },
         { AlbumRole  , "album" },
-        { ArtworkRole, "artwork" },
-        { SelectedRole, "selected" },
+        { ArtworkRole, "artwork" }
     };
 }
 
@@ -330,7 +311,7 @@ PlaylistListModel::itemAt(int index) const
     return d->m_items[index];
 }
 
-void PlaylistListModel::removeItems(const QList<int>& indexes)
+void PlaylistListModel::removeItems(const QVector<int>& indexes)
 {
     Q_D(PlaylistListModel);
     if (!d->m_playlist)
@@ -343,7 +324,7 @@ void PlaylistListModel::removeItems(const QList<int>& indexes)
     });
 
     {
-        PlaylistLocker locker(d->m_playlist);
+        vlc_playlist_locker locker(d->m_playlist);
         int ret = vlc_playlist_RequestRemove(d->m_playlist, itemsToRemove.constData(),
                                              itemsToRemove.size(), indexes[0]);
         if (ret != VLC_SUCCESS)
@@ -360,7 +341,7 @@ void PlaylistListModel::removeItems(const QList<int>& indexes)
  * move.
  */
 static int
-getMovePostTarget(const QList<int> &sortedIndexesToMove, int preTarget)
+getMovePostTarget(const QVector<int> &sortedIndexesToMove, int preTarget)
 {
     int postTarget = preTarget;
     for (int index : sortedIndexesToMove)
@@ -373,7 +354,7 @@ getMovePostTarget(const QList<int> &sortedIndexesToMove, int preTarget)
 }
 
 void
-PlaylistListModel::moveItems(const QList<int> &sortedIndexes, int target,
+PlaylistListModel::moveItems(const QVector<int> &sortedIndexes, int target,
                              bool isPreTarget)
 {
     Q_D(PlaylistListModel);
@@ -393,7 +374,7 @@ PlaylistListModel::moveItems(const QList<int> &sortedIndexes, int target,
         target = getMovePostTarget(sortedIndexes, target);
     }
 
-    PlaylistLocker locker(d->m_playlist);
+    vlc_playlist_locker locker(d->m_playlist);
     int ret = vlc_playlist_RequestMove(d->m_playlist, itemsToMove.constData(),
                                        itemsToMove.size(), target,
                                        sortedIndexes[0]);
@@ -402,13 +383,13 @@ PlaylistListModel::moveItems(const QList<int> &sortedIndexes, int target,
 }
 
 void
-PlaylistListModel::moveItemsPre(const QList<int> &sortedIndexes, int preTarget)
+PlaylistListModel::moveItemsPre(const QVector<int> &sortedIndexes, int preTarget)
 {
     return moveItems(sortedIndexes, preTarget, true);
 }
 
 void
-PlaylistListModel::moveItemsPost(const QList<int> &sortedIndexes,
+PlaylistListModel::moveItemsPost(const QVector<int> &sortedIndexes,
                                  int postTarget)
 {
     return moveItems(sortedIndexes, postTarget, false);
@@ -421,7 +402,7 @@ int PlaylistListModel::getCurrentIndex() const
 }
 
 /* Q_INVOKABLE */
-QVariantList PlaylistListModel::getItemsForIndexes(const QList<int> & indexes) const
+QVariantList PlaylistListModel::getItemsForIndexes(const QVector<int> & indexes) const
 {
     Q_D(const PlaylistListModel);
 
@@ -442,44 +423,42 @@ QVariantList PlaylistListModel::getItemsForIndexes(const QList<int> & indexes) c
         if (media == nullptr)
             continue;
 
-        QmlInputItem input(media, true);
-
-        items.append(QVariant::fromValue(input));
+        items.append(QVariant::fromValue(SharedInputItem(media, true)));
     }
 
     return items;
 }
 
-PlaylistPtr PlaylistListModel::getPlaylistId() const
+Playlist PlaylistListModel::getPlaylist() const
 {
     Q_D(const PlaylistListModel);
     if (!d->m_playlist)
         return {};
-    return PlaylistPtr(d->m_playlist);
+    return Playlist(d->m_playlist);
 }
 
-void PlaylistListModel::setPlaylistId(vlc_playlist_t* playlist)
+void PlaylistListModel::setPlaylist(vlc_playlist_t* playlist)
 {
     Q_D(PlaylistListModel);
     if (d->m_playlist && d->m_listener)
     {
-        PlaylistLocker locker(d->m_playlist);
+        vlc_playlist_locker locker(d->m_playlist);
         vlc_playlist_RemoveListener(d->m_playlist, d->m_listener);
         d->m_playlist = nullptr;
         d->m_listener = nullptr;
     }
     if (playlist)
     {
-        PlaylistLocker locker(playlist);
+        vlc_playlist_locker locker(playlist);
         d->m_playlist = playlist;
         d->m_listener = vlc_playlist_AddListener(d->m_playlist, &playlist_callbacks, d, true);
     }
-    emit playlistIdChanged( PlaylistPtr(d->m_playlist) );
+    emit playlistChanged( Playlist(d->m_playlist) );
 }
 
-void PlaylistListModel::setPlaylistId(PlaylistPtr id)
+void PlaylistListModel::setPlaylist(const Playlist& playlist)
 {
-    setPlaylistId(id.m_playlist);
+    setPlaylist(playlist.m_playlist);
 }
 
 QVariant
@@ -511,8 +490,6 @@ PlaylistListModel::data(const QModelIndex &index, int role) const
         return d->m_items[row].getAlbum();
     case ArtworkRole:
         return d->m_items[row].getArtwork();
-    case SelectedRole:
-        return d->m_items[row].isSelected();
     default:
         return {};
     }

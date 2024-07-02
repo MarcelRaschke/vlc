@@ -20,6 +20,12 @@
 #include "widgets/native/customwidgets.hpp" //for qtEventToVLCKey
 #include <QSGRectangleNode>
 #include <QThreadPool>
+#include <vlc_window.h>
+
+#include <QQuickRenderControl>
+#ifdef QT_DECLARATIVE_PRIVATE
+#  include <QtGui/qpa/qplatformwindow.h>
+#endif
 
 WindowResizer::WindowResizer(vlc_window_t* window):
     m_requestedWidth(0),
@@ -204,12 +210,6 @@ VideoSurface::VideoSurface(QQuickItem* parent)
     setAcceptedMouseButtons(Qt::AllButtons);
     setFlag(ItemAcceptsInputMethod, true);
     setFlag(ItemHasContents, true);
-
-    connect(this, &QQuickItem::xChanged, this, &VideoSurface::onSurfacePositionChanged);
-    connect(this, &QQuickItem::yChanged, this, &VideoSurface::onSurfacePositionChanged);
-    connect(this, &QQuickItem::widthChanged, this, &VideoSurface::onSurfaceSizeChanged);
-    connect(this, &QQuickItem::heightChanged, this, &VideoSurface::onSurfaceSizeChanged);
-    connect(this, &VideoSurface::enabledChanged, this, &VideoSurface::updatePositionAndSize);
 }
 
 MainCtx* VideoSurface::getCtx()
@@ -264,7 +264,7 @@ void VideoSurface::mouseReleaseEvent(QMouseEvent* event)
 
 void VideoSurface::mouseMoveEvent(QMouseEvent* event)
 {
-    QPointF current_pos = event->localPos();
+    QPointF current_pos = event->position();
     QQuickWindow* window = this->window();
     if (!window)
         return;
@@ -275,7 +275,7 @@ void VideoSurface::mouseMoveEvent(QMouseEvent* event)
 
 void VideoSurface::hoverMoveEvent(QHoverEvent* event)
 {
-    QPointF current_pos = event->posF();
+    QPointF current_pos = event->position();
     if (current_pos != m_oldHoverPos)
     {
         QQuickWindow* window = this->window();
@@ -306,9 +306,9 @@ void VideoSurface::keyPressEvent(QKeyEvent* event)
     event->ignore();
 }
 
-void VideoSurface::geometryChanged(const QRectF& newGeometry, const QRectF& oldGeometry)
+void VideoSurface::geometryChange(const QRectF& newGeometry, const QRectF& oldGeometry)
 {
-    QQuickItem::geometryChanged(newGeometry, oldGeometry);
+    QQuickItem::geometryChange(newGeometry, oldGeometry);
     onSurfaceSizeChanged();
 }
 
@@ -354,9 +354,22 @@ QSGNode*VideoSurface::updatePaintNode(QSGNode* oldNode, QQuickItem::UpdatePaintN
 
         connect(m_provider, &VideoSurfaceProvider::hasVideoEmbedChanged, this, &VideoSurface::onProviderVideoChanged);
 
-        updatePositionAndSize();
     }
+    updatePositionAndSize();
     return node;
+}
+
+void VideoSurface::componentComplete()
+{
+    ViewBlockingRectangle::componentComplete();
+
+    connect(this, &QQuickItem::xChanged, this, &VideoSurface::onSurfacePositionChanged);
+    connect(this, &QQuickItem::yChanged, this, &VideoSurface::onSurfacePositionChanged);
+    connect(this, &QQuickItem::widthChanged, this, &VideoSurface::onSurfaceSizeChanged);
+    connect(this, &QQuickItem::heightChanged, this, &VideoSurface::onSurfaceSizeChanged);
+    connect(this, &VideoSurface::enabledChanged, this, &VideoSurface::updatePositionAndSize);
+
+    updatePositionAndSize();
 }
 
 void VideoSurface::onProviderVideoChanged(bool hasVideo)
@@ -366,14 +379,26 @@ void VideoSurface::onProviderVideoChanged(bool hasVideo)
     updatePositionAndSize();
 }
 
+static qreal dprForWindow(QQuickWindow* quickWindow)
+{
+    if (!quickWindow)
+        return 1.0;
+
+    QWindow* window = QQuickRenderControl::renderWindowFor(quickWindow);
+    if (!window)
+        window = quickWindow;
+
+    return window->devicePixelRatio();
+}
+
 void VideoSurface::onSurfaceSizeChanged()
 {
     if (!isEnabled())
         return;
-    QQuickWindow* window = this->window();
-    if (!window)
-        return;
-    emit surfaceSizeChanged(size() * window->effectiveDevicePixelRatio());
+
+    qreal dpr = dprForWindow(window());
+
+    emit surfaceSizeChanged(size() * dpr);
 }
 
 void VideoSurface::onSurfacePositionChanged()
@@ -381,11 +406,10 @@ void VideoSurface::onSurfacePositionChanged()
     if (!isEnabled())
         return;
 
+    qreal dpr = dprForWindow(window());
+
     QPointF scenePosition = this->mapToScene(QPointF(0,0));
-    QQuickWindow* window = this->window();
-    if (!window)
-        return;
-    qreal dpr = window->effectiveDevicePixelRatio();
+
     emit surfacePositionChanged(scenePosition * dpr);
 }
 
@@ -394,10 +418,8 @@ void VideoSurface::updatePositionAndSize()
     if (!isEnabled())
         return;
 
-    QQuickWindow* window = this->window();
-    if (!window)
-        return;
-    qreal dpr = window->effectiveDevicePixelRatio();
+    qreal dpr = dprForWindow(window());
+
     emit surfaceSizeChanged(size() * dpr);
     QPointF scenePosition = this->mapToScene(QPointF(0, 0));
     emit surfacePositionChanged(scenePosition * dpr);

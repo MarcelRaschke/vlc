@@ -23,17 +23,23 @@
 #import <Cocoa/Cocoa.h>
 
 #import "library/VLCLibraryCollectionViewDataSource.h"
-#import "library/VLCLibraryTableView.h"
+#import "library/VLCLibraryTableViewDataSource.h"
+
+#import <vlc_media_library.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
 @class VLCLibraryModel;
-@class VLCLibraryAudioGroupDataSource;
 @class VLCMediaLibraryAlbum;
+@protocol VLCMediaLibraryAudioGroupProtocol;
 
-@interface VLCLibraryAudioGroupDataSource : NSObject <VLCLibraryTableViewDataSource, NSTableViewDelegate, VLCLibraryCollectionViewDataSource>
+@interface VLCLibraryAudioGroupDataSource : NSObject <VLCLibraryTableViewDataSource, VLCLibraryCollectionViewDataSource>
 
-@property (readwrite, retain, nullable) NSArray <VLCMediaLibraryAlbum *> *representedListOfAlbums;
+@property (readwrite, nonatomic, retain, nullable) id<VLCMediaLibraryAudioGroupProtocol> representedAudioGroup;
+@property (readwrite, atomic, retain) NSArray <NSTableView *> *tableViews;
+@property (readwrite, atomic, retain) NSArray <NSCollectionView *> *collectionViews;
+
++ (void)setupCollectionView:(NSCollectionView *)collectionView;
 
 @end
 

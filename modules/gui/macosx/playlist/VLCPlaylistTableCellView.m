@@ -22,8 +22,10 @@
 
 #import "VLCPlaylistTableCellView.h"
 
-#import "extensions/NSString+Helpers.h"
+#import "extensions/NSColor+VLCAdditions.h"
 #import "extensions/NSFont+VLCAdditions.h"
+#import "extensions/NSImage+VLCAdditions.h"
+#import "extensions/NSString+Helpers.h"
 
 #import "library/VLCLibraryImageCache.h"
 
@@ -33,56 +35,71 @@
 
 #import "views/VLCImageView.h"
 
-@interface VLCPlaylistTableCellView ()
-{
-    NSFont *_displayedFont;
-    NSFont *_displayedBoldFont;
-}
-@end
+#import <vlc_configuration.h>
 
 @implementation VLCPlaylistTableCellView
 
-- (void)awakeFromNib
-{
-    [self updateFontsBasedOnSetting:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(updateFontsBasedOnSetting:)
-                                                 name:VLCConfigurationChangedNotification
-                                               object:nil];
-}
-
 - (void)dealloc
 {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
 - (void)setRepresentsCurrentPlaylistItem:(BOOL)representsCurrentPlaylistItem
 {
     _representsCurrentPlaylistItem = representsCurrentPlaylistItem;
-    NSFont *displayedFont = _representsCurrentPlaylistItem ? _displayedBoldFont : _displayedFont;
+
+    [self updateFonts];
+    [self updateColouredElements];
+}
+
+- (void)updateFonts
+{
+    NSFont * const displayedFont = _representsCurrentPlaylistItem ?
+        [NSFont boldSystemFontOfSize:NSFont.systemFontSize] :
+        [NSFont systemFontOfSize:NSFont.systemFontSize];
+
+    NSFont * const sublineDisplayedFont = _representsCurrentPlaylistItem ?
+        [NSFont boldSystemFontOfSize:NSFont.smallSystemFontSize] :
+        [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+
     self.mediaTitleTextField.font = displayedFont;
     self.secondaryMediaTitleTextField.font = displayedFont;
-    self.artistTextField.font = _displayedFont;
-    self.durationTextField.font = _displayedFont;
+    self.durationTextField.font = displayedFont;
+    self.artistTextField.font = sublineDisplayedFont;
+}
+
+- (void)updateColouredElements
+{
+
+    self.audioMediaTypeIndicator.textColor = _representsCurrentPlaylistItem ?
+        NSColor.labelColor :
+        NSColor.secondaryLabelColor;
 }
 
 - (void)setRepresentedPlaylistItem:(VLCPlaylistItem *)item
 {
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
-        NSImage *image = [VLCLibraryImageCache thumbnailForPlaylistItem:item];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            self.audioArtworkImageView.image = image;
-            self.mediaImageView.image = image;
-        });
-    });
+    [VLCLibraryImageCache thumbnailForPlaylistItem:item withCompletion:^(NSImage * const thumbnail) {
+        self.audioArtworkImageView.image = thumbnail;
+        self.mediaImageView.image = thumbnail;
+    }];
 
-    NSString *artist = item.artistName;
-    if (artist && artist.length > 0) {
+    const BOOL validArtistString = item.artistName && item.artistName.length > 0;
+    const BOOL validAlbumString = item.albumName && item.albumName.length > 0;
+
+    NSString *songDetailString = @"";
+
+    if (validArtistString && validAlbumString) {
+        songDetailString = [NSString stringWithFormat:@"%@ · %@", item.artistName, item.albumName];
+    } else if (validArtistString) {
+        songDetailString = item.artistName;
+    }
+
+    if (songDetailString) {
         self.mediaTitleTextField.hidden = YES;
         self.secondaryMediaTitleTextField.hidden = NO;
         self.artistTextField.hidden = NO;
         self.secondaryMediaTitleTextField.stringValue = item.title;
-        self.artistTextField.stringValue = artist;
+        self.artistTextField.stringValue = songDetailString;
         self.audioMediaTypeIndicator.hidden = NO;
 
         self.audioArtworkImageView.hidden = NO;
@@ -101,19 +118,6 @@
     self.durationTextField.stringValue = [NSString stringWithTimeFromTicks:item.duration];
 
     _representedPlaylistItem = item;
-}
-
-- (void)updateFontsBasedOnSetting:(NSNotification *)aNotification
-{
-    BOOL largeText = config_GetInt("macosx-large-text");
-    if (largeText) {
-        _displayedFont = [NSFont VLCplaylistLabelFont];
-        _displayedBoldFont = [NSFont VLCplaylistSelectedItemLabelFont];
-    } else {
-        _displayedFont = [NSFont VLCsmallPlaylistLabelFont];
-        _displayedBoldFont = [NSFont VLCsmallPlaylistSelectedItemLabelFont];
-    }
-    [self setRepresentsCurrentPlaylistItem:_representsCurrentPlaylistItem];
 }
 
 @end

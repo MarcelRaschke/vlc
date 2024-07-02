@@ -18,7 +18,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 
@@ -34,9 +34,8 @@ ViewBlockingRectangle {
 
     property color alternativeColor: tintColor
 
-    readonly property color _actualTintColor: VLCStyle.setColorAlpha(tintColor, 0.7)
-    property real _blend: usingAcrylic ? AcrylicController.uiTransluency : 0
+    readonly property color _actualTintColor: tintColor.alpha(0.7)
 
-
-    color: VLCStyle.blendColors(root._actualTintColor, root.alternativeColor, root._blend)
+    color: root._actualTintColor.tint(Qt.alpha(root.alternativeColor,
+                                               1 - (usingAcrylic ? AcrylicController.uiTransluency : 0)))
 }

@@ -25,9 +25,17 @@
  * Preamble
  *****************************************************************************/
 
+#if defined(__MINGW64_VERSION_MAJOR) && __MINGW64_VERSION_MAJOR < 12
+// before 1ec7fa221644b6d02a617a47f6e80f5069cdc893 using strcpy
+// is replaced by strcpy_instead_use_StringCbCopyA_or_StringCchCopyA
+#define STRSAFE_NO_DEPRECATE
+#endif
+
 #include <dshow.h>
 
 #include <vector>
+
+#include <vlc_threads.h>
 
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
@@ -79,7 +87,7 @@ struct access_sys_t
     /* misc properties */
     int            i_width;
     int            i_height;
-    int            i_chroma;
+    vlc_fourcc_t   i_chroma;
     vlc_tick_t     i_start;
 };
 

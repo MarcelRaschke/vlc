@@ -28,15 +28,21 @@
 // Ctor / dtor
 
 /* explicit */ ControlListFilter::ControlListFilter(QObject * parent)
-    : QSortFilterProxyModel(parent) {}
+    : QSortFilterProxyModel(parent)
+{
+    connect(this, &QAbstractProxyModel::sourceModelChanged, this, &ControlListFilter::sourceModelChanged1);
+}
 
 // QAbstractProxyModel reimplementation
 
-void ControlListFilter::setSourceModel(QAbstractItemModel * sourceModel) /* override */
+void ControlListFilter::setSourceModel(ControlListModel* sourceModel)
 {
-    assert(sourceModel->inherits("ControlListModel"));
-
     QSortFilterProxyModel::setSourceModel(sourceModel);
+}
+
+ControlListModel *ControlListFilter::sourceModel() const
+{
+    return qobject_cast<ControlListModel*>(QSortFilterProxyModel::sourceModel());
 }
 
 // Protected QSortFilterProxyModel reimplementation
@@ -60,6 +66,10 @@ bool ControlListFilter::filterAcceptsRow(int source_row, const QModelIndex &) co
     if (type == ControlListModel::NAVIGATION_BUTTONS)
     {
         return (m_player->hasMenu() || m_player->hasPrograms() || m_player->isTeletextAvailable());
+    }
+    else if (type == ControlListModel::NAVIGATION_BOX)
+    {
+        return (m_player->isInteractive());
     }
     else if (type == ControlListModel::BOOKMARK_BUTTON)
     {
@@ -93,10 +103,13 @@ void ControlListFilter::setPlayer(PlayerController * player)
 
     m_player = player;
 
-    connect(player, &PlayerController::teletextAvailableChanged, this, &ControlListFilter::invalidateFilter);
-    connect(player, &PlayerController::hasMenuChanged,           this, &ControlListFilter::invalidateFilter);
-    connect(player, &PlayerController::hasChaptersChanged,       this, &ControlListFilter::invalidateFilter);
-    connect(player, &PlayerController::hasTitlesChanged,         this, &ControlListFilter::invalidateFilter);
+    if (player)
+    {
+        connect(player, &PlayerController::teletextAvailableChanged, this, &ControlListFilter::invalidateFilter);
+        connect(player, &PlayerController::hasMenuChanged,           this, &ControlListFilter::invalidateFilter);
+        connect(player, &PlayerController::hasChaptersChanged,       this, &ControlListFilter::invalidateFilter);
+        connect(player, &PlayerController::hasTitlesChanged,         this, &ControlListFilter::invalidateFilter);
+    }
 
     invalidate();
 

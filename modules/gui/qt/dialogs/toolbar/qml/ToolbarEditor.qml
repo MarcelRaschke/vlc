@@ -15,10 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts 1.11
-import QtQml.Models 2.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import QtQml.Models
 
 import org.videolan.vlc 0.1
 
@@ -68,10 +68,9 @@ Item {
                     implicitWidth: VLCStyle.button_width_large
 
                     text: {
-                        var text = modelData.name
+                        const text = modelData.name
 
-                        if (!!MainCtx.controlbarProfileModel.currentModel &&
-                                MainCtx.controlbarProfileModel.currentModel.getModel(identifier).dirty)
+                        if (MainCtx.controlbarProfileModel.currentModel?.getModel(identifier).dirty)
                             return _markDirty(text)
                         else
                             return text
@@ -84,32 +83,25 @@ Item {
             }
         }
 
-        Rectangle{
-            id: parentRectangle
-
-            Layout.preferredHeight: VLCStyle.maxControlbarControlHeight * 1.5
+        Item {
+            Layout.preferredHeight: VLCStyle.controlLayoutHeight * 1.5
             Layout.fillWidth: true
-
-            color: theme.bg.primary
-
-            border.color: theme.border
-            border.width: VLCStyle.border
 
             TextMetrics {
                 id: leftMetric
-                text: I18n.qtr("L   E   F   T")
+                text: qsTr("L   E   F   T")
                 font.pixelSize: VLCStyle.fontSize_xxlarge
             }
 
             TextMetrics {
                 id: centerMetric
-                text: I18n.qtr("C   E   N   T   E   R")
+                text: qsTr("C   E   N   T   E   R")
                 font.pixelSize: VLCStyle.fontSize_xxlarge
             }
 
             TextMetrics {
                 id: rightMetric
-                text: I18n.qtr("R   I   G   H   T")
+                text: qsTr("R   I   G   H   T")
                 font.pixelSize: VLCStyle.fontSize_xxlarge
             }
 
@@ -180,8 +172,8 @@ Item {
                             Layout.fillHeight: true
                             Layout.fillWidth: {
                                 if (count === 0) {
-                                    for (var i = 0; i < repeater.count; ++i) {
-                                        var item = repeater.itemAt(i)
+                                    for (let i = 0; i < repeater.count; ++i) {
+                                        const item = repeater.itemAt(i)
                                         if (!!item && item.count > 0)
                                             return false
                                     }
@@ -190,29 +182,33 @@ Item {
                                 return true
                             }
 
-                            Layout.minimumWidth: !!item && item.visible ? Math.max(leftMetric.width,
-                                                                                   centerMetric.width,
-                                                                                   rightMetric.width) * 1.25
-                                                                        : 0
-                            Layout.margins: parentRectangle.border.width
+                            Layout.minimumWidth: (!!item && item.visible && item.count <= 0) ? Math.max(leftMetric.width,
+                                                                                                      centerMetric.width,
+                                                                                                      rightMetric.width) * 1.25
+                                                                                             : 0
 
-                            readonly property int count: !!item ? item.count : 0
+                            readonly property int count: item?.count ?? 0
 
-                            sourceComponent: Item {
+                            sourceComponent: Rectangle {
+                                color: theme.bg.primary
+
+                                border.color: theme.border
+                                border.width: VLCStyle.border
+
                                 property alias count: dndView.count
 
                                 Connections {
                                     target: root
                                     enabled: dndView.model === layout.model.center
 
-                                    onDragStarted: {
+                                    function onDragStarted(controlId) {
                                         // extending spacer widget should not be placed in the
                                         // central alignment view
                                         if (controlId === ControlListModel.WIDGET_SPACER_EXTEND)
                                             visible = false
                                     }
 
-                                    onDragStopped: {
+                                    function onDragStopped(controlId) {
                                         if (controlId === ControlListModel.WIDGET_SPACER_EXTEND)
                                             visible = true
                                     }
@@ -269,7 +265,7 @@ Item {
 
                 Widgets.MenuCaption {
                     Layout.margins: VLCStyle.margin_xxsmall
-                    text: I18n.qtr("Drag items below to add them above: ")
+                    text: qsTr("Drag items below to add them above: ")
                     color: buttonList.colorContext.fg.primary
                 }
 
@@ -307,6 +303,6 @@ Item {
     Util.ViewDragAutoScrollHandler {
         id: dragAutoScrollHandler
 
-        view: _viewThatContainsDrag ? _viewThatContainsDrag : null
+        view: _viewThatContainsDrag ?? null
     }
 }

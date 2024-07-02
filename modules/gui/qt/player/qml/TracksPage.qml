@@ -18,8 +18,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Layouts
 
 import org.videolan.vlc 0.1
 
@@ -35,6 +35,9 @@ RowLayout {
 
     property int preferredWidth: VLCStyle.dp(512, VLCStyle.scale)
 
+    //FIXME make TrackMenuController a proper type (see TrackMenu)
+    required property QtObject trackMenuController
+
     // Settings
 
     spacing: 0
@@ -42,10 +45,6 @@ RowLayout {
     focus: true
 
     Navigation.leftItem: button
-
-    // Signals
-
-    signal backRequested
 
     // Children
 
@@ -67,12 +66,13 @@ RowLayout {
 
             anchors.horizontalCenter: parent.horizontalCenter
 
-            iconText: VLCIcons.back
+            description: qsTr("Back")
+            text: VLCIcons.back
 
             Navigation.parentItem: root
             Navigation.rightItem: content
 
-            onClicked: root.backRequested()
+            onClicked: trackMenuController.requestBack()
         }
     }
 

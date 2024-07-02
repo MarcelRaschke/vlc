@@ -26,6 +26,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_stream.h>
 #include <vlc_stream_extractor.h>
 #include <vlc_modules.h>
@@ -85,13 +86,15 @@ struct stream_extractor_private {
  * within \p base, see \ref mrl_helpers for further information.
  **/
 
-static char*
-StreamExtractorCreateMRL( char const* base, char const* subentry )
+VLC_MALLOC static char*
+StreamExtractorCreateMRL( char const* base, char const* subentry,
+                          char const** volumes, size_t volumes_count )
 {
     struct vlc_memstream buffer;
     char* escaped;
 
-    if( mrl_EscapeFragmentIdentifier( &escaped, subentry ) )
+    escaped = mrl_EscapeFragmentIdentifier( subentry );
+    if ( escaped == NULL )
         return NULL;
 
     if( vlc_memstream_open( &buffer ) )
@@ -105,7 +108,14 @@ StreamExtractorCreateMRL( char const* base, char const* subentry )
     if( !strstr( base, "#" ) )
         vlc_memstream_putc( &buffer, '#' );
 
-    vlc_memstream_printf( &buffer, "!/%s", escaped );
+    vlc_memstream_puts( &buffer, "!/" );
+    vlc_memstream_puts( &buffer, escaped );
+
+    for( size_t i=0; i<volumes_count; i++ )
+    {
+        vlc_memstream_puts( &buffer, "!+" );
+        vlc_memstream_puts( &buffer, volumes[i] );
+    }
 
     free( escaped );
     return vlc_memstream_close( &buffer ) ? NULL : buffer.ptr;
@@ -207,7 +217,9 @@ se_InitStream( struct stream_extractor_private* priv, stream_t* s )
     s->pf_seek = se_StreamSeek;
     s->pf_control = se_StreamControl;
     s->psz_url = StreamExtractorCreateMRL( priv->extractor.source->psz_url,
-                                           priv->extractor.identifier );
+                                           priv->extractor.identifier,
+                                           (char const **) priv->extractor.volumes,
+                                           priv->extractor.volumes_count );
     if( unlikely( !s->psz_url ) )
         return VLC_ENOMEM;
 
@@ -215,9 +227,20 @@ se_InitStream( struct stream_extractor_private* priv, stream_t* s )
 }
 
 static void
-se_CleanStream( struct stream_extractor_private* priv )
+se_CleanStreamExtractor( struct stream_extractor_private* priv )
 {
     free( (char*)priv->extractor.identifier );
+    for( size_t i=0; i<priv->extractor.volumes_count; i++ )
+        free( priv->extractor.volumes[i] );
+    free( priv->extractor.volumes );
+}
+
+static void
+se_CleanStreamDirectory( struct stream_extractor_private* priv )
+{
+    for( size_t i=0; i<priv->directory.volumes_count; i++ )
+        free( priv->directory.volumes[i] );
+    free( priv->directory.volumes );
 }
 
 static int
@@ -271,13 +294,13 @@ se_AttachWrapper( struct stream_extractor_private* priv, stream_t* source )
 
     priv->source = source;
 
-    priv->wrapper = stream_FilterChainNew( priv->wrapper, "cache" );
+    priv->wrapper = stream_FilterChainNew( priv->wrapper, "prefetch,cache" );
     return VLC_SUCCESS;
 }
 
 static int
 StreamExtractorAttach( stream_t** source, char const* identifier,
-    char const* module_name )
+    char const* module_name, const char **volumes, size_t volumes_count )
 {
     const bool extractor = identifier != NULL;
     char const* capability = extractor ? "stream_extractor"
@@ -289,27 +312,49 @@ StreamExtractorAttach( stream_t** source, char const* identifier,
     if( unlikely( !priv ) )
         return VLC_ENOMEM;
 
+    char ***dst_volumes;
+    size_t * dst_volumes_count;
+
     if( extractor )
     {
         priv->object = VLC_OBJECT( &priv->extractor );
 
         priv->pf_init = se_InitStream;
-        priv->pf_clean = se_CleanStream;
+        priv->pf_clean = se_CleanStreamExtractor;
 
         priv->extractor.source = *source;
         priv->extractor.identifier = strdup( identifier );
 
         if( unlikely( !priv->extractor.identifier ) )
             goto error;
+
+        dst_volumes = &priv->extractor.volumes;
+        dst_volumes_count = &priv->extractor.volumes_count;
     }
     else
     {
         priv->object = VLC_OBJECT( &priv->directory );
 
         priv->pf_init = se_InitDirectory;
-        priv->pf_clean = NULL;
+        priv->pf_clean = se_CleanStreamDirectory;
 
         priv->directory.source = *source;
+
+        dst_volumes = &priv->directory.volumes;
+        dst_volumes_count = &priv->directory.volumes_count;
+    }
+
+    if( volumes_count )
+    {
+        *dst_volumes = malloc(volumes_count * sizeof(char *));
+        if( unlikely(!*dst_volumes) )
+            goto error;
+        for( *dst_volumes_count=0; *dst_volumes_count<volumes_count; (*dst_volumes_count)++ )
+        {
+            (*dst_volumes)[*dst_volumes_count] = strdup(volumes[*dst_volumes_count]);
+            if( unlikely(!(*dst_volumes)[*dst_volumes_count]) )
+                goto error;
+        }
     }
 
     priv->module = module_need( priv->object, capability, module_name, true );
@@ -326,52 +371,47 @@ error:
 }
 
 int
-vlc_stream_directory_Attach( stream_t** source, char const* module_name )
+vlc_stream_directory_Attach( stream_t** source, char const* module_name,
+                             const char **volumes, size_t volumes_count )
 {
-    return StreamExtractorAttach( source, NULL, module_name );
+    return StreamExtractorAttach( source, NULL, module_name, volumes, volumes_count );
 }
 
 int
 vlc_stream_extractor_Attach( stream_t** source, char const* identifier,
-                             char const* module_name )
+                             char const* module_name, const char **volumes, size_t volumes_count )
 {
-    return StreamExtractorAttach( source, identifier, module_name );
+    return StreamExtractorAttach( source, identifier, module_name, volumes, volumes_count );
 }
 
 int
-stream_extractor_AttachParsed( stream_t** source, char const* data,
-                               char const** out_extra )
+stream_extractor_AttachParsed( stream_t** source, const struct mrl_info *mrli )
 {
-    vlc_array_t identifiers;
-
-    if( mrl_FragmentSplit( &identifiers, out_extra, data ) )
-        return VLC_EGENERIC;
-
-    size_t count = vlc_array_count( &identifiers );
+    size_t count = vlc_array_count( &mrli->identifiers );
     size_t idx = 0;
 
     while( idx < count )
     {
-        char* id = vlc_array_item_at_index( &identifiers, idx );
+        char* id = vlc_array_item_at_index( &mrli->identifiers, idx );
 
-        if( vlc_stream_extractor_Attach( source, id, NULL ) )
+        if( vlc_stream_extractor_Attach( source, id, NULL,
+                                        (char const **) mrli->volumes.pp_elems,
+                                        mrli->volumes.i_count ) )
             break;
 
         ++idx;
     }
-
-    for( size_t i = 0; i < count; ++i )
-        free( vlc_array_item_at_index( &identifiers, i ) );
-    vlc_array_clear( &identifiers );
 
     return idx == count ? VLC_SUCCESS : VLC_EGENERIC;
 }
 
 char*
 vlc_stream_extractor_CreateMRL( stream_directory_t* directory,
-                                char const* subentry )
+                                char const* subentry,
+                                char const **volumes, size_t volumes_count )
 {
-    return StreamExtractorCreateMRL( directory->source->psz_url, subentry );
+    return StreamExtractorCreateMRL( directory->source->psz_url, subentry,
+                                     volumes, volumes_count );
 }
 
 /**

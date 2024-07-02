@@ -43,6 +43,9 @@ typedef struct
     SMBCCTX *ctx;
     SMBCFILE *file;
 
+    vlc_credential credential;
+    char *var_domain;
+
     union
     {
         struct {
@@ -62,27 +65,17 @@ typedef struct
 } access_sys_t;
 
 /* Build an SMB URI
- * smb://[[[domain;]user[:password@]]server[/share[/path[/file]]]] */
-static char *smb_get_uri(
-                       const char *psz_domain,
-                       const char *psz_user, const char *psz_pwd,
-                       const char *psz_server, const char *psz_share_path,
-                       const char *psz_name)
+ * smb://server[/share[/path[/file]]]] */
+static char *smb_get_uri(const char *psz_server, const char *psz_share_path,
+                         const char *psz_name)
 {
     char *uri;
 
     assert(psz_server);
-#define PSZ_SHARE_PATH_OR_NULL psz_share_path ? psz_share_path : ""
-#define PSZ_NAME_OR_NULL psz_name ? "/" : "", psz_name ? psz_name : ""
-    if( (psz_user
-        ? asprintf( &uri, "smb://%s%s%s%s%s@%s%s%s%s",
-                         psz_domain ? psz_domain : "", psz_domain ? ";" : "",
-                         psz_user, psz_pwd ? ":" : "",
-                         psz_pwd ? psz_pwd : "", psz_server,
-                         PSZ_SHARE_PATH_OR_NULL, PSZ_NAME_OR_NULL )
-        : asprintf( &uri, "smb://%s%s%s%s", psz_server,
-                         PSZ_SHARE_PATH_OR_NULL, PSZ_NAME_OR_NULL )) == -1 )
-        uri = NULL;
+    if (asprintf( &uri, "smb://%s%s%s%s", psz_server,
+                  psz_share_path ? psz_share_path : "",
+                  psz_name ? "/" : "", psz_name ? psz_name : "" ) == -1)
+        return NULL;
     return uri;
 }
 
@@ -186,8 +179,7 @@ static int DirRead (stream_t *p_access, input_item_node_t *p_node )
             break;
         }
 
-        char *uri = smb_get_uri(NULL, NULL, NULL,
-                                psz_server, psz_path, psz_encoded_name);
+        char *uri = smb_get_uri(psz_server, psz_path, psz_encoded_name);
         if (uri == NULL) {
             free(psz_encoded_name);
             i_ret = VLC_ENOMEM;
@@ -254,40 +246,55 @@ static int Control( stream_t *p_access, int i_query, va_list args )
     return VLC_SUCCESS;
 }
 
-static void smb_auth(const char *srv, const char *shr, char *wg, int wglen,
-                     char *un, int unlen, char *pw, int pwlen)
+static void smb_auth(SMBCCTX *ctx, const char *srv, const char *shr,
+                     char *wg, int wglen,
+                     char *un, int unlen,
+                     char *pw, int pwlen)
 {
     VLC_UNUSED(srv);
     VLC_UNUSED(shr);
-    VLC_UNUSED(wg);
-    VLC_UNUSED(wglen);
-    VLC_UNUSED(un);
-    VLC_UNUSED(unlen);
-    VLC_UNUSED(pw);
-    VLC_UNUSED(pwlen);
-    //wglen = unlen = pwlen = 0;
+
+    access_sys_t *sys = smbc_getOptionUserData(ctx);
+    assert(sys != NULL);
+
+    if (sys->credential.psz_realm != NULL)
+        strlcpy(wg, sys->credential.psz_realm, wglen);
+    if (sys->credential.psz_username != NULL)
+        strlcpy(un, sys->credential.psz_username, unlen);
+    if (sys->credential.psz_password != NULL)
+        strlcpy(pw, sys->credential.psz_password, pwlen);
+    else
+    {
+        /* Since last Windows 11 update (KB5026436), Windows SMB servers need a
+         * valid Auth (user + password) even for a guest/anonymous login.
+         * Therefore, store the user in the password to fake a valid password.
+         * */
+        strlcpy(pw, un, pwlen);
+    }
 }
 
 static int Open(vlc_object_t *obj)
 {
     stream_t *access = (stream_t *)obj;
     vlc_url_t url;
-    vlc_credential credential;
-    char *psz_decoded_path = NULL, *uri, *psz_var_domain = NULL;
-    uint64_t size;
+    char *psz_decoded_path = NULL, *uri;
     bool is_dir;
     int ret = VLC_EGENERIC;
-    SMBCFILE *file = NULL;
-    SMBCCTX *ctx;
 
-    ctx = smbc_new_context();
-    if (ctx == NULL)
+    /* Init access */
+    access_sys_t *sys = vlc_obj_calloc(obj, 1, sizeof (*sys));
+    if (unlikely(sys == NULL))
         return VLC_ENOMEM;
 
-    smbc_setDebug(ctx, 0);
-    smbc_setFunctionAuthData(ctx, smb_auth);
+    sys->ctx = smbc_new_context();
+    if (sys->ctx == NULL)
+        return VLC_ENOMEM;
 
-    if (!smbc_init_context(ctx))
+    smbc_setDebug(sys->ctx, 0);
+    smbc_setOptionUserData(sys->ctx, sys);
+    smbc_setFunctionAuthDataWithContext(sys->ctx, smb_auth);
+
+    if (!smbc_init_context(sys->ctx))
         goto error;
 
     if (vlc_UrlParseFixup(&url, access->psz_url) != 0)
@@ -306,27 +313,24 @@ static int Open(vlc_object_t *obj)
         }
     }
 
-    vlc_credential_init(&credential, &url);
-    psz_var_domain = var_InheritString(access, "smb-domain");
-    credential.psz_realm = psz_var_domain;
-    if (vlc_credential_get(&credential, access, "smb-user", "smb-pwd", NULL, NULL)
+    vlc_credential_init(&sys->credential, &url);
+    sys->var_domain = var_InheritString(access, "smb-domain");
+    sys->credential.psz_realm = sys->var_domain;
+    if (vlc_credential_get(&sys->credential, access, "smb-user", "smb-pwd",
+                           NULL, NULL)
         == -EINTR)
         goto error;
 
-    smbc_stat_fn stat_fn = smbc_getFunctionStat(ctx);
+    smbc_stat_fn stat_fn = smbc_getFunctionStat(sys->ctx);
     assert(stat_fn);
 
     for (;;)
     {
         struct stat st;
 
-        uri = smb_get_uri(credential.psz_realm, credential.psz_username,
-                          credential.psz_password, url.psz_host,
-                          psz_decoded_path, NULL);
+        uri = smb_get_uri(url.psz_host, psz_decoded_path, NULL);
         if (uri == NULL)
         {
-            vlc_credential_clean(&credential);
-            free(psz_var_domain);
             free(psz_decoded_path);
             vlc_UrlClean(&url);
             ret = VLC_ENOMEM;
@@ -334,96 +338,83 @@ static int Open(vlc_object_t *obj)
         }
 
 
-        if (stat_fn(ctx, uri, &st) == 0)
+        if (stat_fn(sys->ctx, uri, &st) == 0)
         {
             is_dir = S_ISDIR(st.st_mode) != 0;
-            size = st.st_size;
+            sys->size = st.st_size;
             break;
         }
 
         /* smbc_stat() fails with servers or shares. Assume directory. */
         is_dir = true;
-        size = 0;
+        sys->size = 0;
 
         if (errno != EACCES && errno != EPERM)
             break;
 
         errno = 0;
-        if (vlc_credential_get(&credential, access, "smb-user",
+        if (vlc_credential_get(&sys->credential, access, "smb-user",
                                "smb-pwd", SMB_LOGIN_DIALOG_TITLE,
                                SMB_LOGIN_DIALOG_TEXT, url.psz_host) != 0)
             break;
     }
 
-    vlc_credential_store(&credential, access);
-    vlc_credential_clean(&credential);
-    free(psz_var_domain);
     free(psz_decoded_path);
-
-    /* Init access */
-    access_sys_t *sys = vlc_obj_calloc(obj, 1, sizeof (*sys));
-    if (unlikely(sys == NULL))
-    {
-        free(uri);
-        vlc_UrlClean(&url);
-        return VLC_ENOMEM;
-    }
 
     access->p_sys = sys;
 
     if (is_dir)
     {
-        smbc_opendir_fn opendir_fn = smbc_getFunctionOpendir(ctx);
+        smbc_opendir_fn opendir_fn = smbc_getFunctionOpendir(sys->ctx);
         assert(opendir_fn);
 
-        sys->dirvt.closedir = smbc_getFunctionClosedir(ctx);
+        sys->dirvt.closedir = smbc_getFunctionClosedir(sys->ctx);
         assert(sys->dirvt.closedir);
-        sys->dirvt.readdir = smbc_getFunctionReaddir(ctx);
+        sys->dirvt.readdir = smbc_getFunctionReaddir(sys->ctx);
         assert(sys->dirvt.readdir);
         sys->dirvt.stat = stat_fn;
 
         sys->url = url;
         access->pf_readdir = DirRead;
         access->pf_control = access_vaDirectoryControlHelper;
-        file = opendir_fn(ctx, uri);
-        if (file == NULL)
+        sys->file = opendir_fn(sys->ctx, uri);
+        if (sys->file == NULL)
             vlc_UrlClean(&sys->url);
     }
     else
     {
-        smbc_open_fn open_fn = smbc_getFunctionOpen(ctx);
+        smbc_open_fn open_fn = smbc_getFunctionOpen(sys->ctx);
         assert(open_fn);
 
-        sys->filevt.close = smbc_getFunctionClose(ctx);
+        sys->filevt.close = smbc_getFunctionClose(sys->ctx);
         assert(sys->filevt.close);
-        sys->filevt.read = smbc_getFunctionRead(ctx);
+        sys->filevt.read = smbc_getFunctionRead(sys->ctx);
         assert(sys->filevt.read);
-        sys->filevt.lseek = smbc_getFunctionLseek(ctx);
+        sys->filevt.lseek = smbc_getFunctionLseek(sys->ctx);
         assert(sys->filevt.lseek);
 
         access->pf_read = Read;
         access->pf_control = Control;
         access->pf_seek = Seek;
-        file = open_fn(ctx, uri, O_RDONLY, 0);
+        sys->file = open_fn(sys->ctx, uri, O_RDONLY, 0);
         vlc_UrlClean(&url);
     }
     free(uri);
 
-    if (file == NULL)
+    if (sys->file == NULL)
     {
         msg_Err(obj, "cannot open %s: %s",
                 access->psz_location, vlc_strerror_c(errno));
         goto error;
     }
 
-    sys->size = size;
-    sys->ctx = ctx;
-    sys->file = file;
-
+    vlc_credential_store(&sys->credential, access);
     return VLC_SUCCESS;
 
 error:
-    smbc_free_context(ctx, 1);
+    vlc_credential_clean(&sys->credential);
+    free(sys->var_domain);
+    smbc_free_context(sys->ctx, 1);
     return ret;
 }
 
@@ -431,6 +422,9 @@ static void Close(vlc_object_t *obj)
 {
     stream_t *access = (stream_t *)obj;
     access_sys_t *sys = access->p_sys;
+
+    vlc_credential_clean(&sys->credential);
+    free(sys->var_domain);
 
     vlc_UrlClean(&sys->url);
 

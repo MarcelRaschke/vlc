@@ -43,6 +43,7 @@
 #endif
 
 #import <vlc_common.h>
+#import <vlc_threads.h>
 #import <vlc_plugin.h>
 #import <vlc_vout_display.h>
 #import <vlc_opengl.h>
@@ -407,8 +408,8 @@ static void Close(vlc_gl_t *gl)
     _gl_attached = NO;
     [EAGLContext setCurrentContext:_previousEaglContext];
     _previousEaglContext = nil;
-    vlc_mutex_unlock(&_mutex);
     vlc_cond_signal(&_gl_attached_wait);
+    vlc_mutex_unlock(&_mutex);
 }
 
 - (void)presentRenderbuffer

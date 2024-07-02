@@ -31,6 +31,7 @@
 #include <vlc_modules.h>
 
 #include "gl_api.h"
+#include "picture.h"
 
 struct vlc_gl_filter *
 vlc_gl_filter_New(struct vlc_gl_t *gl, const struct vlc_gl_api *api)
@@ -86,7 +87,8 @@ vlc_gl_filter_LoadModule(vlc_object_t *parent, const char *name,
                          const struct vlc_gl_format *glfmt,
                          struct vlc_gl_tex_size *size_out)
 {
-    filter->module = vlc_module_load(parent, "opengl filter", name, true,
+    filter->module = vlc_module_load(vlc_object_logger(parent), "opengl filter",
+                                     name, true,
                                      ActivateGLFilter, filter, config,
                                      glfmt, size_out);
     if (!filter->module)

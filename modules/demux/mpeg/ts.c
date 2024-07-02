@@ -691,7 +691,8 @@ static int Demux( demux_t *p_demux )
         if( !p_pkt )
             continue;
 
-        if( !SCRAMBLED(*p_pid) != !(p_pkt->i_flags & BLOCK_FLAG_SCRAMBLED) )
+        if( !SCRAMBLED(*p_pid) != !(p_pkt->i_flags & BLOCK_FLAG_SCRAMBLED) &&
+            ( p_pkt->p_buffer[1] & 0x40 ) ) /* update on payload start */
         {
             UpdatePIDScrambledState( p_demux, p_pid, p_pkt->i_flags & BLOCK_FLAG_SCRAMBLED );
         }
@@ -753,13 +754,13 @@ static int Demux( demux_t *p_demux )
             break;
 
         case TYPE_SI:
-            if( (p_pkt->i_flags & (BLOCK_FLAG_SCRAMBLED|BLOCK_FLAG_CORRUPTED)) == 0 )
+            if( (p_pkt->i_flags & BLOCK_FLAG_SCRAMBLED) == 0 )
                 ts_si_Packet_Push( p_pid, p_pkt->p_buffer );
             block_Release( p_pkt );
             break;
 
         case TYPE_PSIP:
-            if( (p_pkt->i_flags & (BLOCK_FLAG_SCRAMBLED|BLOCK_FLAG_CORRUPTED)) == 0 )
+            if( (p_pkt->i_flags & BLOCK_FLAG_SCRAMBLED) == 0 )
                 ts_psip_Packet_Push( p_pid, p_pkt->p_buffer );
             block_Release( p_pkt );
             break;
@@ -844,11 +845,16 @@ void UpdatePESFilters( demux_t *p_demux, bool b_all )
     {
         ts_pid_t *p_pmt_pid = p_pat->programs.p_elems[i];
         ts_pmt_t *p_pmt = p_pmt_pid->u.p_pmt;
+        const bool b_prev_selection = p_pmt->b_selected;
 
         if( (p_sys->b_default_selection && !p_sys->b_access_control) || b_all )
              p_pmt->b_selected = true;
         else
              p_pmt->b_selected = ProgramIsSelected( p_sys, p_pmt->i_number );
+
+        /* Notify CI for program selection changes */
+        if( b_prev_selection != p_pmt->b_selected )
+            SendCAPMTUpdate( p_demux, p_pmt );
 
         if( p_pmt->b_selected )
         {
@@ -982,7 +988,7 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             {
                 ReadyQueuesPostSeek( p_demux );
                 es_out_Control( p_demux->out, ES_OUT_SET_NEXT_DISPLAY_TIME,
-                                (int64_t)(TO_SCALE( vlc_tick_from_sec( i_length * f ))) );
+                                vlc_tick_from_sec( i_length * f ) );
                 return VLC_SUCCESS;
             }
         }
@@ -1918,6 +1924,17 @@ static void UpdatePIDScrambledState( demux_t *p_demux, ts_pid_t *p_pid, bool b_s
     if( !SCRAMBLED(*p_pid) == !b_scrambled )
         return;
 
+    /* avoid flapping descrambled state on partial scrambling */
+    if( b_scrambled )
+    {
+        p_pid->i_scramble_counter = 4;
+    }
+    else if( p_pid->i_scramble_counter != 0 )
+    {
+        p_pid->i_scramble_counter--;
+        return;
+    }
+
     msg_Warn( p_demux, "scrambled state changed on pid %d (%d->%d)",
               p_pid->i_pid, !!SCRAMBLED(*p_pid), b_scrambled );
 
@@ -1956,16 +1973,19 @@ static void ReadyQueuesPostSeek( demux_t *p_demux )
         for( int j=0; j<p_pmt->e_streams.i_size; j++ )
         {
             ts_pid_t *pid = p_pmt->e_streams.p_elems[j];
-            ts_stream_t *p_pes = pid->u.p_stream;
+
+            pid->i_cc = 0xff;
+            pid->i_dup = 0;
+            pid->prevpktbytes[0] = 0;
 
             if( pid->type != TYPE_STREAM )
                 continue;
 
+            ts_stream_t *p_pes = pid->u.p_stream;
+
             for( ts_es_t *p_es = p_pes->p_es; p_es; p_es = p_es->p_next )
                 p_es->i_next_block_flags |= BLOCK_FLAG_DISCONTINUITY;
 
-            pid->i_cc = 0xff;
-            pid->i_dup = 0;
             pid->u.p_stream->i_last_dts = -1;
 
             if( pid->u.p_stream->prepcr.p_head )
@@ -2030,11 +2050,7 @@ static int SeekToTime( demux_t *p_demux, const ts_pmt_t *p_pmt, stime_t i_scaled
 
             int i_pid = PIDGet( p_pkt );
             ts_pid_t *p_pid = GetPID(p_sys, i_pid);
-            if( i_pid != 0x1FFF && p_pid->type == TYPE_STREAM &&
-                ts_stream_Find_es( p_pid->u.p_stream, p_pmt ) &&
-               (p_pkt->p_buffer[1] & 0xC0) == 0x40 && /* Payload start but not corrupt */
-               (p_pkt->p_buffer[3] & 0xD0) == 0x10    /* Has payload but is not encrypted */
-            )
+            if( i_pid != 0x1FFF )
             {
                 unsigned i_skip = 4;
                 if ( p_pkt->p_buffer[3] & 0x20 ) // adaptation field
@@ -2047,7 +2063,11 @@ static int SeekToTime( demux_t *p_demux, const ts_pmt_t *p_pmt, stime_t i_scaled
                     }
                 }
 
-                if( i_pcr == -1 )
+                if( i_pcr == -1 && p_pid->type == TYPE_STREAM &&
+                    ts_stream_Find_es( p_pid->u.p_stream, p_pmt ) &&
+                   (p_pkt->p_buffer[1] & 0xC0) == 0x40 && /* Payload start but not corrupt */
+                   (p_pkt->p_buffer[3] & 0xD0) == 0x10    /* Has payload but is not encrypted */
+                )
                 {
                     stime_t i_dts = -1;
                     stime_t i_pts = -1;
@@ -2593,7 +2613,7 @@ static block_t * ProcessTSPacket( demux_t *p_demux, ts_pid_t *pid, block_t *p_pk
 
                 /* ... or don't ignore for our Bluray still frames and seek hacks */
                 if(p[5] == 0x82 && !strncmp((const char *)&p[7], "VLC_DISCONTINU", 14))
-                    p_pkt->i_flags |= BLOCK_FLAG_SOURCE_RANDOM_ACCESS;
+                    p_pkt->i_flags |= BLOCK_FLAG_PRIVATE_SOURCE_RANDOM_ACCESS;
             }
 #if 0
             if( p[5]&0x40 )
@@ -2646,7 +2666,7 @@ static block_t * ProcessTSPacket( demux_t *p_demux, ts_pid_t *pid, block_t *p_pk
 
                 pid->i_cc = i_cc;
                 pid->i_dup = 0;
-                p_pkt->i_flags |= BLOCK_FLAG_DISCONTINUITY;
+                p_pkt->i_flags |= BLOCK_FLAG_PRIVATE_PACKET_LOSS;
             }
             else pid->i_cc = i_cc;
         }
@@ -2700,7 +2720,7 @@ static bool GatherSectionsData( demux_t *p_demux, ts_pid_t *p_pid, block_t *p_pk
         ts_sections_processor_Reset( p_pid->u.p_stream->p_sections_proc );
     }
 
-    if( (p_pkt->i_flags & (BLOCK_FLAG_SCRAMBLED | BLOCK_FLAG_CORRUPTED)) == 0 )
+    if( (p_pkt->i_flags & BLOCK_FLAG_SCRAMBLED) == 0 )
     {
         ts_sections_processor_Push( p_pid->u.p_stream->p_sections_proc, p_pkt->p_buffer );
         b_ret = true;

@@ -1,7 +1,10 @@
 # TagLib
 
-TAGLIB_VERSION := 1.12
-TAGLIB_URL := https://taglib.org/releases/taglib-$(TAGLIB_VERSION).tar.gz
+TAGLIB_VERSION := 2.0.1
+TAGLIB_URL := $(GITHUB)/taglib/taglib/releases/download/v$(TAGLIB_VERSION)/taglib-$(TAGLIB_VERSION).tar.gz
+
+UTFCPP_VERSION := 3.2.5
+UTFCPP_URL := $(GITHUB)/nemtrif/utfcpp/archive/refs/tags/v$(UTFCPP_VERSION).tar.gz
 
 PKGS += taglib
 ifeq ($(call need_pkg,"taglib >= 1.9"),)
@@ -11,19 +14,31 @@ endif
 $(TARBALLS)/taglib-$(TAGLIB_VERSION).tar.gz:
 	$(call download_pkg,$(TAGLIB_URL),taglib)
 
-.sum-taglib: taglib-$(TAGLIB_VERSION).tar.gz
+$(TARBALLS)/utfcpp-$(UTFCPP_VERSION).tar.gz:
+	$(call download_pkg,$(UTFCPP_URL),utfcpp)
+
+.sum-taglib: taglib-$(TAGLIB_VERSION).tar.gz utfcpp-$(UTFCPP_VERSION).tar.gz
+
+.sum-utfcpp: .sum-taglib
+	touch $@
 
 taglib: taglib-$(TAGLIB_VERSION).tar.gz .sum-taglib
 	$(UNPACK)
-	$(APPLY) $(SRC)/taglib/0001-Implement-ID3v2-readStyle-avoid-worst-case.patch
-	$(APPLY) $(SRC)/taglib/0001-FileTypeResolver-Fix-IOStream-usage-with-custom-reso.patch
+	$(MOVE)
+
+taglib/3rdparty/utfcpp: utfcpp-$(UTFCPP_VERSION).tar.gz .sum-utfcpp taglib
+	$(UNPACK)
 	$(MOVE)
 
 TAGLIB_CONF := -DBUILD_BINDINGS=OFF
+ifdef HAVE_WINSTORE
+TAGLIB_CONF += -DPLATFORM_WINRT=ON
+endif
 
-.taglib: taglib toolchain.cmake
+
+.taglib: taglib taglib/3rdparty/utfcpp toolchain.cmake
 	$(CMAKECLEAN)
-	$(HOSTVARS) $(CMAKE) $(TAGLIB_CONF)
+	$(HOSTVARS_CMAKE) $(CMAKE) $(TAGLIB_CONF)
 	+$(CMAKEBUILD)
 	$(CMAKEINSTALL)
 	touch $@

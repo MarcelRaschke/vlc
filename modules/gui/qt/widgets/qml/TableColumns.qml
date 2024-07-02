@@ -15,12 +15,11 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 
 import org.videolan.vlc 0.1
-import org.videolan.medialib 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///util/Helpers.js" as Helpers
@@ -41,30 +40,33 @@ Item {
     property int titleCover_height: VLCStyle.trackListAlbumCover_heigth
     property int titleCover_radius: VLCStyle.trackListAlbumCover_radius
 
-    // Functions
-
-    function titlecoverLabels(model) {
-        // implement this function to show labels in title Cover
+    // function (model) -> [string...]
+    // implement this function to show labels in title Cover
+    property var titlecoverLabels: function(model) {
         return []
     }
+
+    // this is called in reponse to user request to play
+    // model is associated row data of delegate
+    signal playClicked(var model)
 
     function getCriterias(colModel, rowModel) {
         if (colModel === null || rowModel === null)
             return ""
 
-        var criterias = colModel.subCriterias
+        const criterias = colModel.subCriterias
 
         if (criterias === undefined || criterias.length === 0)
             return ""
 
-        var string = ""
+        let string = ""
 
-        for (var i = 0; i < criterias.length; i++) {
+        for (let i = 0; i < criterias.length; i++) {
             if (i) string += " • "
 
-            var criteria = criterias[i]
+            const criteria = criterias[i]
 
-            var value = rowModel[criteria]
+            const value = rowModel[criteria]
 
             // NOTE: We can't use 'instanceof' because VLCTick is uncreatable.
             if (value.toString().indexOf("VLCTick(") === 0) {
@@ -72,7 +74,7 @@ Item {
                 string += value.formatShort()
             } else if (criteria === "nb_tracks") {
 
-                string += I18n.qtr("%1 tracks").arg(value)
+                string += qsTr("%1 tracks").arg(value)
             } else {
                 string += value
             }
@@ -81,45 +83,25 @@ Item {
         return string
     }
 
-    // Components
-
-    property Component titleDelegate: RowLayout {
+    property Component titleDelegate: TableRowDelegate {
         id: titleDel
 
-        property var rowModel: parent.rowModel
-        property var model: parent.colModel
-
-        readonly property bool containsMouse: parent.containsMouse
-        readonly property bool currentlyFocused: parent.currentlyFocused
-        readonly property ColorContext colorContext: parent.colorContext
-        readonly property bool selected: parent.selected
-
-        anchors.fill: parent
-        spacing: VLCStyle.margin_normal
-
-        Item {
-            Layout.preferredHeight: root.titleCover_height
-            Layout.preferredWidth: root.titleCover_width
-
-            ListCoverShadow {
-                anchors.fill: cover
-            }
+        RowLayout {
+            anchors.fill: parent
+            spacing: VLCStyle.margin_normal
 
             Widgets.MediaCover {
                 id: cover
 
-                anchors.fill: parent
+                Layout.preferredHeight: root.titleCover_height
+                Layout.preferredWidth: root.titleCover_width
 
-                source: {
-                    var cover = null
-                    if (!!titleDel.rowModel) {
-                        cover = titleDel.rowModel[root.criteriaCover]
-                    }
-                    return cover || titleDel.model.placeHolder || VLCStyle.noArtAlbumCover
-                }
+                source: titleDel.rowModel?.[root.criteriaCover] ?? ""
+
+                fallbackImageSource: titleDel.colModel.placeHolder || VLCStyle.noArtAlbumCover
+
                 playCoverVisible: (titleDel.currentlyFocused || titleDel.containsMouse)
                 playIconSize: VLCStyle.play_cover_small
-                onPlayIconClicked: g_mainDisplay.play(MediaLib, titleDel.rowModel.id)
                 radius: root.titleCover_radius
                 color: titleDel.colorContext.bg.secondary
 
@@ -139,121 +121,135 @@ Item {
                         labels: root.titlecoverLabels(titleDel.rowModel)
                     }
                 }
+
+                DefaultShadow {
+                    anchors.centerIn: parent
+
+                    sourceItem: parent
+                }
+
+                onPlayIconClicked: root.playClicked(titleDel.rowModel)
             }
-        }
 
-        Column {
-            Layout.fillHeight: true
-            Layout.fillWidth: true
+            Column {
+                Layout.fillHeight: true
+                Layout.fillWidth: true
 
-            Layout.topMargin: VLCStyle.margin_xxsmall
-            Layout.bottomMargin: VLCStyle.margin_xxsmall
+                Layout.topMargin: VLCStyle.margin_xxsmall
+                Layout.bottomMargin: VLCStyle.margin_xxsmall
 
-            Widgets.ScrollingText {
-                id: textRect
+                Widgets.TextAutoScroller {
+                    id: textRect
 
-                anchors.left: parent.left
-                anchors.right: parent.right
+                    anchors.left: parent.left
+                    anchors.right: parent.right
 
-                height: (root.showCriterias) ? Math.round(parent.height / 2)
-                                             : parent.height
+                    height: (root.showCriterias) ? Math.round(parent.height / 2)
+                                                 : parent.height
 
-                visible: root.showTitleText
+                    visible: root.showTitleText
+                    enabled: visible
 
-                clip: scrolling
+                    clip: scrolling
 
-                label: text
+                    label: text
 
-                forceScroll: titleDel.currentlyFocused
+                    forceScroll: titleDel.currentlyFocused
 
-                Widgets.ListLabel {
-                    id: text
+                    Widgets.ListLabel {
+                        id: text
 
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: (titleDel.rowModel && root.showTitleText)
-                          ? (titleDel.rowModel[titleDel.model.criteria] || I18n.qtr("Unknown Title"))
-                          : ""
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: (titleDel.rowModel && root.showTitleText)
+                              ? (titleDel.rowModel[titleDel.colModel.criteria] || qsTr("Unknown Title"))
+                              : ""
+
+                        color: titleDel.selected
+                            ? titleDel.colorContext.fg.highlight
+                            : titleDel.colorContext.fg.primary
+
+                    }
+                }
+
+                Widgets.MenuCaption {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+
+                    height: textRect.height
+
+                    visible: root.showCriterias
+                    enabled: visible
+
+                    text: (visible) ? root.getCriterias(titleDel.colModel, titleDel.rowModel) : ""
 
                     color: titleDel.selected
                         ? titleDel.colorContext.fg.highlight
-                        : titleDel.colorContext.fg.primary
-
+                        : titleDel.colorContext.fg.secondary
                 }
             }
+        }
+    }
 
-            Widgets.MenuCaption {
-                anchors.left: parent.left
-                anchors.right: parent.right
+    property Component titleHeaderDelegate: TableHeaderDelegate {
+        id: titleHeadDel
+        Row {
+            anchors.fill: parent
 
-                height: textRect.height
+            spacing: VLCStyle.margin_normal
 
-                visible: root.showCriterias
+            Widgets.IconLabel {
+                width: root.titleCover_width
+                height: parent.height
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                font.pixelSize: VLCStyle.icon_tableHeader
 
-                text: (visible) ? root.getCriterias(titleDel.model, titleDel.rowModel) : ""
+                text: VLCIcons.album_cover
+                color: titleHeadDel.colorContext.fg.secondary
+            }
 
-                color: titleDel.selected
-                    ? titleDel.colorContext.fg.highlight
-                    : titleDel.colorContext.fg.secondary
+            Widgets.CaptionLabel {
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                height: parent.height
+
+                color: titleHeadDel.colorContext.fg.secondary
+
+                text: titleHeadDel.colModel.text ?? ""
+                visible: root.showTitleText
+
+                Accessible.ignored: true
             }
         }
     }
 
-    property Component titleHeaderDelegate: Row {
-        id: titleHeadDel
-        property var model: parent.colModel
-        readonly property ColorContext colorContext: parent.colorContext
-
-        spacing: VLCStyle.margin_normal
-
+    property Component timeHeaderDelegate: TableHeaderDelegate {
         Widgets.IconLabel {
-            width: root.titleCover_width
+            width: timeTextMetric.width
             height: parent.height
+
+            anchors.centerIn: parent
+
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
+
+            text: VLCIcons.time
             font.pixelSize: VLCStyle.icon_tableHeader
-
-            text: VLCIcons.album_cover
-            color: titleHeadDel.colorContext.fg.secondary
-        }
-
-        Widgets.CaptionLabel {
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            height: parent.height
-
-            color: titleHeadDel.colorContext.fg.secondary
-
-            text: titleHeadDel.model
-                    ? titleHeadDel.model.text || ""
-                    : ""
-            visible: root.showTitleText
+            color: parent.colorContext.fg.secondary
         }
     }
 
-    property Component timeHeaderDelegate: Widgets.IconLabel {
-        width: timeTextMetric.width
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-        text: VLCIcons.time
-        font.pixelSize: VLCStyle.icon_tableHeader
-        color: parent.colorContext.fg.secondary
-    }
-
-    property Component timeColDelegate: Item {
+    property Component timeColDelegate: TableRowDelegate {
         id: timeDel
-
-        property var rowModel: parent.rowModel
-        property var model: parent.colModel
-        readonly property bool selected: parent.selected
-        readonly property ColorContext colorContext: parent.colorContext
 
         Widgets.ListLabel {
             width: timeTextMetric.width
             height: parent.height
+
+            anchors.centerIn: parent
+
             horizontalAlignment: Text.AlignHCenter
-            text: (!timeDel.rowModel || !timeDel.rowModel[timeDel.model.criteria])
-                ? ""
-                : timeDel.rowModel[timeDel.model.criteria].formatShort()
+            text: timeDel.rowModel?.[timeDel.colModel.criteria]?.formatShort() ?? ""
             color: timeDel.selected
                 ? timeDel.colorContext.fg.highlight
                 : timeDel.colorContext.fg.primary

@@ -35,6 +35,7 @@
 
 #include "vlc.h"
 
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_arrays.h>
 #include <vlc_charset.h>
@@ -310,7 +311,7 @@ void vlclua_read_custom_meta_data( vlc_object_t *p_this, lua_State *L,
             const char *psz_key = lua_tostring( L, -2 );
             const char *psz_value = lua_tostring( L, -1 );
 
-            vlc_meta_AddExtra( p_input->p_meta, psz_key, psz_value );
+            vlc_meta_SetExtra( p_input->p_meta, psz_key, psz_value );
 
             lua_pop( L, 1 ); /* pop "value" */
         }
@@ -620,7 +621,7 @@ vlc_module_begin ()
         set_description( N_("Lua interpreter") )
         set_subcategory( SUBCAT_INTERFACE_MAIN )
 
-        add_bool( "lua", true, LUA_TEXT, NULL );
+        add_bool( "lua", true, LUA_TEXT, NULL )
         add_string( "lua-intf", "dummy", INTF_TEXT, INTF_LONGTEXT )
         add_string( "lua-config", "", CONFIG_TEXT, CONFIG_LONGTEXT )
         set_capability( "interface", 0 )
@@ -667,7 +668,7 @@ vlc_module_begin ()
         add_shortcut( "luaplaylist" )
         set_shortname( N_("Lua Playlist") )
         set_description( N_("Lua Playlist Parser Interface") )
-        set_capability( "demux", 2 )
+        set_capability( "demux", 5 )
         set_callbacks( Import_LuaPlaylist, Close_LuaPlaylist )
 
     add_submodule ()

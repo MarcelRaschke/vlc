@@ -23,16 +23,9 @@
 
 #import "VLCBottomBarView.h"
 
+#import "extensions/NSColor+VLCAdditions.h"
 #import "extensions/NSView+VLCAdditions.h"
 #import "extensions/NSGradient+VLCAdditions.h"
-
-@interface VLCBottomBarView () {
-    NSBezierPath *_rectanglePath;
-    NSBezierPath *_separatorPath;
-    NSRect _oldBounds;
-}
-
-@end
 
 @implementation VLCBottomBarView
 
@@ -71,94 +64,27 @@
 
 - (void)commonInit
 {
-    _lightGradient = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithSRGBRed:0.90 green:0.90 blue:0.90 alpha:1.0]
-                                                   endingColor:[NSColor colorWithSRGBRed:0.82 green:0.82 blue:0.82 alpha:1.0]];
-    _lightStroke = [NSColor colorWithSRGBRed:0.65 green:0.65 blue:0.65 alpha:1.0];
-
-    if (@available(macOS 10.14, *)) {
-        _darkGradient = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithSRGBRed:0.27 green:0.27 blue:0.27 alpha:1.0]
-                                                      endingColor:[NSColor colorWithSRGBRed:0.22 green:0.22 blue:0.22 alpha:1.0]];
-        _darkStroke = [NSColor colorWithSRGBRed:0.17 green:0.17 blue:0.18 alpha:1.0];
-        [self viewDidChangeEffectiveAppearance];
-    } else {
-        _darkGradient = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithSRGBRed:0.24 green:0.24 blue:0.24 alpha:1.0]
-                                                      endingColor:[NSColor colorWithSRGBRed:0.07 green:0.07 blue:0.07 alpha:1.0]];
-        _darkStroke = [NSColor blackColor];
-    }
-    
-    self.blendingMode = NSVisualEffectBlendingModeBehindWindow;
-}
-
-- (void)calculatePaths
-{
-    if (CGRectEqualToRect(_oldBounds, self.bounds))
-        return;
-
-    _oldBounds = self.bounds;
-
-    NSRect barRect = _oldBounds;
-    CGFloat rectangleCornerRadius = 4;
-
-    // Calculate bottom bar path
-    NSRect rectangleInnerRect = NSInsetRect(barRect, rectangleCornerRadius, rectangleCornerRadius);
-
-    _rectanglePath = [NSBezierPath bezierPath];
-    [_rectanglePath appendBezierPathWithArcWithCenter: NSMakePoint(NSMinX(rectangleInnerRect), NSMinY(rectangleInnerRect)) radius: rectangleCornerRadius startAngle: 180 endAngle: 270];
-    [_rectanglePath appendBezierPathWithArcWithCenter: NSMakePoint(NSMaxX(rectangleInnerRect), NSMinY(rectangleInnerRect)) radius: rectangleCornerRadius startAngle: 270 endAngle: 360];
-    [_rectanglePath lineToPoint: NSMakePoint(NSMaxX(barRect), NSMaxY(barRect))];
-    [_rectanglePath lineToPoint: NSMakePoint(NSMinX(barRect), NSMaxY(barRect))];
-    [_rectanglePath closePath];
-
-    // Calculate bottom bar separator stroke
-    _separatorPath = [NSBezierPath bezierPath];
-    [_separatorPath moveToPoint:NSMakePoint(NSMinX(barRect), NSMaxY(barRect) - 0.5)];
-    [_separatorPath lineToPoint:NSMakePoint(NSMaxX(barRect), NSMaxY(barRect) - 0.5)];
-    [_separatorPath setLineWidth:1.0];
-    [_separatorPath stroke];
+    self.wantsLayer = YES;
+    self.needsDisplay = YES;
+    self.drawBorder = YES;
 }
 
 - (void)drawRect:(NSRect)dirtyRect
 {
-    [self calculatePaths];
+    [super drawRect:dirtyRect];
 
-    NSRect barRect = self.bounds;
-
-    if (NSIsEmptyRect(barRect))
+    if (!self.drawBorder) {
         return;
-
-    [[NSColor clearColor] setFill];
-    NSRectFill(barRect);
-
-    if (_isDark) {
-        [_darkGradient vlc_safeDrawInBezierPath:_rectanglePath angle:270.0];
-        [_darkStroke setStroke];
-    } else {
-        [_lightGradient vlc_safeDrawInBezierPath:_rectanglePath angle:270.0];
-        [_lightStroke setStroke];
     }
 
-    [_separatorPath stroke];
-}
+    const NSRect barFrame = self.frame;
+    NSBezierPath * const separatorPath = NSBezierPath.bezierPath;
+    [separatorPath moveToPoint:NSMakePoint(NSMinX(barFrame), NSMaxY(barFrame) - 0.5)];
+    [separatorPath lineToPoint:NSMakePoint(NSMaxX(barFrame), NSMaxY(barFrame) - 0.5)];
+    separatorPath.lineWidth = 1.0;
 
-- (BOOL)isFlipped
-{
-    return NO;
-}
-
-- (void)viewDidChangeEffectiveAppearance
-{
-    [super viewDidChangeEffectiveAppearance];
-
-    BOOL setDark = NO;
-
-    if (@available(macOS 10.14, *)) {
-        if ([self.effectiveAppearance.name isEqualToString:NSAppearanceNameVibrantDark]) {
-            setDark = YES;
-        }
-    }
-    
-    _isDark = setDark;
-    [self setNeedsDisplay:YES];
+    [NSColor.VLCSubtleBorderColor setStroke];
+    [separatorPath stroke];
 }
 
 @end

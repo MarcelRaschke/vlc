@@ -23,8 +23,50 @@
 #import "NSImage+VLCAdditions.h"
 
 #import <QuickLook/QuickLook.h>
+#import <QuickLookThumbnailing/QuickLookThumbnailing.h>
 
 @implementation NSImage(VLCAdditions)
+
++ (void)quickLookPreviewForLocalPath:(NSString *)path 
+                            withSize:(NSSize)size 
+                   completionHandler:(void (^)(NSImage *))completionHandler
+{
+    NSURL * const pathUrl = [NSURL fileURLWithPath:path];
+    [self quickLookPreviewForLocalURL:pathUrl withSize:size completionHandler:completionHandler];
+}
+
++ (void)quickLookPreviewForLocalURL:(NSURL *)url 
+                           withSize:(NSSize)size 
+                  completionHandler:(void (^)(NSImage *))completionHandler
+{
+    if (@available(macOS 10.15, *)) {
+        const QLThumbnailGenerationRequestRepresentationTypes type = 
+            QLThumbnailGenerationRequestRepresentationTypeAll;
+        QLThumbnailGenerator * const generator = QLThumbnailGenerator.sharedGenerator;
+        QLThumbnailGenerationRequest * const request = 
+            [[QLThumbnailGenerationRequest alloc] initWithFileAtURL:url 
+                                                               size:size 
+                                                              scale:1. 
+                                                representationTypes:type];
+        [generator generateBestRepresentationForRequest:request 
+                                      completionHandler:^(QLThumbnailRepresentation * const thumbnail, 
+                                                          NSError * const error) {
+            if (error != nil) {
+                NSLog(@"Error generating thumbnail: %@", error);
+                completionHandler(nil);
+                return;
+            }
+            completionHandler(thumbnail.NSImage);
+        }];
+    } else {
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+            NSImage * const image = [self quickLookPreviewForLocalURL:url withSize:size];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completionHandler(image);
+            });
+        });
+    }
+}
 
 + (instancetype)quickLookPreviewForLocalPath:(NSString *)path withSize:(NSSize)size
 {
@@ -70,6 +112,78 @@
     [image addRepresentation:bitmapImageRep];
     CFRelease(qlThumbnailRef);
     return image;
+}
+
++ (instancetype)compositeImageWithImages:(NSArray<NSImage *> * const)images
+                                  frames:(NSArray<NSValue *> * const)frames
+                                    size:(const NSSize)size
+{
+    return [NSImage imageWithSize:size
+                          flipped:NO
+                   drawingHandler:^BOOL(const NSRect dstRect) {
+
+        NSUInteger counter = 0;
+        for (NSValue * const rectValue in frames) {
+            if (counter >= images.count) {
+                break;
+            }
+
+            NSImage * const image = [images objectAtIndex:counter];
+            const NSRect imageRect = rectValue.rectValue;
+            [image drawInRect:imageRect
+                     fromRect:NSZeroRect
+                    operation:NSCompositingOperationOverlay
+                     fraction:1.];
+
+            counter += 1;
+        }
+
+        return YES;
+    }];
+}
+
+- (instancetype)imageTintedWithColor:(NSColor *)color
+{
+    NSImage * const image = [self copy];
+
+    if (color != nil) {
+        [image lockFocus];
+        [color set];
+        const NSRect imageRect = {NSZeroPoint, image.size};
+        NSRectFillUsingOperation(imageRect, NSCompositeSourceIn);
+        [image unlockFocus];
+    }
+
+    return image;
+}
+
++ (NSArray<NSValue *> *)framesForCompositeImageSquareGridWithImages:(NSArray<NSImage *> * const)images
+                                                               size:(const NSSize)size
+                                                      gridItemCount:(const NSUInteger)gridItemCount
+{
+    const float sqrtAxisItemCount = sqrt(gridItemCount);
+    const float roundAxisItemCount = roundf(sqrtAxisItemCount);
+    NSAssert(sqrtAxisItemCount == roundAxisItemCount, @"Provided grid item count should be an integer square root");
+
+    // Default to just one item if there are not enough images
+    const NSUInteger actualGridItemCount = images.count >= gridItemCount ? gridItemCount : 1;
+
+    // Default to just one item if there are not enough images
+    const NSUInteger gridDivisor = actualGridItemCount > 1 ? roundAxisItemCount : 1;
+    const CGFloat itemWidth = size.width / gridDivisor;
+    const CGFloat itemHeight = size.height / gridDivisor;
+
+    NSMutableArray<NSValue *> * const rects = NSMutableArray.array;
+
+    for (NSUInteger i = 0; i < actualGridItemCount; ++i) {
+        const CGFloat xPos = (i % gridDivisor) * itemWidth;
+        const CGFloat yPos = floor(i / gridDivisor) * itemHeight;
+        const NSRect rect = NSMakeRect(xPos, yPos, itemWidth, itemHeight);
+        NSValue * const rectVal = [NSValue valueWithRect:rect];
+        [rects addObject:rectVal];
+    }
+
+    return rects.copy;
 }
 
 @end

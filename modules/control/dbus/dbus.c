@@ -54,6 +54,8 @@
 
 #define VLC_MODULE_LICENSE VLC_LICENSE_GPL_2_PLUS
 #include <vlc_common.h>
+#include <vlc_arrays.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_interface.h>
 #include <vlc_meta.h>
@@ -748,7 +750,6 @@ static void ProcessEvents( intf_thread_t *p_intf,
         default:
             vlc_assert_unreachable();
         }
-        free( p_events[i] );
     }
 
     if( !vlc_dictionary_is_empty( &player_properties ) )
@@ -759,6 +760,23 @@ static void ProcessEvents( intf_thread_t *p_intf,
 
     if( !vlc_dictionary_is_empty( &root_properties ) )
         RootPropertiesChangedEmit( p_intf, &root_properties );
+
+
+    for (int i = 0; i < i_events; i++)
+    {
+        switch (p_events[i]->signal)
+        {
+        case SIGNAL_PLAYLIST_ITEM_APPEND:
+            tracklist_append_event_destroy(p_events[i]->items_appended);
+            break;
+        case SIGNAL_PLAYLIST_ITEM_DELETED:
+            tracklist_remove_event_destroy(p_events[i]->items_removed);
+            break;
+        default:
+            break;
+        }
+        free(p_events[i]);
+    }
 
     vlc_dictionary_clear( &player_properties,    NULL, NULL );
     vlc_dictionary_clear( &tracklist_properties, NULL, NULL );
@@ -936,8 +954,10 @@ static void *Run( void *data )
         /* Was the main loop woken up manually ? */
         if (fds[0].revents & POLLIN)
         {
-            char buf;
-            (void)read( fds[0].fd, &buf, 1 );
+            while (read(fds[0].fd, &(char){' '}, 1) == -1)
+            {
+                /* Only EINTR can happen here, so ignore the error. */
+            }
         }
 
         /* We need to lock the mutex while building lists of events,
@@ -1028,8 +1048,18 @@ static bool add_event_locked( intf_thread_t *p_intf, const callback_info_t *p_in
     {
         callback_info_t *oldinfo =
             vlc_array_item_at_index( &p_intf->p_sys->events, i );
-        if( p_info->signal == oldinfo->signal )
-            return false;
+
+        switch (p_info->signal)
+        {
+            /* Those events are squashed afterwards and must be
+             * released appropriately. */
+            case SIGNAL_PLAYLIST_ITEM_APPEND:
+            case SIGNAL_PLAYLIST_ITEM_DELETED:
+                break;
+            default:
+                if (p_info->signal == oldinfo->signal)
+                    return false;
+        }
     }
 
     callback_info_t *p_dup = malloc( sizeof( *p_dup ) );
@@ -1059,9 +1089,11 @@ playlist_on_items_added(vlc_playlist_t *playlist, size_t index,
                         void *data)
 {
     tracklist_append_event_t *append_event = tracklist_append_event_create(index, items, count);
-    add_event_signal(data,
+    bool added = add_event_signal(data,
             &(callback_info_t){ .signal = SIGNAL_PLAYLIST_ITEM_APPEND,
                                 .items_appended = append_event });
+    if (!added)
+        tracklist_append_event_destroy(append_event);
     (void) playlist;
 }
 
@@ -1070,9 +1102,11 @@ playlist_on_items_removed(vlc_playlist_t *playlist,
                           size_t index, size_t count, void *data)
 {
     tracklist_remove_event_t *remove_event = tracklist_remove_event_create(index, count);
-    add_event_signal(data,
+    bool added = add_event_signal(data,
             &(callback_info_t){ .signal = SIGNAL_PLAYLIST_ITEM_DELETED,
                                 .items_removed = remove_event });
+    if (!added)
+        tracklist_remove_event_destroy(remove_event);
     (void) playlist;
 }
 

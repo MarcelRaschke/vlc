@@ -28,6 +28,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_codec.h>
 
@@ -61,6 +62,8 @@ static const char* const quality_desc[] = {
     N_("Good"), N_("Realtime"), N_("Best"),
 };
 #endif
+#define THREADS_TEXT N_( "Threads" )
+#define THREADS_LONGTEXT N_( "Number of threads used for decoding, 0 meaning auto" )
 
 /*****************************************************************************
  * Module descriptor
@@ -71,6 +74,7 @@ vlc_module_begin ()
     set_description(N_("WebM video decoder"))
     set_capability("video decoder", 60)
     set_callbacks(OpenDecoder, CloseDecoder)
+    add_integer( "vpx-threads", 0, THREADS_TEXT, THREADS_LONGTEXT );
     set_subcategory(SUBCAT_INPUT_VCODEC)
 #ifdef ENABLE_SOUT
     add_submodule()
@@ -78,10 +82,17 @@ vlc_module_begin ()
     set_capability("video encoder", 60)
     set_description(N_("WebM video encoder"))
     set_callback(OpenEncoder)
+
+    add_submodule()
+    set_shortname("vpx")
+    set_capability("image encoder", 60)
+    set_description(N_("WebP image encoder"))
+    set_callback(OpenEncoder)
+
 #   define ENC_CFG_PREFIX "sout-vpx-"
     add_integer( ENC_CFG_PREFIX "quality-mode", VPX_DL_BEST_QUALITY, QUALITY_MODE_TEXT,
                  QUALITY_MODE_LONGTEXT )
-        change_integer_list( quality_values, quality_desc );
+        change_integer_list( quality_values, quality_desc )
 #endif
 vlc_module_end ()
 
@@ -298,14 +309,22 @@ static int OpenDecoder(vlc_object_t *p_this)
     switch (dec->fmt_in->i_codec)
     {
 #ifdef ENABLE_VP8_DECODER
-    case VLC_CODEC_WEBP:
     case VLC_CODEC_VP8:
+        if (dec->fmt_in->i_level != 0 && dec->fmt_in->i_level != -1) // contains alpha extradata
+            return VLC_ENOTSUP;
+        // fallthrough
+    case VLC_CODEC_WEBP:
+    case VLC_CODEC_VP8ALPHA_ES:
         iface = &vpx_codec_vp8_dx_algo;
         vp_version = 8;
         break;
 #endif
 #ifdef ENABLE_VP9_DECODER
     case VLC_CODEC_VP9:
+        if (dec->fmt_in->i_level != 0 && dec->fmt_in->i_level != -1) // contains alpha extradata
+            return VLC_ENOTSUP;
+        // fallthrough
+    case VLC_CODEC_VP9ALPHA_ES:
         iface = &vpx_codec_vp9_dx_algo;
         vp_version = 9;
         break;
@@ -319,8 +338,9 @@ static int OpenDecoder(vlc_object_t *p_this)
         return VLC_ENOMEM;
     dec->p_sys = sys;
 
+    int i_thread_count = var_InheritInteger(p_this, "vpx-threads");
     struct vpx_codec_dec_cfg deccfg = {
-        .threads = __MIN(vlc_GetCPUCount(), 16)
+        .threads = i_thread_count ? i_thread_count : __MIN(vlc_GetCPUCount(), 16)
     };
 
     msg_Dbg(p_this, "VP%d: using libvpx version %s (build options %s)",
@@ -329,7 +349,7 @@ static int OpenDecoder(vlc_object_t *p_this)
     if (vpx_codec_dec_init(&sys->ctx, iface, &deccfg, 0) != VPX_CODEC_OK) {
         VPX_ERR(p_this, &sys->ctx, "Failed to initialize decoder");
         free(sys);
-        return VLC_EGENERIC;;
+        return VLC_EGENERIC;
     }
 
     dec->pf_decode = Decode;
@@ -392,14 +412,19 @@ static int OpenEncoder(vlc_object_t *p_this)
     switch (p_enc->fmt_out.i_codec)
     {
 #ifdef ENABLE_VP8_ENCODER
-    case VLC_CODEC_WEBP:
     case VLC_CODEC_VP8:
+        if (p_enc->fmt_out.i_level != 0 && p_enc->fmt_out.i_level != -1) // contains alpha extradata
+            return VLC_ENOTSUP;
+        // fallthrough
+    case VLC_CODEC_WEBP:
         iface = &vpx_codec_vp8_cx_algo;
         vp_version = 8;
         break;
 #endif
 #ifdef ENABLE_VP9_ENCODER
     case VLC_CODEC_VP9:
+        if (p_enc->fmt_out.i_level != 0 && p_enc->fmt_out.i_level != -1) // contains alpha extradata
+            return VLC_ENOTSUP;
         iface = &vpx_codec_vp9_cx_algo;
         vp_version = 9;
         break;
@@ -428,7 +453,7 @@ static int OpenEncoder(vlc_object_t *p_this)
         goto error;
     }
 
-    p_enc->fmt_in.i_codec = VLC_CODEC_I420;
+    p_enc->fmt_in.i_codec = p_enc->fmt_in.video.i_chroma = VLC_CODEC_I420;
     config_ChainParse(p_enc, ENC_CFG_PREFIX, ppsz_sout_options, p_enc->p_cfg);
 
     /* Deadline (in ms) to spend in encoder */

@@ -41,50 +41,36 @@
 #include "common.h"
 #include "../../video_chroma/copy.h"
 
-void CommonInit(display_win32_area_t *area)
+void CommonInit(display_win32_area_t *area, const video_format_t *src_fmt)
 {
+    ZeroMemory(&area->place, sizeof(area->place));
     area->place_changed = false;
+    area->src_fmt = src_fmt;
 }
 
-#ifndef VLC_WINSTORE_APP
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
 /* */
 int CommonWindowInit(vout_display_t *vd, display_win32_area_t *area,
-                     vout_display_sys_win32_t *sys, bool projection_gestures)
+                     bool projection_gestures)
 {
     if (unlikely(vd->cfg->window == NULL))
         return VLC_EGENERIC;
 
     /* */
-#if !defined(NDEBUG) && defined(HAVE_DXGIDEBUG_H)
-    sys->dxgidebug_dll = LoadLibrary(TEXT("DXGIDEBUG.DLL"));
-#endif
-    sys->hvideownd = NULL;
-    sys->hparent   = NULL;
-
-    /* */
-    sys->event = EventThreadCreate(VLC_OBJECT(vd), vd->cfg->window);
-    if (!sys->event)
+    area->event = EventThreadCreate(VLC_OBJECT(vd), vd->cfg->window,
+                                    &vd->cfg->display,
+                                    projection_gestures ? &vd->owner : NULL);
+    if (!area->event)
         return VLC_EGENERIC;
-
-    /* */
-    event_cfg_t cfg;
-    memset(&cfg, 0, sizeof(cfg));
-    cfg.width  = vd->cfg->display.width;
-    cfg.height = vd->cfg->display.height;
-    cfg.is_projected = projection_gestures;
-
-    event_hwnd_t hwnd;
-    if (EventThreadStart(sys->event, &hwnd, &cfg))
-        return VLC_EGENERIC;
-
-    sys->hparent       = hwnd.hparent;
-    sys->hvideownd     = hwnd.hvideownd;
-
-    CommonPlacePicture(vd, area);
 
     return VLC_SUCCESS;
 }
-#endif /* !VLC_WINSTORE_APP */
+
+HWND CommonVideoHWND(const display_win32_area_t *area)
+{
+    return EventThreadVideoHWND(area->event);
+}
+#endif /* WINAPI_PARTITION_DESKTOP */
 
 /*****************************************************************************
 * UpdateRects: update clipping rectangles
@@ -97,7 +83,7 @@ void CommonPlacePicture(vout_display_t *vd, display_win32_area_t *area)
 {
     /* Update the window position and size */
     vout_display_place_t before_place = area->place;
-    vout_display_PlacePicture(&area->place, vd->source, &vd->cfg->display);
+    vout_display_PlacePicture(&area->place, area->src_fmt, &vd->cfg->display);
 
     /* Signal the change in size/position */
     if (!vout_display_PlaceEquals(&before_place, &area->place))
@@ -106,47 +92,38 @@ void CommonPlacePicture(vout_display_t *vd, display_win32_area_t *area)
 
 #ifndef NDEBUG
         msg_Dbg(vd, "UpdateRects source offset: %i,%i visible: %ix%i decoded: %ix%i",
-            vd->source->i_x_offset, vd->source->i_y_offset,
-            vd->source->i_visible_width, vd->source->i_visible_height,
-            vd->source->i_width, vd->source->i_height);
+            area->src_fmt->i_x_offset, area->src_fmt->i_y_offset,
+            area->src_fmt->i_visible_width, area->src_fmt->i_visible_height,
+            area->src_fmt->i_width, area->src_fmt->i_height);
         msg_Dbg(vd, "UpdateRects image_dst coords: %i,%i %ix%i",
             area->place.x, area->place.y, area->place.width, area->place.height);
 #endif
     }
 }
 
-#ifndef VLC_WINSTORE_APP
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
 /* */
-void CommonWindowClean(vout_display_sys_win32_t *sys)
+void CommonWindowClean(display_win32_area_t *sys)
 {
-    if (sys->event) {
-        EventThreadStop(sys->event);
-        EventThreadDestroy(sys->event);
-    }
+    EventThreadDestroy(sys->event);
 }
-#endif /* !VLC_WINSTORE_APP */
+#endif /* WINAPI_PARTITION_DESKTOP */
 
-void CommonControl(vout_display_t *vd, display_win32_area_t *area, vout_display_sys_win32_t *sys, int query)
+void CommonControl(vout_display_t *vd, display_win32_area_t *area, int query)
 {
     switch (query) {
     case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
-#ifndef VLC_WINSTORE_APP
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
         // Update dimensions
-        if (sys->event != NULL)
+        if (area->event != NULL)
         {
-            RECT clientRect;
-            GetClientRect(sys->hparent, &clientRect);
-
-            SetWindowPos(sys->hvideownd, 0, 0, 0,
-                         RECTWidth(clientRect),
-                         RECTHeight(clientRect), SWP_NOZORDER|SWP_NOMOVE|SWP_NOACTIVATE);
+            EventThreadUpdateSize(area->event);
         }
-#endif /* !VLC_WINSTORE_APP */
+#endif /* WINAPI_PARTITION_DESKTOP */
         // fallthrough
-    case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
-    case VOUT_DISPLAY_CHANGE_ZOOM:
     case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
     case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
+    case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
         CommonPlacePicture(vd, area);
         break;
 

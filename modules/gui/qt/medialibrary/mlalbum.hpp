@@ -18,26 +18,18 @@
 
 #pragma once
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
-#include "vlc_common.h"
-
-#include <QObject>
 #include <QString>
 #include <QList>
 #include <memory>
-#include "vlc_media_library.h"
 #include "mlhelper.hpp"
 #include "mlqmltypes.hpp"
-#include "util/vlctick.hpp"
 
-class MLAlbum : public QObject, public MLItem
+class VLCTick;
+
+class MLAlbum : public MLItem
 {
-    Q_OBJECT
-
 public:
-    MLAlbum(const vlc_ml_album_t *_data, QObject *_parent = nullptr);
+    MLAlbum(const vlc_ml_album_t *_data);
 
     QString getTitle() const;
     unsigned int getReleaseYear() const;
@@ -46,10 +38,6 @@ public:
     QString getArtist() const;
     unsigned int getNbTracks() const;
     VLCTick getDuration() const;
-
-    Q_INVOKABLE QString getPresName() const;
-    Q_INVOKABLE QString getPresImage() const;
-    Q_INVOKABLE QString getPresInfo() const;
 
 private:
     QString m_title;

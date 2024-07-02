@@ -47,6 +47,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 #include <vlc_block.h>
@@ -85,7 +86,7 @@
                         "it will be rendered as fast as possible.")
 
 static int  Open ( vlc_object_t * );
-static void Close( vlc_object_t * );
+static void Close( sout_stream_t * );
 
 #define SOUT_CFG_PREFIX "sout-smem-"
 #define SOUT_PREFIX_VIDEO SOUT_CFG_PREFIX"video-"
@@ -111,7 +112,7 @@ vlc_module_begin ()
         change_volatile()
     add_bool( SOUT_CFG_PREFIX "time-sync", true, T_TIME_SYNC, LT_TIME_SYNC )
         change_private()
-    set_callbacks( Open, Close )
+    set_callback( Open )
 vlc_module_end ()
 
 
@@ -123,7 +124,7 @@ static const char *const ppsz_sout_options[] = {
     "video-postrender-callback", "audio-postrender-callback", "video-data", "audio-data", "time-sync", NULL
 };
 
-static void *Add( sout_stream_t *, const es_format_t * );
+static void *Add( sout_stream_t *, const es_format_t *, const char * );
 static void  Del( sout_stream_t *, void * );
 static int   Send( sout_stream_t *, void *, block_t * );
 
@@ -135,7 +136,17 @@ static int SendAudio( sout_stream_t *p_stream, void *id, block_t *p_buffer );
 
 typedef struct
 {
-    es_format_t format;
+    enum es_format_category_e i_cat;
+    union {
+        struct {
+            uint8_t      i_channels;
+            unsigned int i_rate;
+        } audio;
+        struct {
+            unsigned int i_width, i_height;
+        } video;
+    };
+    unsigned i_bitspersample;
     void *p_data;
 } sout_stream_id_sys_t;
 
@@ -206,7 +217,11 @@ static int Control(sout_stream_t *stream, int query, va_list args)
 }
 
 static const struct sout_stream_operations ops = {
-    Add, Del, Send, Control, NULL, NULL,
+    .add = Add,
+    .del = Del,
+    .send = Send,
+    .control = Control,
+    .close = Close,
 };
 
 /*****************************************************************************
@@ -260,13 +275,13 @@ static int Open( vlc_object_t *p_this )
 /*****************************************************************************
  * Close:
  *****************************************************************************/
-static void Close( vlc_object_t * p_this )
+static void Close( sout_stream_t *p_stream )
 {
-    sout_stream_t *p_stream = (sout_stream_t*)p_this;
     free( p_stream->p_sys );
 }
 
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *
+Add(sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id)
 {
     sout_stream_id_sys_t *id = NULL;
 
@@ -275,45 +290,13 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
     else if ( p_fmt->i_cat == AUDIO_ES )
         id = AddAudio( p_stream, p_fmt );
     return id;
+    (void)es_id;
 }
 
 static void *AddVideo( sout_stream_t *p_stream, const es_format_t *p_fmt )
 {
     char* psz_tmp;
     sout_stream_id_sys_t    *id;
-    int i_bits_per_pixel;
-
-    switch( p_fmt->i_codec )
-    {
-        case VLC_CODEC_RGB32:
-        case VLC_CODEC_RGBA:
-        case VLC_CODEC_ARGB:
-        case VLC_CODEC_BGRA:
-        case VLC_CODEC_ABGR:
-            i_bits_per_pixel = 32;
-            break;
-        case VLC_CODEC_I444:
-        case VLC_CODEC_RGB24:
-            i_bits_per_pixel = 24;
-            break;
-        case VLC_CODEC_RGB16:
-        case VLC_CODEC_RGB15:
-        case VLC_CODEC_RGB8:
-        case VLC_CODEC_I422:
-            i_bits_per_pixel = 16;
-            break;
-        case VLC_CODEC_YV12:
-        case VLC_CODEC_I420:
-            i_bits_per_pixel = 12;
-            break;
-        case VLC_CODEC_RGBP:
-            i_bits_per_pixel = 8;
-            break;
-        default:
-            i_bits_per_pixel = 0;
-            msg_Dbg( p_stream, "non raw video format detected (%4.4s), buffers will contain compressed video", (char *)&p_fmt->i_codec );
-            break;
-    }
 
     id = calloc( 1, sizeof( sout_stream_id_sys_t ) );
     if( !id )
@@ -323,8 +306,12 @@ static void *AddVideo( sout_stream_t *p_stream, const es_format_t *p_fmt )
     id->p_data = (void *)( intptr_t )atoll( psz_tmp );
     free( psz_tmp );
 
-    es_format_Copy( &id->format, p_fmt );
-    id->format.video.i_bits_per_pixel = i_bits_per_pixel;
+    id->i_cat = VIDEO_ES;
+    id->video.i_width  = p_fmt->video.i_width;
+    id->video.i_height = p_fmt->video.i_height;
+    id->i_bitspersample = vlc_fourcc_GetChromaBPP(p_fmt->video.i_chroma);
+    if (id->i_bitspersample == 0)
+        msg_Dbg( p_stream, "non raw video format detected (%4.4s), buffers will contain compressed video", (char *)&p_fmt->i_codec );
     return id;
 }
 
@@ -348,8 +335,10 @@ static void *AddAudio( sout_stream_t *p_stream, const es_format_t *p_fmt )
     id->p_data = (void *)( intptr_t )atoll( psz_tmp );
     free( psz_tmp );
 
-    es_format_Copy( &id->format, p_fmt );
-    id->format.audio.i_bitspersample = i_bits_per_sample;
+    id->i_cat = AUDIO_ES;
+    id->audio.i_channels = p_fmt->audio.i_channels;
+    id->audio.i_rate     = p_fmt->audio.i_rate;
+    id->i_bitspersample = i_bits_per_sample;
     return id;
 }
 
@@ -357,16 +346,15 @@ static void Del( sout_stream_t *p_stream, void *_id )
 {
     VLC_UNUSED( p_stream );
     sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
-    es_format_Clean( &id->format );
     free( id );
 }
 
 static int Send( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
 {
     sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
-    if ( id->format.i_cat == VIDEO_ES )
+    if ( id->i_cat == VIDEO_ES )
         return SendVideo( p_stream, id, p_buffer );
-    else if ( id->format.i_cat == AUDIO_ES )
+    if ( id->i_cat == AUDIO_ES )
         return SendAudio( p_stream, id, p_buffer );
     return VLC_SUCCESS;
 }
@@ -392,8 +380,9 @@ static int SendVideo( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
     memcpy( p_pixels, p_buffer->p_buffer, i_size );
     /* Calling the postrender callback to tell the user his buffer is ready */
     p_sys->pf_video_postrender_callback( id->p_data, p_pixels,
-                                         id->format.video.i_width, id->format.video.i_height,
-                                         id->format.video.i_bits_per_pixel, i_size, p_buffer->i_pts );
+                                         id->video.i_width, id->video.i_height,
+                                         id->i_bitspersample,
+                                         i_size, p_buffer->i_pts );
     block_ChainRelease( p_buffer );
     return VLC_SUCCESS;
 }
@@ -407,14 +396,14 @@ static int SendAudio( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
     int i_samples = 0;
 
     i_size = p_buffer->i_buffer;
-    if (id->format.audio.i_channels == 0)
+    if (id->audio.i_channels == 0)
     {
         msg_Warn( p_stream, "No buffer given!" );
         block_ChainRelease( p_buffer );
         return VLC_EGENERIC;
     }
 
-    i_samples = i_size / ( ( id->format.audio.i_bitspersample / 8 ) * id->format.audio.i_channels );
+    i_samples = i_size / ( ( id->i_bitspersample / 8 ) * id->audio.i_channels );
     /* Calling the prerender callback to get user buffer */
     p_sys->pf_audio_prerender_callback( id->p_data, &p_pcm_buffer, i_size );
     if (!p_pcm_buffer)
@@ -428,8 +417,8 @@ static int SendAudio( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
     memcpy( p_pcm_buffer, p_buffer->p_buffer, i_size );
     /* Calling the postrender callback to tell the user his buffer is ready */
     p_sys->pf_audio_postrender_callback( id->p_data, p_pcm_buffer,
-                                         id->format.audio.i_channels, id->format.audio.i_rate, i_samples,
-                                         id->format.audio.i_bitspersample, i_size, p_buffer->i_pts );
+                                         id->audio.i_channels, id->audio.i_rate, i_samples,
+                                         id->i_bitspersample, i_size, p_buffer->i_pts );
     block_ChainRelease( p_buffer );
     return VLC_SUCCESS;
 }

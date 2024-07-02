@@ -221,11 +221,7 @@ CheckableListMenu::CheckableListMenu(QString title, QAbstractListModel* model , 
         m_actionGroup = new QActionGroup(this);
         if (m_grouping == GROUPED_OPTIONAL)
         {
-#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
             m_actionGroup->setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);
-#else
-            m_actionGroup->setExclusive(false);
-#endif
         }
     }
 
@@ -446,7 +442,7 @@ BooleanPropertyAction::BooleanPropertyAction(QString title, QObject *model, QStr
     int propertyId = meta->indexOfProperty(qtu(propertyName));
     assert(propertyId != -1);
     QMetaProperty property = meta->property(propertyId);
-    assert(property.type() ==  QVariant::Bool);
+    assert(property.typeId() ==  QMetaType::Bool);
     const QMetaObject* selfMeta = this->metaObject();
 
     assert(property.hasNotifySignal());
@@ -538,15 +534,11 @@ void RecentMenu::onDataChanged(const QModelIndex& topLeft, const QModelIndex& bo
 
 void RecentMenu::onModelReset()
 {
-    for (QAction * action : m_actions)
-    {
-        delete action;
-    }
-
+    qDeleteAll(m_actions);
     m_actions.clear();
 
     int nb_rows = m_model->rowCount();
-    if (nb_rows == 0)
+    if (nb_rows == 0 || nb_rows == -1)
         setEnabled(false);
     else
         onRowInserted({}, 0, nb_rows - 1);

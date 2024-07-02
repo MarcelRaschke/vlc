@@ -16,16 +16,15 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
-import QtQuick.Layouts 1.11
-import QtGraphicalEffects 1.0
-import QtQml.Models 2.11
-import QtQuick.Window 2.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
+import QtQuick.Layouts
+import Qt5Compat.GraphicalEffects
+import QtQml.Models
+import QtQuick.Window
 
 import org.videolan.vlc 0.1
-import org.videolan.compat 0.1
 
 import "qrc:///style/"
 import "qrc:///playlist/" as PL
@@ -33,22 +32,13 @@ import "qrc:///widgets/" as Widgets
 import "qrc:///menus/" as Menus
 import "qrc:///util/Helpers.js" as Helpers
 
-FocusScope {
+T.ToolBar {
     id: root
 
-    height: VLCStyle.applicationVerticalMargin
-            + (menubar.visible ? menubar.height : 0)
-            + VLCStyle.globalToolbar_height
-            + VLCStyle.localToolbar_height
 
     property int selectedIndex: 0
-    property int subSelectedIndex: 0
     property alias sortMenu: sortControl.menu
-    property alias sortModel: sortControl.model
-    property var contentModel
-    property alias isViewMultiView: list_grid_btn.visible
     property alias model: pLBannerSources.model
-    property var extraLocalActions: undefined
     property alias localMenuDelegate: localMenuGroup.sourceComponent
 
     // For now, used for d&d functionality
@@ -61,13 +51,16 @@ FocusScope {
     signal toogleMenu()
 
 
+    height: VLCStyle.applicationVerticalMargin
+            + (menubar.visible ? menubar.height : 0)
+            + VLCStyle.globalToolbar_height
+            + VLCStyle.localToolbar_height
+
+    hoverEnabled: true
+
     // Triggered when the toogleView button is selected
     function toggleView () {
         MainCtx.gridView = !MainCtx.gridView
-    }
-
-    function search() {
-        searchBox.state = "expanded"
     }
 
     ColorContext {
@@ -75,43 +68,29 @@ FocusScope {
         colorSet: ColorContext.Window
     }
 
-    BindingCompat {
-        property: "searchPattern"
+    Binding {
+        target: MainCtx.search
+        property: "pattern"
         value: searchBox.searchPattern
-        when: !!contentModel
+    }
 
-        Component.onCompleted: {
-            // restoreMode is only available in Qt >= 5.14
-            if ("restoreMode" in this)
-                this.restoreMode = Binding.RestoreBindingOrValue
-
-            target = Qt.binding(function() { return !!contentModel ? contentModel : null })
+    Connections {
+        target: MainCtx.search
+        function onAskShow() {
+            searchBox.expandAndFocus()
         }
     }
 
-    Widgets.AcrylicBackground {
+    background: Widgets.AcrylicBackground {
         tintColor: theme.bg.primary
         alternativeColor: theme.bg.secondary
-        anchors.fill: parent
     }
 
-
-    MouseArea {
-        // don't tranfer mouse to underlying components (#26274)
-        anchors.fill: parent
-        hoverEnabled: true
-        preventStealing: true
-    }
-
-    Item {
+    contentItem:  Column {
         id: pLBannerSources
 
         property alias model: globalMenuGroup.model
 
-        anchors.fill: parent
-
-        Column {
-            id: col
             anchors {
                 fill: parent
                 topMargin: VLCStyle.applicationVerticalMargin
@@ -144,32 +123,40 @@ FocusScope {
                         width: parent.width
                         height: implicitHeight
                         visible: MainCtx.hasToolbarMenu
+                        enabled: visible
                     }
 
                     Item {
                         width: parent.width
                         height: VLCStyle.globalToolbar_height
 
+                        Accessible.role: Accessible.ToolBar
+
                         RowLayout {
                             id: globalToolbarLeft
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.left: parent.left
                             anchors.leftMargin: VLCStyle.margin_xsmall
-                            spacing: VLCStyle.margin_xxxsmall
+                            spacing: VLCStyle.margin_normal
 
                             Widgets.IconToolButton {
                                  id: history_back
-                                 size: VLCStyle.icon_banner
-                                 iconText: VLCIcons.back
-                                 text: I18n.qtr("Previous")
+                                 font.pixelSize: VLCStyle.icon_banner
+                                 text: VLCIcons.back
+                                 description: qsTr("Previous")
                                  height: VLCStyle.bannerButton_height
                                  width: VLCStyle.bannerButton_width
                                  onClicked: History.previous()
                                  enabled: !History.previousEmpty
 
+                                 onEnabledChanged: {
+                                    if (!enabled && focus)
+                                        globalMenuGroup.focus = true
+                                 }
+
                                  Navigation.parentItem: root
                                  Navigation.rightItem: globalMenuGroup
-                                 Navigation.downItem: localMenuGroup.visible ? localMenuGroup : localToolbarBg
+                                 Navigation.downItem: localMenuGroup.visible ? localMenuGroup : localToolbar
                             }
 
                             Widgets.BannerCone {
@@ -189,16 +176,18 @@ FocusScope {
 
                             focus: true
 
-                            indexFocus: root.selectedIndex
+                            //indexFocus: root.selectedIndex
+
+                            Accessible.role: Accessible.PageTabList
 
                             Navigation.parentItem: root
-                            Navigation.leftItem: history_back.enabled ? history_back : null
-                            Navigation.downItem: localMenuGroup.visible ?  localMenuGroup : playlistGroup
+                            Navigation.leftItem: history_back
+                            Navigation.downItem: localMenuView.visible ?  localMenuView : localToolbar
 
                             delegate: Widgets.BannerTabButton {
                                 iconTxt: model.icon
                                 showText: globalToolbar.colapseTabButtons
-                                selected: model.index === root.selectedIndex
+                                selected: History.match(History.viewPath, ["mc", model.name])
                                 onClicked: root.itemClicked(model.index)
                                 height: globalMenuGroup.height
                             }
@@ -222,24 +211,11 @@ FocusScope {
             }
 
             //use a raw control, we don't want platforms customisation
-            T.Control {
+            T.ToolBar {
                 id: localToolbar
 
                 width: parent.width
                 height: VLCStyle.localToolbar_height
-
-                onActiveFocusChanged: {
-                    if (activeFocus) {
-                        // sometimes when view changes, one of the "focusable" object will become disabled
-                        // but because of focus chainning, FocusScope still tries to force active focus on the object
-                        // but that will fail, manually assign focus in such cases
-                        var focusable = [localContextGroup, localMenuGroup, playlistGroup]
-                        if (!focusable.some(function (obj) { return obj.activeFocus; })) {
-                            // no object has focus
-                            localToolbar.nextItemInFocusChain(true).forceActiveFocus()
-                        }
-                    }
-                }
 
                 background: Rectangle {
                     id: localToolbarBg
@@ -267,21 +243,29 @@ FocusScope {
                             left: parent.left
                             leftMargin: VLCStyle.applicationHorizontalMargin + VLCStyle.margin_xsmall
                         }
+
+                        spacing: VLCStyle.margin_normal
                         enabled: list_grid_btn.visible || sortControl.visible
 
+                        onEnabledChanged: {
+                            if (!enabled && focus) {
+                                if (localMenuView.enabled)
+                                    localMenuView.focus = true
+                                else
+                                    playlistGroup.focus = true
+                            }
+                        }
+
                         model: ObjectModel {
-                            id: localContextModel
-
-                            property int countExtra: 0
-
                             Widgets.IconToolButton {
                                 id: list_grid_btn
 
+                                visible: MainCtx.hasGridListMode
                                 width: VLCStyle.bannerButton_width
                                 height: VLCStyle.bannerButton_height
-                                size: VLCStyle.icon_banner
-                                iconText: MainCtx.gridView ? VLCIcons.list : VLCIcons.grid
-                                text: I18n.qtr("List/Grid")
+                                font.pixelSize: VLCStyle.icon_banner
+                                text: MainCtx.gridView ? VLCIcons.list : VLCIcons.grid
+                                description: qsTr("List/Grid")
                                 onClicked: MainCtx.gridView = !MainCtx.gridView
                                 enabled: true
                             }
@@ -292,115 +276,103 @@ FocusScope {
                                 width: VLCStyle.bannerButton_width
                                 height: VLCStyle.bannerButton_height
 
-                                iconSize: VLCStyle.icon_banner
+                                font.pixelSize: VLCStyle.icon_banner
 
-                                visible: root.sortModel !== undefined && root.sortModel.length > 1
+                                visible: MainCtx.sort.available
 
                                 enabled: visible
 
-                                textRole: "text"
-                                criteriaRole: "criteria"
+                                model: MainCtx.sort.model
 
-                                sortKey: contentModel ? contentModel.sortCriteria
-                                                      : PlaylistControllerModel.SORT_KEY_NONE
+                                sortKey:  MainCtx.sort.criteria
+                                sortOrder: MainCtx.sort.order
 
-                                sortOrder: contentModel ? contentModel.sortOrder : undefined
-
-                                onSortSelected: {
-                                    if (contentModel !== undefined)
-                                        contentModel.sortCriteria = key
+                                onSortSelected: (key) => {
+                                    MainCtx.sort.criteria = key
                                 }
-
-                                onSortOrderSelected: {
-                                    if (contentModel !== undefined)
-                                        contentModel.sortOrder = type
-                                }
-                            }
-                        }
-
-                        Connections {
-                            target: root
-                            onExtraLocalActionsChanged : {
-                                for (var i = 0; i < localContextModel.countExtra; i++) {
-                                    localContextModel.remove(localContextModel.count - localContextModel.countExtra, localContextModel.countExtra)
-                                }
-
-                                if (root.extraLocalActions && root.extraLocalActions instanceof ObjectModel) {
-                                    for (i = 0; i < root.extraLocalActions.count; i++)
-                                        localContextModel.append(root.extraLocalActions.get(i))
-                                    localContextModel.countExtra = root.extraLocalActions.count
-                                } else {
-                                    localContextModel.countExtra = 0
+                                onSortOrderSelected: (type) => {
+                                    MainCtx.sort.order = type
                                 }
                             }
                         }
 
                         Navigation.parentItem: root
-                        Navigation.rightItem: localMenuGroup.visible ? localMenuGroup : playlistGroup
-                        Navigation.upItem: globalMenuGroup
+                        Navigation.rightItem: localMenuView
+                        Navigation.upItem: history_back.enabled ? history_back : globalMenuGroup
                     }
 
-                    Flickable {
+                    T.Pane {
                         id: localMenuView
 
-                        readonly property int availableWidth: parent.width
+                        readonly property int _availableWidth: parent.width
                                                               - (localContextGroup.width + playlistGroup.width)
                                                               - (VLCStyle.applicationHorizontalMargin * 2)
                                                               - (VLCStyle.margin_xsmall * 2)
                                                               - (VLCStyle.margin_xxsmall * 2)
-                        readonly property bool _alignHCenter: ((localToolbarContent.width - contentWidth) / 2) + contentWidth < playlistGroup.x
 
-                        width: Math.min(contentWidth, availableWidth)
+                        readonly property bool _alignHCenter: ((localToolbarContent.width - contentItem.contentWidth) / 2) + contentItem.contentWidth
+                                                              < playlistGroup.x
+
+                        width: Math.min(contentItem.contentWidth, _availableWidth)
                         height: VLCStyle.localToolbar_height
-                        clip: contentWidth > width
-                        contentWidth: localMenuGroup.width
-                        contentHeight: VLCStyle.localToolbar_height // don't allow vertical flickering
+                        enabled: localMenuGroup.sourceComponent !== null
+                        visible: enabled
 
                         anchors.right: playlistGroup.left
                         anchors.rightMargin: VLCStyle.margin_xxsmall // only applied when right aligned
 
-                        ScrollBar.horizontal: ScrollBar { }
+                        onEnabledChanged: {
+                            if (!enabled && focus) {
+                                playlistGroup.focus = true
+                            }
+                        }
 
                         on_AlignHCenterChanged: {
                             if (_alignHCenter) {
-                                anchors.horizontalCenter = localToolbarContent.horizontalCenter
                                 anchors.right = undefined
+                                anchors.horizontalCenter = parent.horizontalCenter
                             } else {
                                 anchors.horizontalCenter = undefined
                                 anchors.right = playlistGroup.left
                             }
                         }
 
-                        Loader {
-                            id: localMenuGroup
+                        Navigation.parentItem: root
+                        Navigation.leftItem: localContextGroup
+                        Navigation.rightItem: playlistGroup
+                        Navigation.upItem: globalMenuGroup
 
-                            focus: true
-                            visible: !!item
-                            enabled: status === Loader.Ready
-                            y: status === Loader.Ready ? (VLCStyle.localToolbar_height - item.height) / 2 : 0
-                            width: !!item
-                                   ? Helpers.clamp(localMenuView.availableWidth,
-                                                   localMenuGroup.item.minimumWidth || localMenuGroup.item.implicitWidth,
-                                                   localMenuGroup.item.maximumWidth || localMenuGroup.item.implicitWidth)
-                                   : 0
+                        contentItem: Flickable {
 
-                            onVisibleChanged: {
-                                //reset the focus on the global group when the local group is hidden,
-                                //this avoids losing the focus if the subview changes
-                                // FIXME: This block needs refactor for keyboard focus.
-                                if (!visible && localMenuGroup.focus) {
-                                    localMenuGroup.focus = false
-                                    globalMenuGroup.focus = true
-                                }
+                            clip: contentWidth > width
+
+                            contentWidth: localMenuGroup.width
+                            contentHeight: VLCStyle.localToolbar_height // don't allow vertical flickering
+
+                            ScrollBar.horizontal: ScrollBar {
+                                y: localMenuView.height - height
+                                width: localMenuView.availableWidth
+                                policy: ScrollBar.AsNeeded
                             }
 
-                            onItemChanged: {
-                                if (!item)
-                                    return
-                                item.Navigation.parentItem = root
-                                item.Navigation.leftItem = Qt.binding(function(){ return localContextGroup.enabled ? localContextGroup : null})
-                                item.Navigation.rightItem = Qt.binding(function(){ return playlistGroup.enabled ? playlistGroup : null})
-                                item.Navigation.upItem = globalMenuGroup
+                            Loader {
+                                id: localMenuGroup
+
+                                focus: true
+
+                                enabled: status === Loader.Ready
+                                y: status === Loader.Ready ? (VLCStyle.localToolbar_height - item.height) / 2 : 0
+                                width: !!item
+                                       ? Helpers.clamp(localMenuView._availableWidth,
+                                                       localMenuGroup.item.minimumWidth || localMenuGroup.item.implicitWidth,
+                                                       localMenuGroup.item.maximumWidth || localMenuGroup.item.implicitWidth)
+                                       : 0
+
+                                onItemChanged: {
+                                    if (!item)
+                                        return
+                                    item.Navigation.parentItem = localMenuView
+                                }
                             }
                         }
                     }
@@ -412,13 +384,22 @@ FocusScope {
                             right: parent.right
                             rightMargin: VLCStyle.applicationHorizontalMargin + VLCStyle.margin_xsmall
                         }
-                        spacing: VLCStyle.margin_xxxsmall
+                        spacing: VLCStyle.margin_normal
 
                         model: ObjectModel {
 
                             Widgets.SearchBox {
                                 id: searchBox
-                                visible: !!root.contentModel
+
+                                // set max width so that search field not overflows with small screens
+                                // assumes all other sibling is a button of 'VLCStyle.bannerButton_width' width
+                                maxSearchFieldWidth: root.width
+                                                     - (VLCStyle.bannerButton_width * playlistGroup.count)
+                                                     - (playlistGroup.spacing * (playlistGroup.count - 1))
+                                                     - playlistGroup.anchors.rightMargin
+                                                     - VLCStyle.margin_small // padding to left
+
+                                visible: MainCtx.search.available
                                 height: VLCStyle.bannerButton_height
                                 buttonWidth: VLCStyle.bannerButton_width
                             }
@@ -428,9 +409,9 @@ FocusScope {
 
                                 checked: MainCtx.playlistVisible
 
-                                size: VLCStyle.icon_banner
-                                iconText: VLCIcons.playlist
-                                text: I18n.qtr("Playlist")
+                                font.pixelSize: VLCStyle.icon_banner
+                                text: VLCIcons.playlist
+                                description: qsTr("Playlist")
                                 width: VLCStyle.bannerButton_width
                                 height: VLCStyle.bannerButton_height
                                 highlighted: MainCtx.playlistVisible
@@ -454,7 +435,7 @@ FocusScope {
                                         }
                                     }
 
-                                    onEntered: {
+                                    onEntered: (drag) => {
                                         if (drag.hasUrls || Helpers.isValidInstanceOf(drag.source, Widgets.DragItem)) {
                                             drag.accept() // Not actually necessary, as it is accepted by default
                                         } else {
@@ -462,7 +443,7 @@ FocusScope {
                                         }
                                     }
 
-                                    onDropped: {
+                                    onDropped: (drop) => {
                                         if (plListView)
                                             plListView.acceptDrop(plListView.model.count, drop)
                                     }
@@ -482,11 +463,12 @@ FocusScope {
                                 id: menu_selector
 
                                 visible: !MainCtx.hasToolbarMenu
-                                size: VLCStyle.icon_banner
-                                iconText: VLCIcons.menu
-                                text: I18n.qtr("Menu")
+                                font.pixelSize: VLCStyle.icon_banner
+                                text: VLCIcons.more
+                                description: qsTr("Menu")
                                 width: VLCStyle.bannerButton_width
                                 height: VLCStyle.bannerButton_height
+                                checked: contextMenu.shown
 
                                 onClicked: contextMenu.popup(this.mapToGlobal(0, height))
 
@@ -498,14 +480,14 @@ FocusScope {
                         }
 
                         Navigation.parentItem: root
-                        Navigation.leftItem: localMenuGroup.visible ? localMenuGroup : localContextGroup
+                        Navigation.leftItem: localMenuView
                         Navigation.upItem: globalMenuGroup
                     }
                 }
             }
-        }
+
 
         Keys.priority: Keys.AfterItem
-        Keys.onPressed: root.Navigation.defaultKeyAction(event)
+        Keys.onPressed: (event) => root.Navigation.defaultKeyAction(event)
     }
 }

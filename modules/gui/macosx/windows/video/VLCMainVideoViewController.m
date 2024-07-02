@@ -22,8 +22,14 @@
 
 #import "VLCMainVideoViewController.h"
 
-#import "library/VLCLibraryWindow.h"
+#import "extensions/NSWindow+VLCAdditions.h"
+
+#import "library/VLCInputItem.h"
+#import "library/VLCLibraryDataTypes.h"
 #import "library/VLCLibraryUIUnits.h"
+#import "library/VLCLibraryWindow.h"
+#import "library/VLCLibraryWindowPlaylistSidebarViewController.h"
+#import "library/VLCLibraryWindowSplitViewController.h"
 
 #import "main/VLCMain.h"
 
@@ -32,7 +38,11 @@
 
 #import "views/VLCBottomBarView.h"
 
+#import "windows/controlsbar/VLCMainVideoViewControlsBar.h"
+
+#import "windows/video/VLCMainVideoViewAudioMediaDecorativeView.h"
 #import "windows/video/VLCMainVideoViewOverlayView.h"
+#import "windows/video/VLCVideoOutputProvider.h"
 #import "windows/video/VLCVideoWindowCommon.h"
 
 #import <vlc_common.h>
@@ -52,23 +62,95 @@
 - (instancetype)init
 {
     self = [super initWithNibName:@"VLCMainVideoView" bundle:nil];
+    if (self) {
+        _isFadingIn = NO;
+
+        NSNotificationCenter * const notificationCenter = NSNotificationCenter.defaultCenter;
+        [notificationCenter addObserver:self
+                               selector:@selector(playerCurrentMediaItemChanged:)
+                                   name:VLCPlayerCurrentMediaItemChanged
+                                 object:nil];
+        [notificationCenter addObserver:self
+                               selector:@selector(playerCurrentItemTrackListChanged:)
+                                   name:VLCPlayerTrackListChanged
+                                 object:nil];
+        [notificationCenter addObserver:self
+                                   selector:@selector(playerBufferChanged:)
+                                   name:VLCPlayerBufferChanged
+                                 object:nil];
+        [notificationCenter addObserver:self
+                               selector:@selector(floatOnTopChanged:)
+                                   name:VLCWindowFloatOnTopChangedNotificationName
+                                 object:nil];
+        [notificationCenter addObserver:self
+                               selector:@selector(shouldShowControls:)
+                                   name:VLCVideoWindowShouldShowFullscreenController
+                                 object:nil];
+    }
     return self;
+}
+
+- (void)setupAudioDecorativeView
+{
+    _audioDecorativeView = [VLCMainVideoViewAudioMediaDecorativeView fromNibWithOwner:self];
+    _audioDecorativeView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addConstraints:@[
+        [NSLayoutConstraint constraintWithItem:_audioDecorativeView
+                                     attribute:NSLayoutAttributeTop
+                                     relatedBy:NSLayoutRelationEqual
+                                        toItem:self.view
+                                     attribute:NSLayoutAttributeTop
+                                    multiplier:1.
+                                      constant:0.
+        ],
+        [NSLayoutConstraint constraintWithItem:_audioDecorativeView
+                                     attribute:NSLayoutAttributeBottom
+                                     relatedBy:NSLayoutRelationEqual
+                                        toItem:self.view
+                                     attribute:NSLayoutAttributeBottom
+                                    multiplier:1.
+                                      constant:0.
+        ],
+        [NSLayoutConstraint constraintWithItem:_audioDecorativeView
+                                     attribute:NSLayoutAttributeLeft
+                                     relatedBy:NSLayoutRelationEqual
+                                        toItem:self.view
+                                     attribute:NSLayoutAttributeLeft
+                                    multiplier:1.
+                                      constant:0.
+        ],
+        [NSLayoutConstraint constraintWithItem:_audioDecorativeView
+                                     attribute:NSLayoutAttributeRight
+                                     relatedBy:NSLayoutRelationEqual
+                                        toItem:self.view
+                                     attribute:NSLayoutAttributeRight
+                                    multiplier:1.
+                                      constant:0.
+        ],
+    ]];
+
+    [self.view addSubview:_audioDecorativeView positioned:NSWindowAbove relativeTo:_voutView];
+    _audioDecorativeView.hidden = YES;
 }
 
 - (void)viewDidLoad
 {
+    self.loadingIndicator.hidden = YES;
+
+    BOOL floatOnTopActive = NO;
+    VLCVideoWindowCommon * const window = (VLCVideoWindowCommon *)self.view.window;
+    vout_thread_t * const p_vout = window.videoViewController.voutView.voutThread;
+    if (p_vout) {
+        floatOnTopActive = var_GetBool(p_vout, "video-on-top");
+        vout_Release(p_vout);
+    }
+    self.floatOnTopIndicatorImageView.hidden = !floatOnTopActive;
+
     _autohideControls = YES;
-    _controlsBar.bottomBarView.blendingMode = NSVisualEffectBlendingModeWithinWindow;
 
     [self setDisplayLibraryControls:NO];
     [self updatePlaylistToggleState];
     [self updateLibraryControls];
-
-    NSNotificationCenter *notificationCenter = [NSNotificationCenter defaultCenter];
-    [notificationCenter addObserver:self
-                           selector:@selector(shouldShowControls:)
-                               name:VLCVideoWindowShouldShowFullscreenController
-                             object:nil];
 
     _returnButtonBottomConstraint = [NSLayoutConstraint constraintWithItem:_returnButton
                                                                  attribute:NSLayoutAttributeBottom
@@ -87,6 +169,89 @@
 
     _returnButtonBottomConstraint.active = NO;
     _playlistButtonBottomConstraint.active = NO;
+
+    [self setupAudioDecorativeView];
+    [self.controlsBar update];
+    [self updateFloatOnTopIndicator];
+}
+
+- (void)updateDecorativeViewVisibilityOnControllerChange:(VLCPlayerController *)controller
+{
+    VLCMediaLibraryMediaItem * const mediaItem = [VLCMediaLibraryMediaItem mediaItemForURL:controller.URLOfCurrentMediaItem];
+
+    BOOL decorativeViewVisible = NO;
+    if (mediaItem != nil) {
+        decorativeViewVisible = mediaItem.mediaType == VLC_ML_MEDIA_TYPE_AUDIO;
+    } else {
+        VLCInputItem * const inputItem = controller.currentMedia;
+        decorativeViewVisible = inputItem != nil && controller.videoTracks.count == 0;
+    }
+    _audioDecorativeView.hidden = !decorativeViewVisible;
+
+    if (decorativeViewVisible) {
+        [self setAutohideControls:NO];
+    } else {
+        [self setAutohideControls:YES];
+    }
+}
+
+- (void)playerCurrentMediaItemChanged:(NSNotification *)notification
+{
+    NSParameterAssert(notification);
+    VLCPlayerController * const controller = notification.object;
+    NSAssert(controller != nil, 
+             @"Player current media item changed notification should have valid player controller");
+    [self updateDecorativeViewVisibilityOnControllerChange:controller];
+}
+
+- (void)playerCurrentItemTrackListChanged:(NSNotification *)notification
+{
+    NSParameterAssert(notification);
+    VLCPlayerController * const controller = notification.object;
+    NSAssert(controller != nil, 
+             @"Player current item track list changed notification should have valid player controller");
+    [self updateDecorativeViewVisibilityOnControllerChange:controller];
+}
+
+- (void)playerBufferChanged:(NSNotification *)notification
+{
+    NSParameterAssert(notification);
+    NSParameterAssert(notification.userInfo != nil);
+
+    NSNumber * const bufferFillNumber = notification.userInfo[VLCPlayerBufferFill];
+    NSAssert(bufferFillNumber != nil, @"Buffer fill number should not be nil");
+
+    const float bufferFill = bufferFillNumber.floatValue;
+    self.loadingIndicator.hidden = bufferFill == 1.0;
+    if (self.loadingIndicator.hidden) {
+        [self.loadingIndicator stopAnimation:self];
+    } else {
+        [self.loadingIndicator startAnimation:self];
+    }
+}
+
+- (void)floatOnTopChanged:(NSNotification *)notification
+{
+    VLCVideoWindowCommon * const videoWindow = (VLCVideoWindowCommon *)notification.object;
+    NSAssert(videoWindow != nil, @"Received video window should not be nil!");
+    VLCVideoWindowCommon * const selfVideoWindow = (VLCVideoWindowCommon *)self.view.window;
+
+    if (videoWindow != selfVideoWindow) {
+        return;
+    }
+
+    [self updateFloatOnTopIndicator];
+}
+
+- (void)updateFloatOnTopIndicator
+{
+    vout_thread_t * const voutThread = self.voutView.voutThread;
+    if (voutThread == NULL) {
+        return;
+    }
+
+    const bool floatOnTopEnabled = var_GetBool(voutThread, "video-on-top");
+    self.floatOnTopIndicatorImageView.hidden = !floatOnTopEnabled;
 }
 
 - (BOOL)mouseOnControls
@@ -124,6 +289,7 @@
 - (void)shouldHideControls:(id)sender
 {
     [self hideControls];
+    [NSCursor setHiddenUntilMouseMoves: YES];
 }
 
 - (void)hideControls
@@ -138,7 +304,7 @@
     }
 
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext * _Nonnull context) {
-        [context setDuration:[VLCLibraryUIUnits controlsFadeAnimationDuration]];
+        [context setDuration:VLCLibraryUIUnits.controlsFadeAnimationDuration];
         [self->_mainControlsView.animator setAlphaValue:0.0f];
     } completionHandler:nil];
 }
@@ -176,7 +342,7 @@
 
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext * _Nonnull context) {
         self->_isFadingIn = YES;
-        [context setDuration:[VLCLibraryUIUnits controlsFadeAnimationDuration]];
+        [context setDuration:VLCLibraryUIUnits.controlsFadeAnimationDuration];
         [self->_mainControlsView.animator setAlphaValue:1.0f];
     } completionHandler:^{
         self->_isFadingIn = NO;
@@ -194,9 +360,11 @@
 
 - (void)updatePlaylistToggleState
 {
-    VLCLibraryWindow *libraryWindow = (VLCLibraryWindow*)self.view.window;
+    VLCLibraryWindow * const libraryWindow = (VLCLibraryWindow*)self.view.window;
     if (libraryWindow != nil && _displayLibraryControls) {
-        _playlistButton.state = [libraryWindow.mainSplitView isSubviewCollapsed:libraryWindow.playlistView] ?
+        NSView * const playlistView =
+            libraryWindow.splitViewController.playlistSidebarViewController.view;
+        self.playlistButton.state = [libraryWindow.mainSplitView isSubviewCollapsed:playlistView] ?
             NSControlStateValueOff : NSControlStateValueOn;
     }
 }
@@ -231,15 +399,14 @@
     }
 
     const NSWindow * const viewWindow = self.view.window;
-    const NSView * const titlebarView = [viewWindow standardWindowButton:NSWindowCloseButton].superview;
-    const CGFloat windowTitlebarHeight = titlebarView.frame.size.height;
+    const CGFloat windowTitlebarHeight = viewWindow.titlebarHeight;
 
     const BOOL windowFullscreen = [(VLCWindow*)viewWindow isInNativeFullscreen] ||
                                   [(VLCWindow*)viewWindow fullscreen];
     const BOOL placeInFakeToolbar = viewWindow.titlebarAppearsTransparent &&
                                     !windowFullscreen;
 
-    const CGFloat buttonTopSpace = placeInFakeToolbar ? 0 : [VLCLibraryUIUnits largeSpacing];
+    const CGFloat buttonTopSpace = placeInFakeToolbar ? 0 : VLCLibraryUIUnits.largeSpacing;
 
     _fakeTitleBarHeightConstraint.constant = windowFullscreen ? 0 : windowTitlebarHeight;
 
@@ -279,18 +446,18 @@
     const CGFloat realButtonSpace = (windowTitlebarHeight - _playlistButton.cell.cellSize.height) / 2;
     const NSRect windowButtonBox = [self windowButtonsRect];
 
-    _returnButtonLeadingConstraint.constant = placeInFakeToolbar ? windowButtonBox.size.width + [VLCLibraryUIUnits mediumSpacing] + realButtonSpace : [VLCLibraryUIUnits largeSpacing];
-    _playlistButtonTrailingConstraint.constant = placeInFakeToolbar ? realButtonSpace: [VLCLibraryUIUnits largeSpacing];
+    _returnButtonLeadingConstraint.constant = placeInFakeToolbar ? windowButtonBox.size.width + VLCLibraryUIUnits.mediumSpacing + realButtonSpace : VLCLibraryUIUnits.largeSpacing;
+    _playlistButtonTrailingConstraint.constant = placeInFakeToolbar ? realButtonSpace: VLCLibraryUIUnits.largeSpacing;
 
     _overlayView.drawGradientForTopControls = !placeInFakeToolbar;
-    [_overlayView drawRect:_overlayView.frame];
+    [_overlayView setNeedsDisplay:YES];
 }
 
 - (IBAction)togglePlaylist:(id)sender
 {
-    VLCLibraryWindow *libraryWindow = (VLCLibraryWindow*)self.view.window;
+    VLCLibraryWindow * const libraryWindow = (VLCLibraryWindow*)self.view.window;
     if (libraryWindow != nil) {
-        [libraryWindow togglePlaylist];
+        [libraryWindow.splitViewController togglePlaylistSidebar:self];
     }
 }
 

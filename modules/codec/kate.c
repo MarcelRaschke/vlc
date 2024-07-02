@@ -279,31 +279,31 @@ vlc_module_begin ()
                           TIGER_QUALITY_DEFAULT, 0.0f, 1.0f,
                           TIGER_QUALITY_TEXT, TIGER_QUALITY_LONGTEXT )
 
-    set_section( N_("Tiger rendering defaults"), NULL );
+    set_section( N_("Tiger rendering defaults"), NULL )
     add_string( "kate-tiger-default-font-desc", TIGER_DEFAULT_FONT_DESC_DEFAULT,
-                TIGER_DEFAULT_FONT_DESC_TEXT, TIGER_DEFAULT_FONT_DESC_LONGTEXT);
+                TIGER_DEFAULT_FONT_DESC_TEXT, TIGER_DEFAULT_FONT_DESC_LONGTEXT)
     add_integer_with_range( "kate-tiger-default-font-effect",
                             TIGER_DEFAULT_FONT_EFFECT_DEFAULT,
                             0, ARRAY_SIZE(pi_font_effects),
                             TIGER_DEFAULT_FONT_EFFECT_TEXT, TIGER_DEFAULT_FONT_EFFECT_LONGTEXT )
-    change_integer_list( pi_font_effects, ppsz_font_effect_names );
+    change_integer_list( pi_font_effects, ppsz_font_effect_names )
     add_float_with_range( "kate-tiger-default-font-effect-strength",
               TIGER_DEFAULT_FONT_EFFECT_STRENGTH_DEFAULT, 0.0f, 1.0f,
               TIGER_DEFAULT_FONT_EFFECT_STRENGTH_TEXT, TIGER_DEFAULT_FONT_EFFECT_STRENGTH_LONGTEXT )
     add_integer_with_range( "kate-tiger-default-font-color",
                             TIGER_DEFAULT_FONT_COLOR_DEFAULT, 0, 0x00ffffff,
-                            TIGER_DEFAULT_FONT_COLOR_TEXT, TIGER_DEFAULT_FONT_COLOR_LONGTEXT);
-    change_integer_list( pi_color_values, ppsz_color_descriptions );
+                            TIGER_DEFAULT_FONT_COLOR_TEXT, TIGER_DEFAULT_FONT_COLOR_LONGTEXT)
+    change_integer_list( pi_color_values, ppsz_color_descriptions )
     add_integer_with_range( "kate-tiger-default-font-alpha",
                             TIGER_DEFAULT_FONT_ALPHA_DEFAULT, 0, 255,
-                            TIGER_DEFAULT_FONT_ALPHA_TEXT, TIGER_DEFAULT_FONT_ALPHA_LONGTEXT);
+                            TIGER_DEFAULT_FONT_ALPHA_TEXT, TIGER_DEFAULT_FONT_ALPHA_LONGTEXT)
     add_integer_with_range( "kate-tiger-default-background-color",
                             TIGER_DEFAULT_BACKGROUND_COLOR_DEFAULT, 0, 0x00ffffff,
-                            TIGER_DEFAULT_BACKGROUND_COLOR_TEXT, TIGER_DEFAULT_BACKGROUND_COLOR_LONGTEXT);
-    change_integer_list( pi_color_values, ppsz_color_descriptions );
+                            TIGER_DEFAULT_BACKGROUND_COLOR_TEXT, TIGER_DEFAULT_BACKGROUND_COLOR_LONGTEXT)
+    change_integer_list( pi_color_values, ppsz_color_descriptions )
     add_integer_with_range( "kate-tiger-default-background-alpha",
                             TIGER_DEFAULT_BACKGROUND_ALPHA_DEFAULT, 0, 255,
-                            TIGER_DEFAULT_BACKGROUND_ALPHA_TEXT, TIGER_DEFAULT_BACKGROUND_ALPHA_LONGTEXT);
+                            TIGER_DEFAULT_BACKGROUND_ALPHA_TEXT, TIGER_DEFAULT_BACKGROUND_ALPHA_LONGTEXT)
 #endif
 
 #ifdef ENABLE_PACKETIZER
@@ -703,7 +703,7 @@ static void CreateKatePalette( video_palette_t *fmt_palette, const kate_palette 
     }
 }
 
-static void SetupText( decoder_t *p_dec, subpicture_t *p_spu, const kate_event *ev )
+static void SetupText( decoder_t *p_dec, subpicture_region_t *p_region, const kate_event *ev )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
@@ -718,10 +718,10 @@ static void SetupText( decoder_t *p_dec, subpicture_t *p_spu, const kate_event *
         case kate_markup_none:
         case kate_markup_simple:
             if( p_sys->b_formatted )
-//                p_spu->p_region->p_text = ParseSubtitles(&p_spu->p_region->i_align, ev->text );
+//                p_region->p_text = ParseSubtitles(&p_region->i_align, ev->text );
                 ;//FIXME
             else
-                p_spu->p_region->p_text = text_segment_New( ev->text ); /* no leak, this actually gets killed by the core */
+                p_region->p_text = text_segment_New( ev->text ); /* no leak, this actually gets killed by the core */
             break;
         default:
             /* we don't know about this one, so remove markup and display as text */
@@ -729,7 +729,7 @@ static void SetupText( decoder_t *p_dec, subpicture_t *p_spu, const kate_event *
                 char *copy = strdup( ev->text );
                 size_t len0 = strlen( copy ) + 1;
                 kate_text_remove_markup( ev->text_encoding, copy, &len0 );
-                p_spu->p_region->p_text = text_segment_New( copy );
+                p_region->p_text = text_segment_New( copy );
                 free( copy );
             }
             break;
@@ -740,7 +740,7 @@ static void SetupText( decoder_t *p_dec, subpicture_t *p_spu, const kate_event *
 
 static void TigerDestroySubpicture( subpicture_t *p_subpic )
 {
-    kate_spu_updater_sys_t *p_spusys = p_subpic->updater.p_sys;
+    kate_spu_updater_sys_t *p_spusys = p_subpic->updater.sys;
     DecSysRelease( p_spusys->p_dec_sys );
     free( p_spusys );
 }
@@ -795,71 +795,58 @@ static void PostprocessTigerImage( plane_t *p_plane, unsigned int i_width )
     PROFILE_STOP( tiger_renderer_postprocess );
 }
 
-static int TigerValidateSubpicture( subpicture_t *p_subpic,
-                                    bool b_fmt_src, const video_format_t *p_fmt_src,
-                                    bool b_fmt_dst, const video_format_t *p_fmt_dst,
-                                    vlc_tick_t ts )
-{
-    VLC_UNUSED(p_fmt_src); VLC_UNUSED(p_fmt_dst);
-
-    kate_spu_updater_sys_t *p_spusys = p_subpic->updater.p_sys;
-    decoder_sys_t *p_sys = p_spusys->p_dec_sys;
-
-    if( b_fmt_src || b_fmt_dst )
-        return VLC_EGENERIC;
-
-    PROFILE_START( TigerValidateSubpicture );
-
-    /* time in seconds from the start of the stream */
-    kate_float t = (p_spusys->i_start + ts - p_subpic->i_start ) / 1000000.0f;
-
-    /* it is likely that the current region (if any) can be kept as is; test for this */
-    vlc_mutex_lock( &p_sys->lock );
-    int i_ret;
-    if( p_sys->b_dirty || tiger_renderer_is_dirty( p_sys->p_tr ) )
-    {
-        i_ret = VLC_EGENERIC;
-        goto exit;
-    }
-    if( tiger_renderer_update( p_sys->p_tr, t, 1 ) >= 0 &&
-        tiger_renderer_is_dirty( p_sys->p_tr ) )
-    {
-        i_ret = VLC_EGENERIC;
-        goto exit;
-    }
-
-    i_ret = VLC_SUCCESS;
-exit:
-    vlc_mutex_unlock( &p_sys->lock );
-    PROFILE_STOP( TigerValidateSubpicture );
-    return i_ret;
-}
-
 /* Tiger renders can end up looking a bit crap since they get overlaid on top of
    a subsampled YUV image, so there can be a fair amount of chroma bleeding.
    Looks good with white though since it's all luma. Hopefully that will be the
    common case. */
 static void TigerUpdateSubpicture( subpicture_t *p_subpic,
-                                   const video_format_t *p_fmt_src,
-                                   const video_format_t *p_fmt_dst,
+                                   const video_format_t *prev_src, const video_format_t *p_fmt_src,
+                                   const video_format_t *prev_dst, const video_format_t *p_fmt_dst,
                                    vlc_tick_t ts )
 {
-    kate_spu_updater_sys_t *p_spusys = p_subpic->updater.p_sys;
+    kate_spu_updater_sys_t *p_spusys = p_subpic->updater.sys;
     decoder_sys_t *p_sys = p_spusys->p_dec_sys;
     plane_t *p_plane;
-    kate_float t;
-    int i_ret;
-
-
     /* time in seconds from the start of the stream */
-    t = (p_spusys->i_start + ts - p_subpic->i_start ) / 1000000.0f;
+    kate_float t = (p_spusys->i_start + ts - p_subpic->i_start ) / 1000000.0f;
+
+    bool new_regions = false;
+    if( !video_format_IsSimilar(prev_src, p_fmt_src) ||
+        !video_format_IsSimilar(prev_dst, p_fmt_dst) )
+        new_regions = true;
+
+    if (!new_regions)
+    {
+        PROFILE_START( TigerValidateSubpicture );
+
+        /* it is likely that the current region (if any) can be kept as is; test for this */
+        vlc_mutex_lock( &p_sys->lock );
+        if( p_sys->b_dirty || tiger_renderer_is_dirty( p_sys->p_tr ) )
+        {
+            new_regions = true;
+            goto exit;
+        }
+        if( tiger_renderer_update( p_sys->p_tr, t, 1 ) >= 0 &&
+            tiger_renderer_is_dirty( p_sys->p_tr ) )
+        {
+            new_regions = true;
+            goto exit;
+        }
+exit:
+        vlc_mutex_unlock( &p_sys->lock );
+        PROFILE_STOP( TigerValidateSubpicture );
+    }
+
+    if (!new_regions)
+        return;
+
+    vlc_spu_regions_Clear( &p_subpic->regions );
 
     PROFILE_START( TigerUpdateSubpicture );
 
     /* create a full frame region - this will also tell Tiger the size of the frame */
     video_format_t fmt = *p_fmt_dst;
     fmt.i_chroma         = VLC_CODEC_RGBA;
-    fmt.i_bits_per_pixel = 0;
     fmt.i_width          =
     fmt.i_visible_width  = p_fmt_src->i_width;
     fmt.i_height         =
@@ -876,6 +863,7 @@ static void TigerUpdateSubpicture( subpicture_t *p_subpic,
 
     vlc_mutex_lock( &p_sys->lock );
 
+    int i_ret;
     p_plane = &p_r->p_picture->p[0];
     i_ret = tiger_renderer_set_buffer( p_sys->p_tr, p_plane->p_pixels, fmt.i_width, p_plane->i_lines, p_plane->i_pitch, 1 );
     if( i_ret < 0 )
@@ -900,7 +888,7 @@ static void TigerUpdateSubpicture( subpicture_t *p_subpic,
     PROFILE_STOP( tiger_renderer_render );
 
     PostprocessTigerImage( p_plane, fmt.i_width );
-    p_subpic->p_region = p_r;
+    vlc_spu_regions_push( &p_subpic->regions, p_r );
     p_sys->b_dirty = false;
 
     PROFILE_STOP( TigerUpdateSubpicture );
@@ -911,7 +899,8 @@ static void TigerUpdateSubpicture( subpicture_t *p_subpic,
 
 failure:
     vlc_mutex_unlock( &p_sys->lock );
-    subpicture_region_ChainDelete( p_r );
+    subpicture_region_Delete( p_r );
+    vlc_spu_regions_Clear( &p_subpic->regions );
 }
 
 static uint32_t GetTigerColor( decoder_t *p_dec, const char *psz_prefix )
@@ -1028,13 +1017,20 @@ static subpicture_t *DecodePacket( decoder_t *p_dec, kate_packet *p_kp, block_t 
         if( !p_spu_sys )
             return NULL;
     }
-    subpicture_updater_t updater = {
+
+    static const struct vlc_spu_updater_ops spu_ops =
+    {
 #ifdef HAVE_TIGER
-        .pf_validate = TigerValidateSubpicture,
-        .pf_update   = TigerUpdateSubpicture,
-        .pf_destroy  = TigerDestroySubpicture,
+        .update   = TigerUpdateSubpicture,
+        .destroy  = TigerDestroySubpicture,
+#else
+        .update = NULL, .destroy = NULL,
 #endif
-        .p_sys       = p_spu_sys,
+    };
+
+    subpicture_updater_t updater = {
+        .sys = p_spu_sys,
+        .ops = &spu_ops,
     };
     p_spu = decoder_NewSubpicture( p_dec, p_sys->b_use_tiger ? &updater : NULL );
     if( !p_spu )
@@ -1048,7 +1044,6 @@ static subpicture_t *DecodePacket( decoder_t *p_dec, kate_packet *p_kp, block_t 
     p_spu->i_start = p_block->i_pts;
     p_spu->i_stop = p_block->i_pts + vlc_tick_from_samples(ev->duration * p_sys->ki.gps_denominator, p_sys->ki.gps_numerator);
     p_spu->b_ephemer = false;
-    p_spu->b_absolute = false;
 
 #ifdef HAVE_TIGER
     if( p_sys->b_use_tiger)
@@ -1059,7 +1054,6 @@ static subpicture_t *DecodePacket( decoder_t *p_dec, kate_packet *p_kp, block_t 
 
         p_spu->i_stop = __MAX( p_sys->i_max_stop, p_spu->i_stop );
         p_spu->b_ephemer = true;
-        p_spu->b_absolute = true;
 
         /* add the event to tiger */
         vlc_mutex_lock( &p_sys->lock );
@@ -1082,7 +1076,6 @@ static subpicture_t *SetupSimpleKateSPU( decoder_t *p_dec, subpicture_t *p_spu,
                                          const kate_event *ev )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
-    video_format_t fmt;
     subpicture_region_t *p_bitmap_region = NULL;
     video_palette_t palette;
     kate_tracker kin;
@@ -1122,6 +1115,7 @@ static subpicture_t *SetupSimpleKateSPU( decoder_t *p_dec, subpicture_t *p_spu,
     if (ev->bitmap && ev->bitmap->type==kate_bitmap_type_paletted && ev->palette) {
 
         /* create a separate region for the bitmap */
+        video_format_t fmt;
         video_format_Init( &fmt, VLC_CODEC_YUVP );
         fmt.i_width = fmt.i_visible_width = ev->bitmap->width;
         fmt.i_height = fmt.i_visible_height = ev->bitmap->height;
@@ -1144,14 +1138,8 @@ static subpicture_t *SetupSimpleKateSPU( decoder_t *p_dec, subpicture_t *p_spu,
     }
 
     /* text region */
-    video_format_Init( &fmt, VLC_CODEC_TEXT );
-    fmt.i_sar_num = 0;
-    fmt.i_sar_den = 1;
-    fmt.i_width = fmt.i_height = 0;
-    fmt.i_x_offset = fmt.i_y_offset = 0;
-    p_spu->p_region = subpicture_region_New( &fmt );
-    video_format_Clean( &fmt );
-    if( !p_spu->p_region )
+    subpicture_region_t *p_region = subpicture_region_NewText();
+    if( unlikely(p_region == NULL) )
     {
         msg_Err( p_dec, "cannot allocate SPU region" );
         if( p_bitmap_region )
@@ -1159,31 +1147,40 @@ static subpicture_t *SetupSimpleKateSPU( decoder_t *p_dec, subpicture_t *p_spu,
         subpicture_Delete( p_spu );
         return NULL;
     }
+    p_region->fmt.i_sar_num = 0;
+    p_region->fmt.i_sar_den = 1;
 
-    SetupText( p_dec, p_spu, ev );
+    SetupText( p_dec, p_region, ev );
 
     /* default positioning */
-    p_spu->p_region->i_align = SUBPICTURE_ALIGN_BOTTOM;
+    p_region->b_absolute = false;
+#ifdef HAVE_TIGER
+    if( p_sys->b_use_tiger)
+        p_region->b_absolute = true;
+#endif
+    p_region->i_align = SUBPICTURE_ALIGN_BOTTOM;
     if (p_bitmap_region)
     {
         p_bitmap_region->i_align = SUBPICTURE_ALIGN_BOTTOM;
+        p_bitmap_region->i_x = 0;
+        p_bitmap_region->i_y = 0;
     }
-    p_spu->p_region->i_x = 0;
-    p_spu->p_region->i_y = 10;
+    p_region->i_x = 0;
+    p_region->i_y = 10;
 
     /* override if tracker info present */
     if (b_tracker_valid)
     {
         if (kin.has.region)
         {
-            p_spu->p_region->i_x = kin.region_x;
-            p_spu->p_region->i_y = kin.region_y;
+            p_region->b_absolute = true;
+            p_region->i_x = kin.region_x;
+            p_region->i_y = kin.region_y;
             if (p_bitmap_region)
             {
                 p_bitmap_region->i_x = kin.region_x;
                 p_bitmap_region->i_y = kin.region_y;
             }
-            p_spu->b_absolute = true;
         }
 
         kate_tracker_clear(&kin);
@@ -1192,9 +1189,10 @@ static subpicture_t *SetupSimpleKateSPU( decoder_t *p_dec, subpicture_t *p_spu,
     /* if we have a bitmap, chain it before the text */
     if (p_bitmap_region)
     {
-        p_bitmap_region->p_next = p_spu->p_region;
-        p_spu->p_region = p_bitmap_region;
+        p_bitmap_region->b_absolute = p_region->b_absolute;
+        vlc_spu_regions_push(&p_spu->regions, p_bitmap_region);
     }
+    vlc_spu_regions_push(&p_spu->regions, p_region);
 
     return p_spu;
 }
@@ -1224,7 +1222,7 @@ static void ParseKateComments( decoder_t *p_dec )
             if( !p_dec->p_description )
                 p_dec->p_description = vlc_meta_New();
             if( p_dec->p_description )
-                vlc_meta_AddExtra( p_dec->p_description, psz_name, psz_value );
+                vlc_meta_SetExtra( p_dec->p_description, psz_name, psz_value );
         }
         free( psz_comment );
         i++;

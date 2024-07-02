@@ -50,7 +50,7 @@ vlc_module_begin ()
     set_shortname( "H264")
     set_subcategory( SUBCAT_INPUT_DEMUX )
     set_description( N_("H264 video demuxer" ) )
-    set_capability( "demux", 6 )
+    set_capability( "demux", 8 )
     set_section( N_("H264 video demuxer" ), NULL )
     add_float( "h264-fps", 0.0, FPS_TEXT, FPS_LONGTEXT )
     set_callbacks( OpenH264, Close )
@@ -61,7 +61,7 @@ vlc_module_begin ()
         set_shortname( "HEVC")
         set_subcategory( SUBCAT_INPUT_DEMUX )
         set_description( N_("HEVC/H.265 video demuxer" ) )
-        set_capability( "demux", 6 )
+        set_capability( "demux", 8 )
         set_section( N_("HEVC/H.265 video demuxer" ), NULL )
         add_float( "hevc-fps", 0.0, FPS_TEXT, FPS_LONGTEXT )
         set_callbacks( OpenHEVC, Close )
@@ -480,10 +480,6 @@ static int Demux( demux_t *p_demux)
             bool frame = p_block_out->i_flags & BLOCK_FLAG_TYPE_MASK;
             const vlc_tick_t i_frame_length = p_block_out->i_length;
 
-            /* first output */
-            if( date_Get( &p_sys->output_dts ) == VLC_TICK_0 )
-                es_out_SetPCR( p_demux->out, date_Get( &p_sys->output_dts ) );
-
             es_out_Send( p_demux->out, p_sys->p_es, p_block_out );
 
             vlc_tick_t pcr = b_eof ? dts : date_Get( &p_sys->output_dts );
@@ -502,8 +498,6 @@ static int Demux( demux_t *p_demux)
                     date_Increment( &p_sys->output_dts, i_nb_fields );
                 }
             }
-
-            es_out_SetPCR( p_demux->out, pcr );
 
             p_block_out = p_next;
         }

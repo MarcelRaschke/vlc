@@ -24,6 +24,7 @@
 #ifndef VLC_MKV_CHAPTER_COMMAND_HPP_
 #define VLC_MKV_CHAPTER_COMMAND_HPP_
 
+#include <vlc_arrays.h>
 #include "mkv.hpp"
 
 namespace mkv {
@@ -69,7 +70,7 @@ public:
     virtual bool Enter() { return false; }
     virtual bool Leave() { return false; }
     virtual std::string GetCodecName( bool ) const { return ""; }
-    virtual int16 GetTitleNumber() { return -1; }
+    virtual int16_t GetTitleNumber() { return -1; }
 
     KaxChapterProcessPrivate *p_private_data;
 
@@ -102,21 +103,21 @@ public:
 
     bool Interpret( const binary * p_command, size_t i_size = 8 );
 
-    uint16 GetPRM( size_t index ) const
+    uint16_t GetPRM( size_t index ) const
     {
         if ( index < 256 )
             return p_PRMs[ index ];
         else return 0;
     }
 
-    uint16 GetGPRM( size_t index ) const
+    uint16_t GetGPRM( size_t index ) const
     {
         if ( index < 16 )
             return p_PRMs[ index ];
         else return 0;
     }
 
-    uint16 GetSPRM( size_t index ) const
+    uint16_t GetSPRM( size_t index ) const
     {
         // 21,22,23 reserved for future use
         if ( index >= 0x80 && index < 0x95 )
@@ -124,7 +125,7 @@ public:
         else return 0;
     }
 
-    bool SetPRM( size_t index, uint16 value )
+    bool SetPRM( size_t index, uint16_t value )
     {
         if ( index < 16 )
         {
@@ -134,7 +135,7 @@ public:
         return false;
     }
 
-    bool SetGPRM( size_t index, uint16 value )
+    bool SetGPRM( size_t index, uint16_t value )
     {
         if ( index < 16 )
         {
@@ -144,7 +145,7 @@ public:
         return false;
     }
 
-    bool SetSPRM( size_t index, uint16 value )
+    bool SetSPRM( size_t index, uint16_t value )
     {
         if ( index > 0x80 && index <= 0x8D && index != 0x8C )
         {
@@ -155,11 +156,11 @@ public:
     }
 
 protected:
-    std::string GetRegTypeName( bool b_value, uint16 value ) const
+    std::string GetRegTypeName( bool b_value, uint16_t value ) const
     {
         std::string result;
         char s_value[6], s_reg_value[6];
-        sprintf( s_value, "%.5d", value );
+        snprintf( s_value, ARRAY_SIZE(s_value), "%.5d", value );
 
         if ( b_value )
         {
@@ -169,7 +170,7 @@ protected:
         }
         else if ( value < 0x80 )
         {
-            sprintf( s_reg_value, "%.5d", GetPRM( value ) );
+            snprintf( s_reg_value, ARRAY_SIZE(s_reg_value), "%.5d", GetPRM( value ) );
             result = "GPreg[";
             result += s_value;
             result += "] (";
@@ -178,7 +179,7 @@ protected:
         }
         else
         {
-            sprintf( s_reg_value, "%.5d", GetPRM( value ) );
+            snprintf( s_reg_value, ARRAY_SIZE(s_reg_value), "%.5d", GetPRM( value ) );
             result = "SPreg[";
             result += s_value;
             result += "] (";
@@ -188,50 +189,50 @@ protected:
         return result;
     }
 
-    uint16       p_PRMs[256];
+    uint16_t       p_PRMs[256];
     demux_sys_t  & sys;
 
     // DVD command IDs
 
     // Tests
     // whether it's a comparison on the value or register
-    static const uint16 CMD_DVD_TEST_VALUE          = 0x80;
-    static const uint16 CMD_DVD_IF_GPREG_AND        = (1 << 4);
-    static const uint16 CMD_DVD_IF_GPREG_EQUAL      = (2 << 4);
-    static const uint16 CMD_DVD_IF_GPREG_NOT_EQUAL  = (3 << 4);
-    static const uint16 CMD_DVD_IF_GPREG_SUP_EQUAL  = (4 << 4);
-    static const uint16 CMD_DVD_IF_GPREG_SUP        = (5 << 4);
-    static const uint16 CMD_DVD_IF_GPREG_INF_EQUAL  = (6 << 4);
-    static const uint16 CMD_DVD_IF_GPREG_INF        = (7 << 4);
+    static const uint16_t CMD_DVD_TEST_VALUE          = 0x80;
+    static const uint16_t CMD_DVD_IF_GPREG_AND        = (1 << 4);
+    static const uint16_t CMD_DVD_IF_GPREG_EQUAL      = (2 << 4);
+    static const uint16_t CMD_DVD_IF_GPREG_NOT_EQUAL  = (3 << 4);
+    static const uint16_t CMD_DVD_IF_GPREG_SUP_EQUAL  = (4 << 4);
+    static const uint16_t CMD_DVD_IF_GPREG_SUP        = (5 << 4);
+    static const uint16_t CMD_DVD_IF_GPREG_INF_EQUAL  = (6 << 4);
+    static const uint16_t CMD_DVD_IF_GPREG_INF        = (7 << 4);
 
-    static const uint16 CMD_DVD_NOP                    = 0x0000;
-    static const uint16 CMD_DVD_GOTO_LINE              = 0x0001;
-    static const uint16 CMD_DVD_BREAK                  = 0x0002;
+    static const uint16_t CMD_DVD_NOP                    = 0x0000;
+    static const uint16_t CMD_DVD_GOTO_LINE              = 0x0001;
+    static const uint16_t CMD_DVD_BREAK                  = 0x0002;
     // Links
-    static const uint16 CMD_DVD_NOP2                   = 0x2001;
-    static const uint16 CMD_DVD_LINKPGCN               = 0x2004;
-    static const uint16 CMD_DVD_LINKPGN                = 0x2006;
-    static const uint16 CMD_DVD_LINKCN                 = 0x2007;
-    static const uint16 CMD_DVD_JUMP_TT                = 0x3002;
-    static const uint16 CMD_DVD_JUMPVTS_TT             = 0x3003;
-    static const uint16 CMD_DVD_JUMPVTS_PTT            = 0x3005;
-    static const uint16 CMD_DVD_JUMP_SS                = 0x3006;
-    static const uint16 CMD_DVD_CALLSS_VTSM1           = 0x3008;
+    static const uint16_t CMD_DVD_NOP2                   = 0x2001;
+    static const uint16_t CMD_DVD_LINKPGCN               = 0x2004;
+    static const uint16_t CMD_DVD_LINKPGN                = 0x2006;
+    static const uint16_t CMD_DVD_LINKCN                 = 0x2007;
+    static const uint16_t CMD_DVD_JUMP_TT                = 0x3002;
+    static const uint16_t CMD_DVD_JUMPVTS_TT             = 0x3003;
+    static const uint16_t CMD_DVD_JUMPVTS_PTT            = 0x3005;
+    static const uint16_t CMD_DVD_JUMP_SS                = 0x3006;
+    static const uint16_t CMD_DVD_CALLSS_VTSM1           = 0x3008;
     //
-    static const uint16 CMD_DVD_SET_HL_BTNN2           = 0x4600;
-    static const uint16 CMD_DVD_SET_HL_BTNN_LINKPGCN1  = 0x4604;
-    static const uint16 CMD_DVD_SET_STREAM             = 0x5100;
-    static const uint16 CMD_DVD_SET_GPRMMD             = 0x5300;
-    static const uint16 CMD_DVD_SET_HL_BTNN1           = 0x5600;
-    static const uint16 CMD_DVD_SET_HL_BTNN_LINKPGCN2  = 0x5604;
-    static const uint16 CMD_DVD_SET_HL_BTNN_LINKCN     = 0x5607;
+    static const uint16_t CMD_DVD_SET_HL_BTNN2           = 0x4600;
+    static const uint16_t CMD_DVD_SET_HL_BTNN_LINKPGCN1  = 0x4604;
+    static const uint16_t CMD_DVD_SET_STREAM             = 0x5100;
+    static const uint16_t CMD_DVD_SET_GPRMMD             = 0x5300;
+    static const uint16_t CMD_DVD_SET_HL_BTNN1           = 0x5600;
+    static const uint16_t CMD_DVD_SET_HL_BTNN_LINKPGCN2  = 0x5604;
+    static const uint16_t CMD_DVD_SET_HL_BTNN_LINKCN     = 0x5607;
     // Operations
-    static const uint16 CMD_DVD_MOV_SPREG_PREG         = 0x6100;
-    static const uint16 CMD_DVD_GPREG_MOV_VALUE        = 0x7100;
-    static const uint16 CMD_DVD_SUB_GPREG              = 0x7400;
-    static const uint16 CMD_DVD_MULT_GPREG             = 0x7500;
-    static const uint16 CMD_DVD_GPREG_DIV_VALUE        = 0x7600;
-    static const uint16 CMD_DVD_GPREG_AND_VALUE        = 0x7900;
+    static const uint16_t CMD_DVD_MOV_SPREG_PREG         = 0x6100;
+    static const uint16_t CMD_DVD_GPREG_MOV_VALUE        = 0x7100;
+    static const uint16_t CMD_DVD_SUB_GPREG              = 0x7400;
+    static const uint16_t CMD_DVD_MULT_GPREG             = 0x7500;
+    static const uint16_t CMD_DVD_GPREG_DIV_VALUE        = 0x7600;
+    static const uint16_t CMD_DVD_GPREG_AND_VALUE        = 0x7900;
 
     // callbacks when browsing inside CodecPrivate
     static bool MatchIsDomain     ( const chapter_codec_cmds_c &data, const void *p_cookie, size_t i_cookie_size );
@@ -256,7 +257,7 @@ public:
     bool Leave();
 
     std::string GetCodecName( bool f_for_title = false ) const;
-    int16 GetTitleNumber();
+    int16_t GetTitleNumber();
 
 protected:
     bool EnterLeaveHelper( char const*, std::vector<KaxChapterProcessData*>* );

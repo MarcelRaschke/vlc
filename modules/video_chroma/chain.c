@@ -75,8 +75,10 @@ static const vlc_fourcc_t pi_allowed_chromas_yuv[] = {
     VLC_CODEC_I420,
     VLC_CODEC_I422,
     ALLOWED_CHROMAS_YUV10,
-    VLC_CODEC_RGB32,
+    VLC_CODEC_XRGB,
+    VLC_CODEC_BGRX,
     VLC_CODEC_RGB24,
+    VLC_CODEC_BGR24,
     VLC_CODEC_BGRA,
     0
 };
@@ -85,9 +87,28 @@ static const vlc_fourcc_t pi_allowed_chromas_yuv10[] = {
     ALLOWED_CHROMAS_YUV10,
     VLC_CODEC_I420,
     VLC_CODEC_I422,
-    VLC_CODEC_RGB32,
+    VLC_CODEC_XRGB,
+    VLC_CODEC_BGRX,
     VLC_CODEC_RGB24,
+    VLC_CODEC_BGR24,
     VLC_CODEC_BGRA,
+    0
+};
+
+static const vlc_fourcc_t pi_allowed_chromas_yuv444[] = {
+    VLC_CODEC_RGBA,
+    VLC_CODEC_BGRA,
+    VLC_CODEC_I422,
+    VLC_CODEC_I420,
+    0
+};
+
+static const vlc_fourcc_t pi_allowed_chromas_yuv444_10[] = {
+    VLC_CODEC_RGBA10LE,
+    VLC_CODEC_RGBA64,
+    ALLOWED_CHROMAS_YUV10,
+    VLC_CODEC_I422,
+    VLC_CODEC_I420,
     0
 };
 
@@ -103,6 +124,12 @@ static const vlc_fourcc_t *get_allowed_chromas( filter_t *p_filter )
         case VLC_CODEC_D3D11_OPAQUE_10B:
         case VLC_CODEC_VAAPI_420_10BPP:
             return pi_allowed_chromas_yuv10;
+        case VLC_CODEC_I444:
+            return pi_allowed_chromas_yuv444;
+        case VLC_CODEC_I444_10L:
+        case VLC_CODEC_I444_12L:
+        case VLC_CODEC_I444_16L:
+            return pi_allowed_chromas_yuv444_10;
         default:
             return pi_allowed_chromas_yuv;
     }
@@ -221,7 +248,7 @@ static int Activate( filter_t *p_filter, int (*pf_build)(filter_t *) )
 
 static int ActivateConverter( filter_t *p_filter )
 {
-    const bool b_chroma = p_filter->fmt_in.video.i_chroma != p_filter->fmt_out.video.i_chroma;
+    const bool b_chroma = !video_format_IsSameChroma( &p_filter->fmt_in.video, &p_filter->fmt_out.video);
     const bool b_resize = p_filter->fmt_in.video.i_width  != p_filter->fmt_out.video.i_width ||
                           p_filter->fmt_in.video.i_height != p_filter->fmt_out.video.i_height;
 
@@ -349,10 +376,6 @@ static int BuildChromaChain( filter_t *p_filter )
         es_format_Copy( &fmt_mid, &p_filter->fmt_in );
         fmt_mid.i_codec        =
         fmt_mid.video.i_chroma = i_chroma;
-        fmt_mid.video.i_rmask  = 0;
-        fmt_mid.video.i_gmask  = 0;
-        fmt_mid.video.i_bmask  = 0;
-        video_format_FixRgb(&fmt_mid.video);
 
         i_ret = CreateChain( p_filter, &fmt_mid );
         es_format_Clean( &fmt_mid );
@@ -390,22 +413,18 @@ static int BuildFilterChain( filter_t *p_filter )
             i_chroma == p_filter->fmt_out.i_codec )
             continue;
 
-        msg_Dbg( p_filter, "Trying to use chroma %4.4s as middle man",
-                 (char*)&i_chroma );
+        msg_Dbg( p_filter, "Trying to use chroma %4.4s as middle man in chain (%p)",
+                 (char*)&i_chroma, (void*)p_sys->p_chain );
 
         es_format_Clean( &fmt_mid );
         es_format_Copy( &fmt_mid, &p_filter->fmt_in );
         fmt_mid.i_codec        =
         fmt_mid.video.i_chroma = i_chroma;
-        fmt_mid.video.i_rmask  = 0;
-        fmt_mid.video.i_gmask  = 0;
-        fmt_mid.video.i_bmask  = 0;
-        video_format_FixRgb(&fmt_mid.video);
 
         if( filter_chain_AppendConverter( p_sys->p_chain,
                                           &fmt_mid ) != VLC_SUCCESS )
             continue;
-        
+
         p_sys->p_video_filter =
             filter_chain_AppendFilter( p_sys->p_chain,
                                        p_filter->psz_name, p_filter->p_cfg,
@@ -438,10 +457,12 @@ static int CreateChain( filter_t *p_filter, const es_format_t *p_fmt_mid )
     filter_sys_t *p_sys = p_filter->p_sys;
     filter_chain_Reset( p_sys->p_chain, &p_filter->fmt_in, p_filter->vctx_in, &p_filter->fmt_out );
 
-    if( filter_chain_AppendConverter( p_sys->p_chain, p_fmt_mid ) )
-        return VLC_EGENERIC;
+    int i_ret = filter_chain_AppendConverter( p_sys->p_chain, p_fmt_mid );
+    if ( i_ret != VLC_SUCCESS )
+        return i_ret;
 
-    if( filter_chain_AppendConverter( p_sys->p_chain, &p_filter->fmt_out ) )
+    i_ret = filter_chain_AppendConverter( p_sys->p_chain, &p_filter->fmt_out );
+    if ( i_ret != VLC_SUCCESS )
         goto error;
 
     p_filter->vctx_out = filter_chain_GetVideoCtxOut( p_sys->p_chain );

@@ -31,16 +31,13 @@
 
 #import <TargetConditionals.h>
 #if TARGET_OS_IPHONE
+#if !TARGET_OS_WATCH
 #include <CFNetwork/CFProxySupport.h>
+#endif
 #else
 #include <CoreServices/CoreServices.h>
 #endif
 
-/**
- * Determines the network proxy server to use (if any).
- * @param url absolute URL for which to get the proxy server
- * @return proxy URL, NULL if no proxy or error
- */
 char *vlc_getProxyUrl(const char *url)
 {
     if (url == NULL) {

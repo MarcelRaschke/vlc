@@ -14,12 +14,12 @@ $(TARBALLS)/libdvdcss-$(DVDCSS_VERSION).tar.bz2:
 
 dvdcss: libdvdcss-$(DVDCSS_VERSION).tar.bz2 .sum-dvdcss
 	$(UNPACK)
+	$(call update_autoconfig,.)
 	$(MOVE)
 
 DVDCSS_CONF := --disable-doc
 
 .dvdcss: dvdcss
-	$(RECONF)
 	$(MAKEBUILDDIR)
 	$(MAKECONFIGURE) $(DVDCSS_CONF)
 	+$(MAKEBUILD)

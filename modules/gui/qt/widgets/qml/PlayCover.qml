@@ -18,8 +18,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Controls 2.4
+import QtQuick
+import QtQuick.Controls
 
 import org.videolan.vlc 0.1
 import "qrc:///style/"
@@ -67,7 +67,7 @@ MouseArea {
 
     // Children
 
-    Image {
+    ScaledImage {
         anchors.centerIn: parent
 
         // NOTE: We round this to avoid blurry textures with the QML renderer.
@@ -90,7 +90,7 @@ MouseArea {
     Widgets.IconLabel {
         anchors.centerIn: parent
 
-        text: VLCIcons.play
+        text: VLCIcons.play_filled
 
         color: (containsMouse) ? theme.accent
                                : "black"

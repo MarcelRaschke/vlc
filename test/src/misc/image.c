@@ -42,6 +42,8 @@
 
 #include <limits.h>
 
+#include "../lib/libvlc_internal.h"
+
 const char vlc_module_name[] = MODULE_STRING;
 
 static atomic_bool encoder_opened = false;
@@ -57,7 +59,7 @@ static int OpenIntf(vlc_object_t *root)
     fmt_in.i_height = fmt_in.i_visible_height = 600;
 
     video_format_t fmt_out;
-    video_format_Init(&fmt_out, VLC_CODEC_PNG);
+    video_format_Init(&fmt_out, 0);
     fmt_out.i_width = fmt_out.i_visible_width = 800;
     fmt_out.i_height = fmt_out.i_visible_height = 600;
 
@@ -66,7 +68,7 @@ static int OpenIntf(vlc_object_t *root)
 
     block_t *block;
 
-    block = image_Write(ih, picture, &fmt_in, &fmt_out);
+    block = image_Write(ih, picture, &fmt_in, VLC_CODEC_PNG, &fmt_out);
     assert(block != NULL);
     block_Release(block);
     picture_Release(picture);
@@ -76,7 +78,7 @@ static int OpenIntf(vlc_object_t *root)
     picture = picture_NewFromFormat(&fmt_in);
     fmt_out.i_width = fmt_out.i_visible_width = 400;
     fmt_out.i_height = fmt_out.i_visible_height = 300;
-    block = image_Write(ih, picture, &fmt_in, &fmt_out);
+    block = image_Write(ih, picture, &fmt_in, VLC_CODEC_PNG, &fmt_out);
     assert(block != NULL);
     block_Release(block);
     picture_Release(picture);
@@ -113,10 +115,8 @@ static picture_t *ConvertVideo(filter_t *filter, picture_t *pic)
     return picture_NewFromFormat(&filter->fmt_out.video);
 }
 
-static int OpenConverter(vlc_object_t *obj)
+static int OpenConverter(filter_t *filter)
 {
-    filter_t *filter = (filter_t*)obj;
-
     static const struct vlc_filter_operations ops =
     {
         .filter_video = ConvertVideo,
@@ -128,11 +128,10 @@ static int OpenConverter(vlc_object_t *obj)
 /** Inject the mocked modules as a static plugin: **/
 vlc_module_begin()
     set_callback(OpenEncoder)
-    set_capability("video encoder", INT_MAX)
+    set_capability("image encoder", INT_MAX)
 
     add_submodule()
-        set_callback(OpenConverter)
-        set_capability("video converter", INT_MAX)
+        set_callback_video_converter(OpenConverter, INT_MAX)
 
     add_submodule()
         set_callback(OpenIntf)
@@ -146,7 +145,7 @@ VLC_EXPORT const vlc_plugin_cb vlc_static_modules[] = {
 };
 
 
-int main()
+int main(void)
 {
     test_init();
 
@@ -157,8 +156,8 @@ int main()
 
     libvlc_instance_t *vlc = libvlc_new(ARRAY_SIZE(args), args);
 
-    libvlc_add_intf(vlc, MODULE_STRING);
-    libvlc_playlist_play(vlc);
+    libvlc_InternalAddIntf(vlc->p_libvlc_int, MODULE_STRING);
+    libvlc_InternalPlay(vlc->p_libvlc_int);
 
     libvlc_release(vlc);
 

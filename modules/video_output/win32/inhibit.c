@@ -25,9 +25,12 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_inhibit.h>
 #include <vlc_plugin.h>
+
 #include <assert.h>
+#include <windows.h>
 
 struct vlc_inhibit_sys
 {

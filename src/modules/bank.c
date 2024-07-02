@@ -553,6 +553,12 @@ static void AllocatePluginPath(libvlc_int_t *obj, const char *path,
     free(bank.plugins);
 }
 
+#if defined(_WIN32)
+# if !WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+#  define HAVE_FORCED_PLUGINS
+# endif
+#endif
+
 /**
  * Enumerates all dynamic plug-ins that can be found.
  *
@@ -573,7 +579,7 @@ static void AllocateAllPlugins (libvlc_int_t *p_this)
     if (var_InheritBool(p_this, "reset-plugins-cache"))
         mode = (mode | CACHE_WRITE_FILE) & ~CACHE_READ_FILE;
 
-#ifdef VLC_WINSTORE_APP
+#ifdef HAVE_FORCED_PLUGINS
     /* Windows Store Apps can not load external plugins with absolute paths. */
     AllocatePluginPath (p_this, "plugins", mode);
 #else
@@ -585,7 +591,7 @@ static void AllocateAllPlugins (libvlc_int_t *p_this)
         AllocatePluginPath(p_this, vlcpath, mode);
         free(vlcpath);
     }
-#endif /* VLC_WINSTORE_APP */
+#endif
 
     /* If the user provided a plugin path, we add it to the list */
     paths = getenv( "VLC_PLUGIN_PATH" );
@@ -792,7 +798,7 @@ void module_EndBank (bool b_plugins)
  * Loads module descriptions for all available plugins.
  * Fills the module bank structure with the plugin modules.
  *
- * \param p_this vlc object structure
+ * \param obj vlc object structure
  */
 void module_LoadPlugins(libvlc_int_t *obj)
 {

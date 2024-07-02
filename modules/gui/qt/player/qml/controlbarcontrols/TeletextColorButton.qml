@@ -18,16 +18,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as T
+import QtQuick
+import QtQuick.Templates as T
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 
-Widgets.IconControlButton {
+Widgets.IconToolButton {
     // Settings
 
-    iconText: VLCIcons.circle
-
-    T.ToolTip.visible: (hovered || visualFocus)
+    text: VLCIcons.circle
 }

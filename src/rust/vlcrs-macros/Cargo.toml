@@ -1,0 +1,14 @@
+[package]
+name = "vlcrs-macros"
+edition = "2021"
+version.workspace = true
+license.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+vlcrs-plugin = { path = "../vlcrs-plugin" }
+quote = "1.0"
+syn = { version = "1.0", features = ["full"] }
+proc-macro2 = "1.0"

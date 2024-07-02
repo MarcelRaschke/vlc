@@ -41,6 +41,7 @@
 # include <vlc_gcrypt.h>
 #endif
 #include "sdp.h"
+#include "input.h"
 
 /*
  * TODO: so much stuff
@@ -77,8 +78,10 @@ static void vlc_rtp_es_id_send(struct vlc_rtp_es *es, block_t *block)
 
     /* TODO: Don't set PCR here. Breaks multiple sources (in a session)
      * and more importantly eventually multiple sessions. */
-    if (block->i_pts != VLC_TICK_INVALID)
-        es_out_SetPCR(ei->out, block->i_pts);
+    vlc_tick_t pcr = (block->i_dts != VLC_TICK_INVALID) ? block->i_dts
+                                                        : block->i_pts;
+    if (pcr != VLC_TICK_INVALID)
+        es_out_SetPCR(ei->out, pcr);
     es_out_Send(ei->out, ei->id, block);
 }
 
@@ -218,8 +221,6 @@ static int extract_port (char **phost)
  */
 static int Control (demux_t *demux, int query, va_list args)
 {
-    demux_sys_t *sys = demux->p_sys;
-
     switch (query)
     {
         case DEMUX_GET_PTS_DELAY:
@@ -238,9 +239,6 @@ static int Control (demux_t *demux, int query, va_list args)
             return VLC_SUCCESS;
         }
     }
-
-    if (sys->chained_demux != NULL)
-        return vlc_demux_chained_ControlVa (sys->chained_demux, query, args);
 
     switch (query)
     {
@@ -268,18 +266,18 @@ static int Control (demux_t *demux, int query, va_list args)
 static void Close (vlc_object_t *obj)
 {
     demux_t *demux = (demux_t *)obj;
-    demux_sys_t *p_sys = demux->p_sys;
+    rtp_sys_t *p_sys = demux->p_sys;
 
     vlc_cancel(p_sys->thread);
     vlc_join(p_sys->thread, NULL);
 #ifdef HAVE_SRTP
-    if (p_sys->srtp)
-        srtp_destroy (p_sys->srtp);
+    if (p_sys->input_sys.srtp)
+        srtp_destroy (p_sys->input_sys.srtp);
 #endif
-    rtp_session_destroy (demux, p_sys->session);
-    if (p_sys->rtcp_sock != NULL)
-        vlc_dtls_Close(p_sys->rtcp_sock);
-    vlc_dtls_Close(p_sys->rtp_sock);
+    rtp_session_destroy (obj->logger, p_sys->session);
+    if (p_sys->input_sys.rtcp_sock != NULL)
+        vlc_dtls_Close(p_sys->input_sys.rtcp_sock);
+    vlc_dtls_Close(p_sys->input_sys.rtp_sock);
 }
 
 static int OpenSDP(vlc_object_t *obj)
@@ -305,15 +303,15 @@ static int OpenSDP(vlc_object_t *obj)
     if (sdplen < 0)
         return sdplen;
 
-    demux_sys_t *sys = vlc_obj_malloc(obj, sizeof (*sys));
+    rtp_sys_t *sys = vlc_obj_malloc(obj, sizeof (*sys));
     if (unlikely(sys == NULL))
         return VLC_ENOMEM;
 
-    sys->rtp_sock = NULL;
-    sys->rtcp_sock = NULL;
+    sys->input_sys.rtp_sock = NULL;
+    sys->input_sys.rtcp_sock = NULL;
     sys->session = NULL;
 #ifdef HAVE_SRTP
-    sys->srtp = NULL;
+    sys->input_sys.srtp = NULL;
 #endif
 
     struct vlc_sdp *sdp = vlc_sdp_parse((const char *)peek, sdplen);
@@ -398,8 +396,8 @@ static int OpenSDP(vlc_object_t *obj)
     if (fd == -1)
         goto error;
 
-    sys->rtp_sock = vlc_datagram_CreateFD(fd);
-    if (unlikely(sys->rtp_sock == NULL)) {
+    sys->input_sys.rtp_sock = vlc_datagram_CreateFD(fd);
+    if (unlikely(sys->input_sys.rtp_sock == NULL)) {
         net_Close(fd);
         goto error;
     }
@@ -409,24 +407,23 @@ static int OpenSDP(vlc_object_t *obj)
         if (fd == -1)
             goto error;
 
-        sys->rtcp_sock = vlc_datagram_CreateFD(fd);
-        if (unlikely(sys->rtcp_sock == NULL)) {
+        sys->input_sys.rtcp_sock = vlc_datagram_CreateFD(fd);
+        if (unlikely(sys->input_sys.rtcp_sock == NULL)) {
             net_Close(fd);
             goto error;
         }
     }
 
-    sys->chained_demux = NULL;
-    sys->max_src = var_InheritInteger(obj, "rtp-max-src");
-    sys->timeout = vlc_tick_from_sec(var_InheritInteger(obj, "rtp-timeout"));
-    sys->max_dropout  = var_InheritInteger(obj, "rtp-max-dropout");
-    sys->max_misorder = -var_InheritInteger(obj, "rtp-max-misorder");
+    sys->logger = obj->logger;
 
     demux->pf_demux = NULL;
     demux->pf_control = Control;
     demux->p_sys = sys;
 
-    sys->session = rtp_session_create(demux);
+    sys->session = rtp_session_create_custom(var_InheritInteger(obj, "rtp-max-dropout"),
+                                             var_InheritInteger(obj, "rtp-max-misorder"),
+                                             var_InheritInteger(obj, "rtp-max-src"),
+                                             vlc_tick_from_sec(var_InheritInteger(obj, "rtp-timeout")));
     if (sys->session == NULL)
         goto error;
 
@@ -440,8 +437,8 @@ static int OpenSDP(vlc_object_t *obj)
     if (err > 0 && module_exists("live555")) /* Bail out to live555 */
         goto error;
 
-    if (vlc_clone(&sys->thread, rtp_dgram_thread, demux)) {
-        rtp_session_destroy(demux, sys->session);
+    if (vlc_clone(&sys->thread, rtp_dgram_thread, sys)) {
+        rtp_session_destroy(obj->logger, sys->session);
         goto error;
     }
 
@@ -449,10 +446,10 @@ static int OpenSDP(vlc_object_t *obj)
     return VLC_SUCCESS;
 
 error:
-    if (sys->rtcp_sock != NULL)
-        vlc_dtls_Close(sys->rtcp_sock);
-    if (sys->rtp_sock != NULL)
-        vlc_dtls_Close(sys->rtp_sock);
+    if (sys->input_sys.rtcp_sock != NULL)
+        vlc_dtls_Close(sys->input_sys.rtcp_sock);
+    if (sys->input_sys.rtp_sock != NULL)
+        vlc_dtls_Close(sys->input_sys.rtp_sock);
     vlc_sdp_free(sdp);
     return VLC_EGENERIC;
 }
@@ -479,7 +476,7 @@ static int OpenURL(vlc_object_t *obj)
     else
         return VLC_EGENERIC;
 
-    demux_sys_t *p_sys = vlc_obj_malloc(obj, sizeof (*p_sys));
+    rtp_sys_t *p_sys = vlc_obj_malloc(obj, sizeof (*p_sys));
     if (unlikely(p_sys == NULL))
         return VLC_ENOMEM;
 
@@ -548,8 +545,8 @@ static int OpenURL(vlc_object_t *obj)
     if(fd == -1)
         return VLC_EGENERIC;
 
-    p_sys->rtp_sock = (co ? vlc_dccp_CreateFD : vlc_datagram_CreateFD)(fd);
-    if (p_sys->rtp_sock == NULL) {
+    p_sys->input_sys.rtp_sock = (co ? vlc_dccp_CreateFD : vlc_datagram_CreateFD)(fd);
+    if (p_sys->input_sys.rtp_sock == NULL) {
         if (rtcp_fd != -1)
             net_Close(rtcp_fd);
         return VLC_EGENERIC;
@@ -557,27 +554,26 @@ static int OpenURL(vlc_object_t *obj)
     net_SetCSCov (fd, -1, 12);
 
     if (rtcp_fd != -1) {
-        p_sys->rtcp_sock = vlc_datagram_CreateFD(rtcp_fd);
-        if (p_sys->rtcp_sock == NULL)
+        p_sys->input_sys.rtcp_sock = vlc_datagram_CreateFD(rtcp_fd);
+        if (p_sys->input_sys.rtcp_sock == NULL)
             net_Close (rtcp_fd);
     } else
-        p_sys->rtcp_sock = NULL;
+        p_sys->input_sys.rtcp_sock = NULL;
 
-    /* Initializes demux */
-    p_sys->chained_demux = NULL;
 #ifdef HAVE_SRTP
-    p_sys->srtp         = NULL;
+    p_sys->input_sys.srtp         = NULL;
 #endif
-    p_sys->max_src      = var_CreateGetInteger (obj, "rtp-max-src");
-    p_sys->timeout      = vlc_tick_from_sec( var_CreateGetInteger (obj, "rtp-timeout") );
-    p_sys->max_dropout  = var_CreateGetInteger (obj, "rtp-max-dropout");
-    p_sys->max_misorder = -var_CreateGetInteger (obj, "rtp-max-misorder");
+    p_sys->logger       = obj->logger;
 
     demux->pf_demux   = NULL;
     demux->pf_control = Control;
     demux->p_sys      = p_sys;
 
-    p_sys->session = rtp_session_create (demux);
+    p_sys->session = rtp_session_create_custom(
+                        var_InheritInteger(obj, "rtp-max-dropout"),
+                        var_InheritInteger(obj, "rtp-max-misorder"),
+                        var_InheritInteger(obj, "rtp-max-src"),
+                        vlc_tick_from_sec(var_InheritInteger(obj, "rtp-timeout")) );
     if (p_sys->session == NULL)
         goto error;
 
@@ -589,16 +585,16 @@ static int OpenURL(vlc_object_t *obj)
     if (key)
     {
         vlc_gcrypt_init ();
-        p_sys->srtp = srtp_create (SRTP_ENCR_AES_CM, SRTP_AUTH_HMAC_SHA1, 10,
+        p_sys->input_sys.srtp = srtp_create (SRTP_ENCR_AES_CM, SRTP_AUTH_HMAC_SHA1, 10,
                                    SRTP_PRF_AES_CM, SRTP_RCC_MODE1);
-        if (p_sys->srtp == NULL)
+        if (p_sys->input_sys.srtp == NULL)
         {
             free (key);
             goto error;
         }
 
         char *salt = var_CreateGetNonEmptyString (demux, "srtp-salt");
-        int val = srtp_setkeystring (p_sys->srtp, key, salt ? salt : "");
+        int val = srtp_setkeystring (p_sys->input_sys.srtp, key, salt ? salt : "");
         free (salt);
         free (key);
         if (val)
@@ -610,20 +606,20 @@ static int OpenURL(vlc_object_t *obj)
     }
 #endif
 
-    if (vlc_clone (&p_sys->thread, rtp_dgram_thread, demux))
+    if (vlc_clone (&p_sys->thread, rtp_dgram_thread, p_sys))
         goto error;
     return VLC_SUCCESS;
 
 error:
 #ifdef HAVE_SRTP
-    if (p_sys->srtp != NULL)
-        srtp_destroy(p_sys->srtp);
+    if (p_sys->input_sys.srtp != NULL)
+        srtp_destroy(p_sys->input_sys.srtp);
 #endif
     if (p_sys->session != NULL)
-        rtp_session_destroy(demux, p_sys->session);
-    if (p_sys->rtcp_sock != NULL)
-        vlc_dtls_Close(p_sys->rtcp_sock);
-    vlc_dtls_Close(p_sys->rtp_sock);
+        rtp_session_destroy(obj->logger, p_sys->session);
+    if (p_sys->input_sys.rtcp_sock != NULL)
+        vlc_dtls_Close(p_sys->input_sys.rtcp_sock);
+    vlc_dtls_Close(p_sys->input_sys.rtp_sock);
     return VLC_EGENERIC;
 }
 
@@ -687,15 +683,15 @@ vlc_module_begin()
                SRTP_SALT_TEXT, SRTP_SALT_LONGTEXT)
         change_safe()
 #endif
-    add_integer("rtp-max-src", 1, RTP_MAX_SRC_TEXT,
+    add_integer("rtp-max-src", RTP_MAX_SRC_DEFAULT, RTP_MAX_SRC_TEXT,
                 RTP_MAX_SRC_LONGTEXT)
         change_integer_range (1, 255)
-    add_integer("rtp-timeout", 5, RTP_TIMEOUT_TEXT,
+    add_integer("rtp-timeout", RTP_MAX_TIMEOUT_DEFAULT, RTP_TIMEOUT_TEXT,
                 RTP_TIMEOUT_LONGTEXT)
-    add_integer("rtp-max-dropout", 3000, RTP_MAX_DROPOUT_TEXT,
+    add_integer("rtp-max-dropout", RTP_MAX_DROPOUT_DEFAULT, RTP_MAX_DROPOUT_TEXT,
                 RTP_MAX_DROPOUT_LONGTEXT)
         change_integer_range (0, 32767)
-    add_integer("rtp-max-misorder", 100, RTP_MAX_MISORDER_TEXT,
+    add_integer("rtp-max-misorder", RTP_MAX_MISORDER_DEFAULT, RTP_MAX_MISORDER_TEXT,
                 RTP_MAX_MISORDER_LONGTEXT)
         change_integer_range (0, 32767)
     add_obsolete_string("rtp-dynamic-pt") /* since 4.0.0 */

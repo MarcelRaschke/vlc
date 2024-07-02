@@ -15,7 +15,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
+
+import QtQuick
 
 import org.videolan.vlc 0.1
 
@@ -23,45 +24,65 @@ import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 import "qrc:///player/" as Player
 
+Widgets.IconToolButton {
+    id: root
 
-Widgets.IconControlButton {
-    id: langBtn
-    iconText: VLCIcons.audiosub
+    // Proprerties
 
-    enabled: menuLoader.status === Loader.Ready
-    onClicked: menuLoader.item.open()
+    readonly property var _parentItem: {
+        if ((typeof rootPlayer !== 'undefined') && (rootPlayer !== null))
+            return rootPlayer
+        else
+            return g_mainDisplay
+    }
+
+    // Signals
 
     signal requestLockUnlockAutoHide(bool lock)
 
-    text: I18n.qtr("Languages and tracks")
+    signal menuOpened(var menu)
+
+    // Settings
+
+    text: VLCIcons.audiosub
+
+    enabled: menuLoader.status === Loader.Ready
+
+    description: qsTr("Languages and tracks")
+
+    // Events
+
+    onClicked: menuLoader.item.open()
+
+    // Children
 
     Loader {
         id: menuLoader
 
-        active: (typeof rootPlayer !== 'undefined') && (rootPlayer !== null)
-
         sourceComponent: Player.TracksMenu {
             id: menu
 
-            parent: rootPlayer
-            focus: true
+            parent: root._parentItem
+
             x: 0
-            y: (rootPlayer.positionSliderY - height)
+            y: (parent.positionSliderY - height)
             z: 1
 
-            colorContext.palette: langBtn.colorContext.palette
+            focus: true
+
+            colorContext.palette: root.colorContext.palette
 
             onOpened: {
-                langBtn.requestLockUnlockAutoHide(true)
-                if (!!rootPlayer)
-                    rootPlayer.applyMenu(menu)
+                root.requestLockUnlockAutoHide(true)
+
+                root.menuOpened(menu)
             }
 
             onClosed: {
-                langBtn.requestLockUnlockAutoHide(false)
-                langBtn.forceActiveFocus()
-                if (!!rootPlayer)
-                    rootPlayer.applyMenu(null)
+                root.requestLockUnlockAutoHide(false)
+                root.forceActiveFocus()
+
+                root.menuOpened(null)
             }
         }
     }

@@ -15,9 +15,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 
 import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
@@ -29,46 +29,38 @@ import "qrc:///style/"
 Widgets.PageLoader {
     id: root
 
-    property var sortModel
-    property var contentModel
-    property bool isViewMultiView: true
+    Accessible.role: Accessible.Client
+    Accessible.name: qsTr("Music view")
 
     pageModel: [{
-            displayText: I18n.qtr("Artists"),
+            displayText: qsTr("Artists"),
             name: "artists",
+            default: true,
             url: "qrc:///medialibrary/MusicArtistsDisplay.qml"
         }, {
-            displayText: I18n.qtr("Albums"),
+            displayText: qsTr("Albums"),
             name: "albums",
             url: "qrc:///medialibrary/MusicAlbumsDisplay.qml"
         }, {
-            displayText: I18n.qtr("Tracks"),
+            displayText: qsTr("Tracks"),
             name: "tracks" ,
             url: "qrc:///medialibrary/MusicTracksDisplay.qml"
         }, {
-            displayText: I18n.qtr("Genres"),
+            displayText: qsTr("Genres"),
             name: "genres" ,
             url: "qrc:///medialibrary/MusicGenresDisplay.qml"
         }, {
-            displayText: I18n.qtr("Playlists"),
+            displayText: qsTr("Playlists"),
             name: "playlists" ,
             url: "qrc:///medialibrary/MusicPlaylistsDisplay.qml"
         }
     ]
 
-    loadDefaultView: function () {
-        History.update(["mc", "music", "artists"])
-        loadPage("artists")
-    }
-
-    onCurrentItemChanged: {
-        sortModel = currentItem.sortModel
-        contentModel = currentItem.model
-        isViewMultiView = currentItem.isViewMultiView === undefined || currentItem.isViewMultiView
-    }
-
     function loadIndex(index) {
-        History.push(["mc", "music", root.pageModel[index].name])
+        const pageName = root.pageModel[index].name
+        if (root.isDefaulLoadedForPath([pageName]))
+            return
+        History.push([...root.pagePrefix, pageName])
     }
 
     property ListModel tabModel: ListModel {
@@ -82,10 +74,12 @@ Widgets.PageLoader {
         }
     }
 
-    property Component localMenuDelegate: Widgets.LocalTabBar {
-        currentView: root.view
+    localMenuDelegate: Widgets.LocalTabBar {
+        currentView: root.pageName
         model: tabModel
 
-        onClicked: root.loadIndex(index)
+        onClicked: (index) => {
+            root.loadIndex(index)
+        }
     }
 }

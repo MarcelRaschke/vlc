@@ -36,6 +36,36 @@
 typedef struct input_clock_t input_clock_t;
 
 /**
+ * Callbacks for the input_clock_t listener.
+ *
+ * \see input_clock_AttachListener
+ */
+struct vlc_input_clock_cbs {
+    /**
+     * Notify the listener that the buffering made progress.
+     *
+     * \param opaque        listener private data set from
+     *                      \ref input_clock_AttachListener
+     * \param ck_system     time reference for the buffering progress
+     * \param ck_stream     progress of the buffering in tick
+     * \param rate          current playback rate for the buffering
+     *
+     * \return              how much time the playback has drifted from
+     *                      the main clock
+     */
+    vlc_tick_t (*update)(void *opaque, vlc_tick_t ck_system,
+                         vlc_tick_t ck_stream, double rate);
+
+    /**
+     * Notify the listener that the buffering needed a reset.
+     *
+     * \param opaque        listener private data set from
+     *                      \ref input_clock_AttachListener
+     */
+    void (*reset)(void *opaque);
+};
+
+/**
  * This function creates a new input_clock_t.
  *
  * You must use input_clock_Delete to delete it once unused.
@@ -48,26 +78,35 @@ input_clock_t *input_clock_New( float rate );
  * It can be called only one time, with a valid clock, before the first update
  * (input_clock_Update()).
  *
- * \param clock_listener clock created with vlc_clock_main_CreateInputMaster().
- * The input_clock_t will take ownership of this clock and drive the main
- * clock.
+ * \param clock the input clock to attach the listener to
+ * \param listener an input clock listener virtual table
+ * \param opaque an opaque pointer forwarded to the listener
+ *
  */
-void input_clock_AttachListener( input_clock_t *, vlc_clock_t *clock_listener );
+void input_clock_AttachListener(input_clock_t *clock,
+                                const struct vlc_input_clock_cbs *clock_listener,
+                                void *opaque);
 
 /**
  * This function destroys a input_clock_t created by input_clock_New.
  */
-void           input_clock_Delete( input_clock_t * );
+void input_clock_Delete(input_clock_t *);
 
 /**
  * This function will update a input_clock_t with a new clock reference point.
  * It will also tell if the clock point is late regarding our buffering.
  *
+ * \param clock the input clock object to update with the new point
+ * \param p_log the logger object to use
+ * \param b_can_pace_control whether the input can control the speed of playback
  * \param b_buffering_allowed tells if we are allowed to bufferize more data in
- * advanced (if possible).
+          advanced (if possible).
+ * \param i_clock the new clock reference value
+ * \param i_system the timestmap at which the new reference has been reported
+ *
  * \return clock update delay
  */
-vlc_tick_t input_clock_Update( input_clock_t *, vlc_object_t *p_log,
+vlc_tick_t input_clock_Update( input_clock_t *clock, vlc_object_t *p_log,
                             bool b_can_pace_control, bool b_buffering_allowed,
                             vlc_tick_t i_clock, vlc_tick_t i_system );
 /**
@@ -75,7 +114,7 @@ vlc_tick_t input_clock_Update( input_clock_t *, vlc_object_t *p_log,
  *
  * The actual jitter estimation will not be reset by it.
  */
-void    input_clock_Reset( input_clock_t * );
+void input_clock_Reset( input_clock_t * );
 
 /**
  * This functions will return a deadline used to control the reading speed.
@@ -85,18 +124,12 @@ vlc_tick_t input_clock_GetWakeup( input_clock_t * );
 /**
  * This functions allows changing the actual reading speed.
  */
-void    input_clock_ChangeRate( input_clock_t *, float rate );
+void input_clock_ChangeRate(input_clock_t *, float rate);
 
 /**
  * This function allows changing the pause status.
  */
-void    input_clock_ChangePause( input_clock_t *, bool b_paused, vlc_tick_t i_date );
-
-/**
- * This function returns the original system value date and the delay for the current
- * reference point (a valid reference point must have been set).
- */
-void    input_clock_GetSystemOrigin( input_clock_t *, vlc_tick_t *pi_system, vlc_tick_t *pi_delay );
+void input_clock_ChangePause(input_clock_t *, bool b_paused, vlc_tick_t i_date);
 
 /**
  * This function allows rebasing the original system value date (a valid
@@ -104,7 +137,7 @@ void    input_clock_GetSystemOrigin( input_clock_t *, vlc_tick_t *pi_system, vlc
  * When using the absolute mode, it will create a discontinuity unless
  * called immediately after a input_clock_Update.
  */
-void    input_clock_ChangeSystemOrigin( input_clock_t *, bool b_absolute, vlc_tick_t i_system );
+void input_clock_ChangeSystemOrigin(input_clock_t *, bool b_absolute, vlc_tick_t i_system);
 
 /**
  * This function returns the current rate.

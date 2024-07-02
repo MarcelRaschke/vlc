@@ -245,11 +245,11 @@ static int Decode(decoder_t *p_dec, block_t *p_block)
             p_sub->i_start = p_block->i_dts;
         }
 
-        subtext_updater_sys_t *p_spusys = p_sub->updater.p_sys;
+        subtext_updater_sys_t *p_spusys = p_sub->updater.sys;
         textst_FillRegions(p_dec, &p_block->p_buffer[13], p_block->i_buffer - 13,
                            &p_spusys->region);
+        p_spusys->region.b_absolute = false;
 
-        p_sub->b_absolute = false;
         decoder_QueueSub(p_dec, p_sub);
     }
 
@@ -267,7 +267,7 @@ static int Open(vlc_object_t *object)
     decoder_sys_t *p_sys = vlc_obj_malloc(object, sizeof(decoder_sys_t));
     if(!p_sys)
         return VLC_ENOMEM;
-    memset(p_sys->palette, 0xFF, 256 * sizeof(uint32_t));
+    memset(p_sys->palette, 0xFF, sizeof(p_sys->palette));
 
     p_dec->p_sys = p_sys;
     p_dec->pf_decode = Decode;
@@ -275,4 +275,3 @@ static int Open(vlc_object_t *object)
 
     return VLC_SUCCESS;
 }
-

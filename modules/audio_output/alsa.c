@@ -33,6 +33,7 @@
 #endif
 
 #include <assert.h>
+#include <stdbit.h>
 
 #include <vlc_common.h>
 #include <vlc_plugin.h>
@@ -362,7 +363,7 @@ static void * InjectionThread(void * data)
     if (sys->started && !sys->unrecoverable_error)
     {
         msg_Err(aout, "Unhandled error in injection thread, requesting aout restart");
-        aout_RestartRequest(aout, AOUT_RESTART_OUTPUT);
+        aout_RestartRequest(aout, false);
     }
     vlc_mutex_unlock(&sys->lock);
     return NULL;
@@ -617,8 +618,8 @@ static unsigned SetupChannels (vlc_object_t *obj, snd_pcm_t *pcm,
         if (chans == -1)
             continue;
 
-        unsigned score = (vlc_popcount (chans & *mask) << 8)
-                       | (255 - vlc_popcount (chans));
+        unsigned score = (stdc_count_ones((uint16_t)(chans & *mask)) << 8)
+                       | (255 - stdc_count_ones((uint16_t)chans));
         if (score > best_score)
         {
             best_offset = p - maps;
@@ -864,7 +865,7 @@ static int Start (audio_output_t *aout, audio_sample_format_t *restrict fmt)
         sys->chans_to_reorder = SetupChannels (VLC_OBJECT(aout), pcm, &map,
                                                sys->chans_table);
         fmt->i_physical_channels = map;
-        channels = vlc_popcount (map);
+        channels = stdc_count_ones(map);
     }
     else
         sys->chans_to_reorder = 0;
@@ -1079,7 +1080,7 @@ static int DeviceSelect (audio_output_t *aout, const char *id)
     free (sys->device);
     sys->device = device;
     aout_DeviceReport (aout, device);
-    aout_RestartRequest (aout, AOUT_RESTART_OUTPUT);
+    aout_RestartRequest (aout, true);
     return 0;
 }
 

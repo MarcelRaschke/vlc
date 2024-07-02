@@ -29,6 +29,7 @@
 #include <vlc_actions.h>
 #include <vlc_modules.h>
 #include <vlc_plugin.h>
+#include <vlc_threads.h>
 
 #include "vlc_configuration.h"
 
@@ -40,7 +41,7 @@
 #include "misc/rcu.h"
 
 static vlc_mutex_t config_lock = VLC_STATIC_MUTEX;
-static atomic_bool config_dirty = ATOMIC_VAR_INIT(false);
+static atomic_bool config_dirty = false;
 
 void config_Lock(void)
 {
@@ -471,7 +472,7 @@ module_config_t *config_FindConfig(const char *name)
 
 /**
  * Destroys an array of configuration items.
- * \param config start of array of items
+ * \param tab start of array of items
  * \param confsize number of items in the array
  */
 void config_Free(struct vlc_param *tab, size_t confsize)

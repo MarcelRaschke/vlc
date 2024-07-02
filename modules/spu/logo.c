@@ -33,16 +33,13 @@
 #include "common.h"
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_mouse.h>
 #include <vlc_subpicture.h>
 #include <vlc_url.h>
 #include <vlc_image.h>
-
-#ifdef LoadImage
-#   undef LoadImage
-#endif
 
 /*****************************************************************************
  * Module descriptor
@@ -322,7 +319,6 @@ static subpicture_t *FilterSub( filter_t *p_filter, vlc_tick_t date )
 
     subpicture_t *p_spu;
     subpicture_region_t *p_region;
-    video_format_t fmt;
     picture_t *p_pic;
     logo_t *p_logo;
 
@@ -350,7 +346,7 @@ static subpicture_t *FilterSub( filter_t *p_filter, vlc_tick_t date )
         goto exit;
 
     p_spu->i_start = date;
-    p_spu->i_stop = 0;
+    p_spu->i_stop = VLC_TICK_INVALID;
     p_spu->b_ephemer = true;
 
     /* Send an empty subpicture to clear the display when needed */
@@ -365,16 +361,7 @@ static subpicture_t *FilterSub( filter_t *p_filter, vlc_tick_t date )
         goto exit;
 
     /* Create new SPU region */
-    video_format_Init( &fmt, VLC_CODEC_YUVA );
-    fmt.i_sar_num = fmt.i_sar_den = 1;
-    fmt.i_width = fmt.i_visible_width = p_pic->p[Y_PLANE].i_visible_pitch;
-    fmt.i_height = fmt.i_visible_height = p_pic->p[Y_PLANE].i_visible_lines;
-    fmt.i_x_offset = fmt.i_y_offset = 0;
-    fmt.transfer    = p_pic->format.transfer;
-    fmt.primaries   = p_pic->format.primaries;
-    fmt.space       = p_pic->format.space;
-    fmt.color_range = p_pic->format.color_range;
-    p_region = subpicture_region_New( &fmt );
+    p_region = subpicture_region_ForPicture( NULL, p_pic );
     if( !p_region )
     {
         msg_Err( p_filter, "cannot allocate SPU region" );
@@ -383,25 +370,22 @@ static subpicture_t *FilterSub( filter_t *p_filter, vlc_tick_t date )
         goto exit;
     }
 
-    /* */
-    picture_Copy( p_region->p_picture, p_pic );
-
     /*  where to locate the logo: */
     if( p_sys->i_pos < 0 )
     {   /*  set to an absolute xy */
         p_region->i_align = SUBPICTURE_ALIGN_LEFT | SUBPICTURE_ALIGN_TOP;
-        p_spu->b_absolute = true;
+        p_region->b_absolute = true;
     }
     else
     {   /* set to one of the 9 relative locations */
         p_region->i_align = p_sys->i_pos;
-        p_spu->b_absolute = false;
+        p_region->b_absolute = false;
     }
 
     p_region->i_x = p_sys->i_pos_x > 0 ? p_sys->i_pos_x : 0;
     p_region->i_y = p_sys->i_pos_y > 0 ? p_sys->i_pos_y : 0;
 
-    p_spu->p_region = p_region;
+    vlc_spu_regions_push( &p_spu->regions, p_region );
 
     p_spu->i_alpha = ( p_logo->i_alpha != -1 ?
                        p_logo->i_alpha : p_list->i_alpha );
@@ -578,7 +562,7 @@ static int LogoCallback( vlc_object_t *p_this, char const *psz_var,
 /**
  * It loads the logo image into memory.
  */
-static picture_t *LoadImage( vlc_object_t *p_this, const char *psz_filename )
+static picture_t *LoadPicture( vlc_object_t *p_this, const char *psz_filename )
 {
     if( !psz_filename )
         return NULL;
@@ -667,7 +651,7 @@ static void LogoListLoad( vlc_object_t *p_this, logo_list_t *p_logo_list,
 
         msg_Dbg( p_this, "logo file name %s, delay %d, alpha %d",
                  psz_list, p_logo[i].i_delay, p_logo[i].i_alpha );
-        p_logo[i].p_pic = LoadImage( p_this, psz_list );
+        p_logo[i].p_pic = LoadPicture( p_this, psz_list );
         if( !p_logo[i].p_pic )
         {
             msg_Warn( p_this, "error while loading logo %s, will be skipped",
@@ -719,4 +703,3 @@ static logo_t *LogoListCurrent( logo_list_t *p_list )
 {
     return &p_list->p_logo[p_list->i_counter];
 }
-

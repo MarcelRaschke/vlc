@@ -254,16 +254,7 @@ int D3D11OpenDeinterlace(filter_t *filter)
     d3d11_decoder_device_t *dev_sys = GetD3D11OpaqueContext( filter->vctx_in );
     sys->d3d_dev = &dev_sys->d3d_dev;
 
-    for (const d3d_format_t *output_format = DxgiGetRenderFormatList();
-            output_format->name != NULL; ++output_format)
-    {
-        if (output_format->formatTexture == vctx_sys->format &&
-            is_d3d11_opaque(output_format->fourcc))
-        {
-            sys->output_format = output_format;
-            break;
-        }
-    }
+    sys->output_format = D3D11_RenderFormat(vctx_sys->format, vctx_sys->secondary ,true);
     if (unlikely(sys->output_format == NULL))
         goto error;
 
@@ -299,8 +290,9 @@ int D3D11OpenDeinterlace(filter_t *filter)
         msg_Dbg(filter, "unknown mode %s, trying blend", psz_mode);
         p_mode = GetFilterMode("blend");
     }
-    if (strcmp(p_mode->psz_mode, psz_mode))
+    if (psz_mode == NULL || strcmp(p_mode->psz_mode, psz_mode))
         msg_Dbg(filter, "using %s deinterlacing mode", p_mode->psz_mode);
+    free(psz_mode);
 
     D3D11_VIDEO_PROCESSOR_RATE_CONVERSION_CAPS rateCaps;
     for (UINT type = 0; type < processorCaps.RateConversionCapsCount; ++type)
@@ -374,4 +366,3 @@ error:
 
     return VLC_EGENERIC;
 }
-

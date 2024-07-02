@@ -22,17 +22,20 @@
 
 #import <Cocoa/Cocoa.h>
 
-#import "library/VLCLibraryTableView.h"
+#import "library/VLCLibraryTableViewDataSource.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
 @class VLCMediaLibraryAlbum;
 
-@interface VLCLibraryAlbumTracksDataSource : NSObject <VLCLibraryTableViewDataSource, NSTableViewDelegate>
+@interface VLCLibraryAlbumTracksDataSource : NSObject <VLCLibraryTableViewDataSource>
 
 extern const CGFloat VLCLibraryTracksRowHeight;
 
 @property (readwrite, retain, nonatomic, nullable) VLCMediaLibraryAlbum *representedAlbum;
+
+- (void)setRepresentedAlbum:(VLCMediaLibraryAlbum*)album
+             withCompletion:(nullable void(^)(void))completionHandler;
 
 @end
 

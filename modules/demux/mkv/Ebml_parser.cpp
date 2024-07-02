@@ -30,7 +30,7 @@ namespace mkv {
 /*****************************************************************************
  * Ebml Stream parser
  *****************************************************************************/
-EbmlParser::EbmlParser( EbmlStream *es, EbmlElement *el_start, demux_t *p_demux ) :
+EbmlParser::EbmlParser( matroska_iostream_c *es, EbmlElement *el_start, demux_t *p_demux ) :
     p_demux( p_demux ),
     m_es( es ),
     mi_level( 1 ),
@@ -62,7 +62,7 @@ EbmlParser::~EbmlParser( void )
     }
 }
 
-void EbmlParser::reconstruct( EbmlStream* es, EbmlElement* el_start, demux_t* p_demux )
+void EbmlParser::reconstruct( matroska_iostream_c* es, EbmlElement* el_start, demux_t* p_demux )
 {
     this->~EbmlParser();
 
@@ -123,11 +123,13 @@ static const EbmlSemanticContext & GetEbmlNoGlobal_Context()
 }
 
 // the Segment Context should not allow Void or CRC32 elements to avoid lookup false alarm
-const EbmlSemanticContext Context_KaxSegmentVLC = EbmlSemanticContext(KaxSegment_Context.GetSize(),
-                                                                      KaxSegment_Context.MyTable,
-                                                                      KaxSegment_Context.Parent(),
-                                                                      GetEbmlNoGlobal_Context,
-                                                                      KaxSegment_Context.GetMaster());
+DEFINE_START_SEMANTIC(KaxSegmentVLC)
+DEFINE_SEMANTIC_ITEM(true, true, EbmlHead)
+DEFINE_SEMANTIC_ITEM(false, false, KaxSegment)
+DEFINE_END_SEMANTIC(KaxSegmentVLC)
+
+DEFINE_xxx_CONTEXT(KaxSegmentVLC,GetEbmlNoGlobal_Context)
+
 
 EbmlElement *EbmlParser::Get( bool allow_overshoot )
 {
@@ -167,8 +169,8 @@ next:
             if ( mi_level > 1 && m_el[mi_level-2]->IsFiniteSize() &&
                  m_el[mi_level-1]->GetEndPosition() < m_el[mi_level-2]->GetEndPosition() )
             {
-                uint64 top = m_el[mi_level-2]->GetEndPosition();
-                uint64 bom = m_el[mi_level-1]->GetEndPosition();
+                uint64_t top = m_el[mi_level-2]->GetEndPosition();
+                uint64_t bom = m_el[mi_level-1]->GetEndPosition();
                 i_max_read = top - bom;
             }
         }
@@ -187,8 +189,8 @@ next:
         else if (size_lvl == 0 || !m_el[size_lvl-1]->IsFiniteSize() || !m_el[size_lvl]->IsFiniteSize() )
             i_max_read = UINT64_MAX;
         else {
-            uint64 top = m_el[size_lvl-1]->GetEndPosition();
-            uint64 bom = m_el[mi_level]->GetEndPosition();
+            uint64_t top = m_el[size_lvl-1]->GetEndPosition();
+            uint64_t bom = m_el[mi_level]->GetEndPosition();
             i_max_read = top - bom;
         }
     }
@@ -210,8 +212,7 @@ next:
 
         if( m_el[mi_level] == NULL )
         {
-            vlc_stream_io_callback *io_callback = dynamic_cast<vlc_stream_io_callback *>(&m_es->I_O());
-            if ( i_max_read != UINT64_MAX && io_callback != NULL && !io_callback->IsEOF() )
+            if ( i_max_read != UINT64_MAX && !m_es->I_O().IsEOF() )
             {
                 msg_Dbg(p_demux, "found nothing, go up");
                 i_ulev = 1;

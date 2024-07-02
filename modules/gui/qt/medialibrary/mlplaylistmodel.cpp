@@ -23,11 +23,15 @@
 #include "mlplaylistmodel.hpp"
 
 // Util includes
-#include "util/qmlinputitem.hpp"
+#include "util/shared_input_item.hpp"
+#include "util/vlctick.hpp"
 
 // MediaLibrary includes
 #include "mlhelper.hpp"
 #include "mlplaylistmedia.hpp"
+
+#include "playlist/playlist_controller.hpp"
+#include "playlist/media.hpp"
 
 //-------------------------------------------------------------------------------------------------
 // Static variables
@@ -62,42 +66,31 @@ static const QHash<QByteArray, vlc_ml_sorting_criteria_t> criterias =
     if (unlikely(m_transactionPending))
         return;
 
-    //build the list of MRL to insert in the playlist
-    std::vector<QString> mrlList;
-    for (const QVariant & variant : items)
-    {
-        if (variant.canConvert<QmlInputItem>() == false)
-            continue;
+    QVector<vlc::playlist::Media> medias = vlc::playlist::toMediaList(items);
 
-        const QmlInputItem & item = variant.value<QmlInputItem>();
-
-        const char * psz_uri = item.item ? item.item->psz_uri : nullptr;
-
-        if (psz_uri == nullptr)
-            continue;
-
-        mrlList.emplace_back(psz_uri);
-    }
-
-    m_transactionPending = true;
+    setTransactionPending(true);
 
     m_mediaLib->runOnMLThread(this,
     //ML thread
-    [mrlList, id, at](vlc_medialibrary_t* ml) {
+    [medias, id, at](vlc_medialibrary_t* ml) {
         int insertPos = at;
-        for (const QString& uri : mrlList)
+        for (const auto& media : medias)
         {
-            vlc_ml_media_t * media = vlc_ml_get_media_by_mrl(ml, qtu(uri));
+            assert(media.raw());
 
-            if (media == nullptr)
+            const char * const uri = media.raw()->psz_uri;
+
+            vlc_ml_media_t * ml_media = vlc_ml_get_media_by_mrl(ml, uri);
+
+            if (ml_media == nullptr)
             {
-                media = vlc_ml_new_external_media(ml, qtu(uri));
-                if (media == nullptr)
+                ml_media = vlc_ml_new_external_media(ml, uri);
+                if (ml_media == nullptr)
                     continue;
             }
 
-            vlc_ml_playlist_insert(ml, id, media->i_id, insertPos);
-            vlc_ml_media_release(media);
+            vlc_ml_playlist_insert(ml, id, ml_media->i_id, insertPos);
+            vlc_ml_media_release(ml_media);
 
             insertPos++;
         }
@@ -234,7 +227,7 @@ void MLPlaylistModel::moveImpl(int64_t playlistId, HighLowRanges&& ranges)
     highLowRanges.lowRangeIt = highLowRanges.lowRanges.size();
     highLowRanges.highRangeIt = 0;
 
-    m_transactionPending = true;
+    setTransactionPending(true);
 
     moveImpl(id, std::move(highLowRanges));
 }
@@ -282,19 +275,32 @@ void MLPlaylistModel::removeImpl(int64_t playlistId, const std::vector<std::pair
     auto rangeList = getSortedRowsRanges(indexes, false);
     assert(rangeList.size() > 0);
 
-    m_transactionPending = true;
+    setTransactionPending(true);
     removeImpl(id, std::move(rangeList), 0);
 }
 
 void MLPlaylistModel::endTransaction()
 {
-    m_transactionPending = false;
-    if (m_resetAfterTransaction)
+    setTransactionPending(false);
+}
+
+void MLPlaylistModel::setTransactionPending(bool value)
+{
+    if (m_transactionPending == value)
+        return;
+
+    m_transactionPending = value;
+
+    if (!value)
     {
-        m_resetAfterTransaction = false;
-        emit resetRequested();
+        if (m_resetAfterTransaction)
+        {
+            m_resetAfterTransaction = false;
+            emit resetRequested();
+        }
     }
 
+    emit transactionPendingChanged();
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -405,10 +411,10 @@ QByteArray MLPlaylistModel::criteriaToName(vlc_ml_sorting_criteria_t criteria) c
 
 //-------------------------------------------------------------------------------------------------
 
-std::unique_ptr<MLBaseModel::BaseLoader>
-MLPlaylistModel::createLoader() const /* override */
+std::unique_ptr<MLListCacheLoader>
+MLPlaylistModel::createMLLoader() const /* override */
 {
-    return std::make_unique<Loader>(*this);
+    return std::make_unique<MLListCacheLoader>(m_mediaLib, std::make_shared<MLPlaylistModel::Loader>(*this));
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -457,7 +463,7 @@ void MLPlaylistModel::thumbnailUpdated(const QModelIndex& idx, MLItem* mlitem, c
 
 std::vector<std::pair<int, int>> MLPlaylistModel::getSortedRowsRanges(const QModelIndexList & indexes, bool asc) const
 {
-    assert (indexes.size() > 0);;
+    assert (indexes.size() > 0);
 
     QList<int> rows;
     for (const QModelIndex & index : indexes)
@@ -512,22 +518,16 @@ void MLPlaylistModel::generateThumbnail(const MLItemId& itemid) const
 // Loader
 //=================================================================================================
 
-MLPlaylistModel::Loader::Loader(const MLPlaylistModel & model) : MLBaseModel::BaseLoader(model) {}
-
-size_t MLPlaylistModel::Loader::count(vlc_medialibrary_t* ml) const /* override */
+size_t MLPlaylistModel::Loader::count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const /* override */
 {
-    vlc_ml_query_params_t params = getParams().toCQueryParams();
-
-    return vlc_ml_count_playlist_media(ml, &params, m_parent.id);
+    return vlc_ml_count_playlist_media(ml, queryParams, m_parent.id);
 }
 
 std::vector<std::unique_ptr<MLItem>>
-MLPlaylistModel::Loader::load(vlc_medialibrary_t* ml, size_t index, size_t count) const /* override */
+MLPlaylistModel::Loader::load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const /* override */
 {
-    vlc_ml_query_params_t params = getParams(index, count).toCQueryParams();
-
     ml_unique_ptr<vlc_ml_media_list_t> list {
-        vlc_ml_list_playlist_media(ml, &params, m_parent.id)
+        vlc_ml_list_playlist_media(ml, queryParams, m_parent.id)
     };
 
     if (list == nullptr)

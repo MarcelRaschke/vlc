@@ -112,6 +112,12 @@ vlc_modules += {
     'dependencies' : [m_lib]
 }
 
+# trace
+vlc_modules += {
+    'name' : 'stream_out_trace',
+    'sources' : files('trace.c')
+}
+
 # UDP
 vlc_modules += {
     'name' : 'stream_out_udp',
@@ -135,10 +141,12 @@ vlc_modules += {
 
 # Chromaprint module
 libchromaprint_dep = dependency('libchromaprint', version: '>= 0.6.0', required: get_option('libchromaprint'))
-if libchromaprint_dep.found()
-    vlc_modules += {
-        'name' : 'stream_out_chromaprint',
-        'sources' : files('chromaprint.c'),
-        'dependencies' : [libchromaprint_dep]
-    }
-endif
+vlc_modules += {
+    'name' : 'stream_out_chromaprint',
+    'sources' : files('chromaprint.c'),
+    'dependencies' : [libchromaprint_dep],
+    'enabled' : libchromaprint_dep.found(),
+}
+
+# Chromecast module
+subdir('chromecast')

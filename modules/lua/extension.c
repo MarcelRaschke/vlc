@@ -35,7 +35,6 @@
 
 #include <vlc_common.h>
 #include <vlc_interface.h>
-#include <vlc_events.h>
 #include <vlc_dialog.h>
 #include <vlc_player.h>
 
@@ -678,8 +677,8 @@ static int GetMenuEntries( extensions_manager_t *p_mgr, extension_t *p_ext,
 
     /* Get table size */
     size_t i_size = lua_objlen( L, -1 );
-    *pppsz_titles = calloc(i_size+1, sizeof(char*));
-    *ppi_ids = calloc(i_size+1, sizeof(uint16_t));
+    *pppsz_titles = calloc(i_size+1, sizeof(**pppsz_titles));
+    *ppi_ids = calloc(i_size+1, sizeof(**ppi_ids));
 
     /* Walk table */
     size_t i_idx = 0;
@@ -762,8 +761,10 @@ static lua_State* GetLuaState( extensions_manager_t *p_mgr,
     luaopen_rand(L);
     luaopen_rd(L);
     luaopen_ml(L);
-#if defined(_WIN32) && !defined(VLC_WINSTORE_APP)
+#if defined(_WIN32)
+# if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
     luaopen_win(L);
+# endif
 #endif
 
     /* Register extension specific functions */

@@ -25,28 +25,27 @@
 namespace vlc {
 namespace playlist {
 
-class PlaylistControllerModelPrivate
+class PlaylistControllerPrivate
 {
-    Q_DISABLE_COPY(PlaylistControllerModelPrivate)
+    Q_DISABLE_COPY(PlaylistControllerPrivate)
 public:
-    Q_DECLARE_PUBLIC(PlaylistControllerModel)
-    PlaylistControllerModel * const q_ptr;
+    Q_DECLARE_PUBLIC(PlaylistController)
+    PlaylistController * const q_ptr;
 
 public:
-    PlaylistControllerModelPrivate(PlaylistControllerModel* playlistController);
-    PlaylistControllerModelPrivate() = delete;
-    ~PlaylistControllerModelPrivate();
+    PlaylistControllerPrivate(PlaylistController* playlistController);
+    PlaylistControllerPrivate() = delete;
+    ~PlaylistControllerPrivate();
 
     ///call function @a fun on object thread
     template <typename Fun>
     inline void callAsync(Fun&& fun)
     {
-        Q_Q(PlaylistControllerModel);
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 10, 0))
-        QMetaObject::invokeMethod(q, std::forward<Fun>(fun), Qt::QueuedConnection, nullptr);
+        Q_Q(PlaylistController);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+        QMetaObject::invokeMethod(q, [fun = std::forward<Fun>(fun)]() -> void* { fun(); return nullptr; }, Qt::QueuedConnection);
 #else
-        QObject src;
-        QObject::connect(&src, &QObject::destroyed, q, std::forward<Fun>(fun), Qt::QueuedConnection);
+        QMetaObject::invokeMethod(q, std::forward<Fun>(fun), Qt::QueuedConnection, nullptr);
 #endif
     }
 
@@ -58,37 +57,39 @@ public:
     PlaylistItem m_currentItem;
     bool m_hasNext= false;
     bool m_hasPrev = false;
-    PlaylistControllerModel::PlaybackRepeat m_repeat = PlaylistControllerModel::PLAYBACK_REPEAT_NONE;
+    PlaylistController::PlaybackRepeat m_repeat = PlaylistController::PLAYBACK_REPEAT_NONE;
     bool m_random = false;
-    bool m_isPlayAndExit = false;
+    PlaylistController::MediaStopAction m_mediaStopAction = PlaylistController::MEDIA_STOPPED_CONTINUE;
     bool m_empty = true;
     size_t m_count = 0;
-    PlaylistControllerModel::SortKey m_sortKey = PlaylistControllerModel::SORT_KEY_NONE;
-    PlaylistControllerModel::SortOrder m_sortOrder = PlaylistControllerModel::SORT_ORDER_ASC;
+    PlaylistController::SortKey m_sortKey = PlaylistController::SORT_KEY_NONE;
+    PlaylistController::SortOrder m_sortOrder = PlaylistController::SORT_ORDER_ASC;
 
     QVariantList sortKeyTitleList;
 
 private:
     inline void fillSortKeyTitleList()
     {
-        auto filler = [this](PlaylistControllerModel::SortKey key, const QString& title) {
+        auto filler = [this](PlaylistController::SortKey key, const QString& text) {
             QVariantMap map;
-            map.insert("key", key);
-            map.insert("title", title);
+            map.insert("criteria", key);
+            map.insert("text", text);
             sortKeyTitleList.push_back(map);
         };
 
-        filler(PlaylistControllerModel::SORT_KEY_TITLE, qtr("Title"));
-        filler(PlaylistControllerModel::SORT_KEY_DURATION, qtr("Duration"));
-        filler(PlaylistControllerModel::SORT_KEY_ARTIST, qtr("Artist"));
-        filler(PlaylistControllerModel::SORT_KEY_ALBUM, qtr("Album"));
-        filler(PlaylistControllerModel::SORT_KEY_ALBUM_ARTIST, qtr( "Album Artist"));
-        filler(PlaylistControllerModel::SORT_KEY_GENRE, qtr("Genre"));
-        filler(PlaylistControllerModel::SORT_KEY_DATE, qtr("Date"));
-        filler(PlaylistControllerModel::SORT_KEY_TRACK_NUMBER, qtr( "Track Number"));
-        filler(PlaylistControllerModel::SORT_KEY_DISC_NUMBER, qtr( "Disc Number"));
-        filler(PlaylistControllerModel::SORT_KEY_URL, qtr("URL"));
-        filler(PlaylistControllerModel::SORT_KEY_RATING, qtr("Rating"));
+        filler(PlaylistController::SORT_KEY_TITLE, qtr("Title"));
+        filler(PlaylistController::SORT_KEY_DURATION, qtr("Duration"));
+        filler(PlaylistController::SORT_KEY_ARTIST, qtr("Artist"));
+        filler(PlaylistController::SORT_KEY_ALBUM, qtr("Album"));
+        filler(PlaylistController::SORT_KEY_ALBUM_ARTIST, qtr( "Album Artist"));
+        filler(PlaylistController::SORT_KEY_GENRE, qtr("Genre"));
+        filler(PlaylistController::SORT_KEY_DATE, qtr("Date"));
+        filler(PlaylistController::SORT_KEY_TRACK_NUMBER, qtr( "Track Number"));
+        filler(PlaylistController::SORT_KEY_DISC_NUMBER, qtr( "Disc Number"));
+        filler(PlaylistController::SORT_KEY_URL, qtr("URL"));
+        filler(PlaylistController::SORT_KEY_RATING, qtr("Rating"));
+        filler(PlaylistController::SORT_KEY_FILE_SIZE, qtr("File size"));
+        filler(PlaylistController::SORT_KEY_FILE_MODIFIED, qtr("File modified"));
     }
 };
 

@@ -31,6 +31,7 @@
 #include <limits.h>
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_plugin.h>
 #include <vlc_vout.h>
 #include <vlc_aout.h>
@@ -133,7 +134,7 @@ vlc_module_begin ()
             KAISER_PARAMETER_TEXT, KAISER_PARAMETER_LONGTEXT )
     set_section( N_("Spectrum analyser") , NULL )
     add_bool("visual-80-bands", true,
-             NBBANDS_TEXT, NULL );
+             NBBANDS_TEXT, NULL )
     add_bool("visual-peaks", true,
              PEAKS_TEXT, NULL )
     set_section( N_("Spectrometer") , NULL )
@@ -148,7 +149,7 @@ vlc_module_begin ()
     add_integer("spect-color", 80,
              COLOR1_TEXT, COLOR1_LONGTEXT )
     add_bool("spect-show-bands", true,
-             BANDS_TEXT, NULL );
+             BANDS_TEXT, NULL )
     add_bool("spect-80-bands", true,
              NBBANDS_TEXT, NULL )
     add_integer("spect-separ", 1,

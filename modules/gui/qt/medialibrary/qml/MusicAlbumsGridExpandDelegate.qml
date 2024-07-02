@@ -15,10 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts 1.11
-import QtQml.Models 2.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import QtQml.Models
 
 import org.videolan.medialib 0.1
 import org.videolan.controls 0.1
@@ -44,7 +44,7 @@ FocusScope {
     implicitWidth: layout.implicitWidth
 
     implicitHeight: {
-        var verticalMargins = layout.anchors.topMargin + layout.anchors.bottomMargin
+        const verticalMargins = layout.anchors.topMargin + layout.anchors.bottomMargin
         if (tracks.contentHeight < artAndControl.height)
             return artAndControl.height + verticalMargins
         return Math.min(tracks.contentHeight
@@ -63,12 +63,12 @@ FocusScope {
     }
 
     function _getStringTrack() {
-        var count = Helpers.get(model, "nb_tracks", 0);
+        const count = model?.nb_tracks ?? 0;
 
         if (count < 2)
-            return I18n.qtr("%1 track").arg(count);
+            return qsTr("%1 track").arg(count);
         else
-            return I18n.qtr("%1 tracks").arg(count);
+            return qsTr("%1 tracks").arg(count);
     }
 
     readonly property ColorContext colorContext: ColorContext {
@@ -127,8 +127,12 @@ FocusScope {
                     ?  root.model.cover
                     : VLCStyle.noArtAlbumCover
 
-                Widgets.ListCoverShadow {
-                    anchors.fill: parent
+                Widgets.DefaultShadow {
+                    anchors.centerIn: parent
+
+                    sourceItem: parent
+
+                    visible: (parent.status === RoundImage.Ready)
                 }
             }
         }
@@ -143,7 +147,8 @@ FocusScope {
                 property alias playActionBtn: _playActionBtn
 
                 focus: true
-                width: expand_cover_id.width
+                width: VLCStyle.expandCover_music_width
+
                 spacing: VLCStyle.margin_small
 
                 Layout.alignment: Qt.AlignCenter
@@ -152,8 +157,8 @@ FocusScope {
                     Widgets.ActionButtonPrimary {
                         id: _playActionBtn
 
-                        iconTxt: VLCIcons.play_outline
-                        text: I18n.qtr("Play")
+                        iconTxt: VLCIcons.play
+                        text: qsTr("Play")
                         onClicked: MediaLib.addAndPlay( root.model.id )
 
                         onActiveFocusChanged: {
@@ -171,7 +176,7 @@ FocusScope {
                         id: _enqueueActionBtn
 
                         iconTxt: VLCIcons.enqueue
-                        text: I18n.qtr("Enqueue")
+                        text: qsTr("Enqueue")
                         onClicked: MediaLib.addToPlaylist( root.model.id )
                     }
                 }
@@ -235,14 +240,18 @@ FocusScope {
                         Widgets.SubtitleLabel {
                             id: expand_infos_title_id
 
-                            text: Helpers.get(root.model, "title", I18n.qtr("Unknown title"))
+                            text: root.model?.title || qsTr("Unknown title")
+
+                            color: theme.fg.primary
 
                             Layout.fillWidth: true
                         }
 
-                        Widgets.IconControlButton {
-                            iconText: VLCIcons.close
+                        Widgets.IconToolButton {
+                            text: VLCIcons.close
                             focus: true
+
+                            description: qsTr("Close Panel")
 
                             Navigation.parentItem: headerFocusScope
                             Layout.rightMargin: VLCStyle.margin_small
@@ -254,12 +263,15 @@ FocusScope {
                     Widgets.CaptionLabel {
                         id: expand_infos_subtitle_id
 
+                        color: theme.fg.secondary
+
                         width: parent.width
-                        text: I18n.qtr("%1 - %2 - %3 - %4")
-                            .arg(Helpers.get(root.model, "main_artist", I18n.qtr("Unknown artist")))
-                            .arg(Helpers.get(root.model, "release_year", ""))
+
+                        text: qsTr("%1 - %2 - %3 - %4")
+                            .arg(root.model?.main_artist || qsTr("Unknown artist"))
+                            .arg(root.model?.release_year || "")
                             .arg(_getStringTrack())
-                            .arg((root.model && root.model.duration) ? root.model.duration.formatHMS() : 0)
+                            .arg(root.model?.duration?.formatHMS() ?? 0)
                     }
                 }
             }
@@ -272,7 +284,6 @@ FocusScope {
                 id: row
 
                 width: parent.width
-                height: implicitHeight
                 implicitHeight: col.implicitHeight
 
                 Loader {
@@ -353,43 +364,50 @@ FocusScope {
 
             headerColor: theme.bg.secondary
 
+            fadingEdge.backgroundColor: headerColor
+
             readonly property int _nbCols: VLCStyle.gridColumnsForWidth(tracks.availableRowWidth)
 
-            property Component titleDelegate: RowLayout {
-                property var rowModel: parent.rowModel
+            property Component titleDelegate: Widgets.TableRowDelegate {
+                id: title
 
-                anchors.fill: parent
+                RowLayout {
+                    anchors.fill: parent
 
-                Widgets.ListLabel {
-                    text: !!rowModel && !!rowModel.track_number ? rowModel.track_number : ""
-                    color: theme.fg.primary
-                    font.weight: Font.Normal
+                    Widgets.ListLabel {
+                        text: title.rowModel?.track_number ?? ""
+                        color: theme.fg.primary
+                        font.weight: Font.Normal
 
-                    Layout.fillHeight: true
-                    Layout.leftMargin: VLCStyle.margin_xxsmall
-                    Layout.preferredWidth: VLCStyle.margin_large
-                }
+                        Layout.fillHeight: true
+                        Layout.leftMargin: VLCStyle.margin_xxsmall
+                        Layout.preferredWidth: VLCStyle.margin_large
+                    }
 
-                Widgets.ListLabel {
-                    text: !!rowModel && !!rowModel.title ? rowModel.title : ""
-                    color: theme.fg.primary
+                    Widgets.ListLabel {
+                        text: title.rowModel?.title ?? ""
+                        color: theme.fg.primary
 
-                    Layout.fillHeight: true
-                    Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.fillWidth: true
+                    }
                 }
             }
 
-            property Component titleHeaderDelegate: Row {
+            property Component titleHeaderDelegate: Widgets.TableHeaderDelegate {
+                id: headerDelegate
+                Row {
+                    anchors.fill: parent
+                    Widgets.CaptionLabel {
+                        text: "#"
+                        width: VLCStyle.margin_large
+                        color: headerDelegate.colorContext.fg.secondary
+                    }
 
-                Widgets.CaptionLabel {
-                    text: "#"
-                    width: VLCStyle.margin_large
-                    color: theme.fg.secondary
-                }
-
-                Widgets.CaptionLabel {
-                    text: I18n.qtr("Title")
-                    color: theme.fg.secondary
+                    Widgets.CaptionLabel {
+                        text: qsTr("Title")
+                        color: headerDelegate.colorContext.fg.secondary
+                    }
                 }
             }
 
@@ -411,7 +429,7 @@ FocusScope {
 
             rowHeight: VLCStyle.tableRow_height
 
-            parentId: Helpers.get(root.model, "id")
+            parentId: root.model?.id
             onParentIdChanged: {
                 currentIndex = 0
             }
@@ -424,7 +442,7 @@ FocusScope {
 
                     visible: true,
 
-                    text: I18n.qtr("Title"),
+                    text: qsTr("Title"),
 
                     showSection: "",
 
@@ -439,6 +457,8 @@ FocusScope {
 
                     visible: true,
 
+                    text: qsTr("Duration"),
+
                     showSection: "",
 
                     colDelegate: tableColumns.timeColDelegate,
@@ -450,7 +470,7 @@ FocusScope {
             Navigation.leftItem: VLCStyle.isScreenSmall ? null : root.enqueueActionBtn
             Navigation.upItem: headerItem
 
-            Widgets.TableColumns {
+            Widgets.MLTableColumns {
                 id: tableColumns
             }
         }
@@ -458,5 +478,5 @@ FocusScope {
 
 
     Keys.priority:  Keys.AfterItem
-    Keys.onPressed:  root.Navigation.defaultKeyAction(event)
+    Keys.onPressed: (event) =>  root.Navigation.defaultKeyAction(event)
 }

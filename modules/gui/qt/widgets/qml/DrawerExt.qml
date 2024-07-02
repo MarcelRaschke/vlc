@@ -15,8 +15,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
+import QtQuick
+import QtQuick.Controls
 
 import "qrc:///style/"
 
@@ -53,7 +53,7 @@ FocusScope {
         focus: true
     }
 
-    state: "hidden"
+    state: ""
     states: [
         State {
             name: "visible"
@@ -62,6 +62,7 @@ FocusScope {
                 y: 0
                 x: 0
                 visible: true
+                enabled: true
             }
         },
         State {
@@ -71,6 +72,7 @@ FocusScope {
                 y: root.edgeToOffset(root.edge)
                 x: root.edgeToOffset(root.edge)
                 visible: false
+                enabled: false
             }
         }
     ]
@@ -99,6 +101,7 @@ FocusScope {
 
     transitions: [
         Transition {
+            from: "visible"
             to: "hidden"
             SequentialAnimation {
                 NumberAnimation {
@@ -116,6 +119,7 @@ FocusScope {
             }
         },
         Transition {
+            from: "hidden"
             to: "visible"
             SequentialAnimation {
                 PropertyAction {

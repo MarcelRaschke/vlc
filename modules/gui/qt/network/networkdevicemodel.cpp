@@ -16,43 +16,241 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-#include "networkdevicemodel.hpp"
+#include <unordered_set>
+#include <QTimer>
+
+#include "maininterface/mainctx.hpp"
+#include "util/workerthreadset.hpp"
+
+#include "devicesourceprovider.hpp"
 #include "networkmediamodel.hpp"
+
 #include "playlist/media.hpp"
 #include "playlist/playlist_controller.hpp"
-#include "util/qmlinputitem.hpp"
-#include <maininterface/mainctx.hpp>
+
+#include "util/shared_input_item.hpp"
+#include "util/locallistbasemodel.hpp"
+
+namespace
+{
+
+bool itemMatchPattern(const NetworkDeviceItemPtr& a, const QString& pattern)
+{
+    return a->name.contains(pattern, Qt::CaseInsensitive);
+}
+
+bool ascendingMrl(const NetworkDeviceItemPtr& a, const NetworkDeviceItemPtr& b)
+{
+    return (QString::compare(a->mainMrl.toString(),
+                             b->mainMrl.toString(), Qt::CaseInsensitive) <= 0);
+}
+
+bool ascendingName(const NetworkDeviceItemPtr& a, const NetworkDeviceItemPtr& b)
+{
+    int result = QString::compare(a->name, b->name, Qt::CaseInsensitive);
+
+    if (result != 0)
+        return (result <= 0);
+
+    return ascendingMrl(a, b);
+}
+
+bool descendingMrl(const NetworkDeviceItemPtr& a, const NetworkDeviceItemPtr& b)
+{
+    return (QString::compare(a->mainMrl.toString(),
+                             b->mainMrl.toString(), Qt::CaseInsensitive) >= 0);
+}
+
+bool descendingName(const NetworkDeviceItemPtr& a, const NetworkDeviceItemPtr& b)
+{
+    int result = QString::compare(a->name, b->name, Qt::CaseInsensitive);
+
+    if (result != 0)
+        return (result >= 0);
+
+    return descendingMrl(a, b);
+}
+
+}
+
+// ListCache specialisation
+
+template<>
+bool ListCache<NetworkDeviceItemPtr>::compareItems(const NetworkDeviceItemPtr& a, const NetworkDeviceItemPtr& b)
+{
+    //just compare the pointers here
+    return a == b;
+}
+
+// NetworkDeviceModelPrivate
+
+using NetworkDeviceModelLoader = LocalListCacheLoader<NetworkDeviceItemPtr>;
+
+class NetworkDeviceModelPrivate
+    : public LocalListBaseModelPrivate<NetworkDeviceItemPtr>
+{
+    Q_DECLARE_PUBLIC(NetworkDeviceModel)
+public:
+    NetworkDeviceModelPrivate(NetworkDeviceModel * pub)
+        : LocalListBaseModelPrivate<NetworkDeviceItemPtr>(pub)
+    {}
+
+    NetworkDeviceModelLoader::ItemCompare getSortFunction() const override
+    {
+        if (m_sortCriteria == "mrl")
+        {
+            if (m_sortOrder == Qt::AscendingOrder)
+                return ascendingMrl;
+            else
+                return descendingMrl;
+        }
+        else
+        {
+            if (m_sortOrder == Qt::AscendingOrder)
+                return ascendingName;
+            else
+                return descendingName;
+        }
+    }
+
+    bool initializeModel() override
+    {
+        Q_Q(NetworkDeviceModel);
+
+        if (m_qmlInitializing || !q->m_ctx || q->m_sdSource == NetworkDeviceModel::CAT_UNDEFINED || q->m_sourceName.isEmpty())
+            return false;
+
+        m_items.clear();
+
+        if (m_sources)
+        {
+            q->disconnect( m_sources );
+            m_sources->deleteLater();
+            m_sources = nullptr;
+        }
+
+        q->m_name = QString {};
+        emit q->nameChanged();
+
+        m_sources = new DeviceSourceProvider( q->m_sdSource, q->m_sourceName );
+        q->m_ctx->workersThreads()->assignToWorkerThread( m_sources );
+
+        // make sure we're not releasing resources on main thread
+        // by clearing copies of model before source provider
+        QObject::connect(q, &QObject::destroyed, m_sources, [sources = m_sources]()
+        {
+            sources->deleteLater();
+        });
+
+        QObject::connect(m_sources, &DeviceSourceProvider::failed, q,
+                [this]()
+        {
+            m_items.clear();
+
+            m_revision += 1;
+            invalidateCache();
+        });
+
+        QObject::connect(m_sources, &DeviceSourceProvider::nameUpdated, q,
+                [q](QString name)
+        {
+            q->m_name = name;
+            emit q->nameChanged();
+        });
+
+        QObject::connect(m_sources, &DeviceSourceProvider::itemsUpdated, q,
+                [this](NetworkDeviceItemSet items)
+        {
+            m_items = items;
+
+            m_revision += 1;
+            invalidateCache();
+        });
+
+        QMetaObject::invokeMethod(m_sources,
+                                  [sources = this->m_sources, intf = q->m_ctx->getIntf()]()
+        {
+            sources->init( intf );
+        });
+
+        //service discovery don't notify preparse end
+        m_loading = false;
+        emit q->loadingChanged();
+
+        return true;
+    }
+
+    const NetworkDeviceItem* getItemForRow(int row) const
+    {
+        const NetworkDeviceItemPtr* ref = item(row);
+        if (ref)
+            return ref->get();
+        return nullptr;
+    }
+
+public: //LocalListCacheLoader::ModelSource
+    std::vector<NetworkDeviceItemPtr> getModelData(const QString& pattern) const override
+    {
+        std::vector<NetworkDeviceItemPtr> items;
+        if (pattern.isEmpty())
+        {
+            std::copy(
+                m_items.cbegin(), m_items.cend(),
+                std::back_inserter(items));
+        }
+        else
+        {
+            std::copy_if(
+                m_items.cbegin(), m_items.cend(),
+                std::back_inserter(items),
+                [&pattern](const NetworkDeviceItemPtr& item){
+                    return itemMatchPattern(item, pattern);
+                });
+        }
+        return items;
+    }
+
+public:
+    NetworkDeviceItemSet m_items;
+    QPointer<DeviceSourceProvider> m_sources {};
+};
 
 NetworkDeviceModel::NetworkDeviceModel( QObject* parent )
-    : ClipListModel(parent)
+    : NetworkDeviceModel(new NetworkDeviceModelPrivate(this), parent)
 {
-    m_comparator = ascendingName;
+}
+
+NetworkDeviceModel::NetworkDeviceModel( NetworkDeviceModelPrivate* priv, QObject* parent)
+    : BaseModel(priv, parent)
+{
 }
 
 QVariant NetworkDeviceModel::data( const QModelIndex& index, int role ) const
 {
+    Q_D(const NetworkDeviceModel);
     if (!m_ctx)
         return {};
-    auto idx = index.row();
-    if ( idx < 0 || idx >= count() )
+
+    const NetworkDeviceItem* item = d->getItemForRow(index.row());
+    if (!item)
         return {};
-    const auto& item = m_items[idx];
+
     switch ( role )
     {
         case NETWORK_NAME:
-            return item.name;
+            return item->name;
         case NETWORK_MRL:
-            return item.mainMrl;
+            return item->mainMrl;
         case NETWORK_TYPE:
-            return item.type;
+            return item->type;
         case NETWORK_PROTOCOL:
-            return item.protocol;
+            return item->protocol;
         case NETWORK_SOURCE:
-            return item.mediaSource->description;
+            return item->mediaSource->description;
         case NETWORK_TREE:
-            return QVariant::fromValue( NetworkTreeItem(MediaTreePtr{ item.mediaSource->tree }, item.inputItem.get()) );
+            return QVariant::fromValue( NetworkTreeItem(MediaTreePtr{ item->mediaSource->tree }, item->inputItem.get()) );
         case NETWORK_ARTWORK:
-            return item.artworkUrl;
+            return item->artwork;
         default:
             return {};
     }
@@ -73,64 +271,66 @@ QHash<int, QByteArray> NetworkDeviceModel::roleNames() const
 
 void NetworkDeviceModel::setCtx(MainCtx* ctx)
 {
-    if (ctx) {
-        m_ctx = ctx;
-    }
-    if (m_ctx && m_sdSource != CAT_UNDEFINED && !m_sourceName.isEmpty()) {
-        initializeMediaSources();
-    }
+    Q_D(NetworkDeviceModel);
+    if (m_ctx == ctx)
+        return;
+    m_ctx = ctx;
+    d->initializeModel();
     emit ctxChanged();
 }
 
 void NetworkDeviceModel::setSdSource(SDCatType s)
 {
+    Q_D(NetworkDeviceModel);
+    if (m_sdSource == s)
+        return;
     m_sdSource = s;
-    if (m_ctx && m_sdSource != CAT_UNDEFINED && !m_sourceName.isEmpty()) {
-        initializeMediaSources();
-    }
+    d->initializeModel();
     emit sdSourceChanged();
 }
 
 void NetworkDeviceModel::setSourceName(const QString& sourceName)
 {
+    Q_D(NetworkDeviceModel);
+    if (m_sourceName == sourceName)
+        return;
     m_sourceName = sourceName;
-    if (m_ctx && m_sdSource != CAT_UNDEFINED && !m_sourceName.isEmpty()) {
-        initializeMediaSources();
-    }
+    d->initializeModel();
     emit sourceNameChanged();
 }
 
 bool NetworkDeviceModel::insertIntoPlaylist(const QModelIndexList &itemIdList, ssize_t playlistIndex)
 {
+    Q_D(NetworkDeviceModel);
     if (!(m_ctx && m_sdSource != CAT_MYCOMPUTER))
         return false;
     QVector<vlc::playlist::Media> medias;
     medias.reserve( itemIdList.size() );
     for ( const QModelIndex &id : itemIdList )
     {
-        if ( !id.isValid() )
+        const NetworkDeviceItem* item = d->getItemForRow(id.row());
+        if (!item)
             continue;
-        const int index = id.row();
-        if ( index < 0 || index >= count() )
-            continue;
-
-        medias.append( vlc::playlist::Media {m_items[index].inputItem.get()} );
+        medias.append( vlc::playlist::Media {item->inputItem.get()} );
     }
     if (medias.isEmpty())
         return false;
-    m_ctx->getMainPlaylistController()->insert(playlistIndex, medias, false);
+    m_ctx->getIntf()->p_mainPlaylistController->insert(playlistIndex, medias, false);
     return true;
 }
 
-bool NetworkDeviceModel::addToPlaylist(int index)
+bool NetworkDeviceModel::addToPlaylist(int row)
 {
+    Q_D(NetworkDeviceModel);
     if (!(m_ctx && m_sdSource != CAT_MYCOMPUTER))
         return false;
-    if (index < 0 || index >= count() )
+
+    const NetworkDeviceItem* item = d->getItemForRow(row);
+    if (!item)
         return false;
-    auto item =  m_items[index];
-    vlc::playlist::Media media{ item.inputItem.get() };
-    m_ctx->getMainPlaylistController()->append( { media }, false);
+
+    vlc::playlist::Media media{ item->inputItem.get() };
+    m_ctx->getIntf()->p_mainPlaylistController->append( QVector<vlc::playlist::Media>{ media }, false);
     return true;
 }
 
@@ -160,15 +360,18 @@ bool NetworkDeviceModel::addToPlaylist(const QModelIndexList &itemIdList)
     return ret;
 }
 
-bool NetworkDeviceModel::addAndPlay(int index)
+bool NetworkDeviceModel::addAndPlay(int row)
 {
+    Q_D(NetworkDeviceModel);
     if (!(m_ctx && m_sdSource != CAT_MYCOMPUTER))
         return false;
-    if (index < 0 || index >= count() )
+
+    const NetworkDeviceItem* item = d->getItemForRow(row);
+    if (!item)
         return false;
-    auto item =  m_items[index];
-    vlc::playlist::Media media{ item.inputItem.get() };
-    m_ctx->getMainPlaylistController()->append( { media }, true);
+
+    vlc::playlist::Media media{ item->inputItem.get() };
+    m_ctx->getIntf()->p_mainPlaylistController->append( QVector<vlc::playlist::Media>{ media }, true);
     return true;
 }
 
@@ -179,11 +382,11 @@ bool NetworkDeviceModel::addAndPlay(const QVariantList& itemIdList)
     {
         if (varValue.canConvert<int>())
         {
-            auto index = varValue.value<int>();
+            auto row = varValue.value<int>();
             if (!ret)
-                ret |= addAndPlay(index);
+                ret |= addAndPlay(row);
             else
-                ret |= addToPlaylist(index);
+                ret |= addToPlaylist(row);
         }
     }
     return ret;
@@ -204,329 +407,21 @@ bool NetworkDeviceModel::addAndPlay(const QModelIndexList& itemIdList)
     return ret;
 }
 
-QMap<QString, QVariant> NetworkDeviceModel::getDataAt(int idx)
-{
-    QMap<QString, QVariant> dataDict;
-    QHash<int,QByteArray> roles = roleNames();
-    for (auto role: roles.keys()) {
-        dataDict[roles[role]] = data(index(idx), role);
-    }
-    return dataDict;
-}
-
 /* Q_INVOKABLE */
 QVariantList NetworkDeviceModel::getItemsForIndexes(const QModelIndexList & indexes) const
 {
+    Q_D(const NetworkDeviceModel);
     QVariantList items;
 
     for (const QModelIndex & modelIndex : indexes)
     {
-        int index = modelIndex.row();
-
-        if (index < 0 || index >= count())
+        const NetworkDeviceItem* item = d->getItemForRow(modelIndex.row());
+        if (!item)
             continue;
 
-        QmlInputItem input(m_items[index].inputItem.get(), true);
-
-        items.append(QVariant::fromValue(input));
+        items.append(QVariant::fromValue(SharedInputItem(item->inputItem.get(), true)));
     }
 
     return items;
 }
 
-// Protected ClipListModel implementation
-
-void NetworkDeviceModel::onUpdateSort(const QString & criteria, Qt::SortOrder order) /* override */
-{
-    if (criteria == "mrl")
-    {
-        if (order == Qt::AscendingOrder)
-            m_comparator = ascendingMrl;
-        else
-            m_comparator = descendingMrl;
-    }
-    else
-    {
-        if (order == Qt::AscendingOrder)
-            m_comparator = ascendingName;
-        else
-            m_comparator = descendingName;
-    }
-}
-
-bool NetworkDeviceModel::initializeMediaSources()
-{
-    auto libvlc = vlc_object_instance(m_ctx->getIntf());
-
-    m_listeners.clear();
-
-    clearItems();
-
-    m_name = QString {};
-
-    auto provider = vlc_media_source_provider_Get( libvlc );
-
-    using SourceMetaPtr = std::unique_ptr<vlc_media_source_meta_list_t,
-                                          decltype( &vlc_media_source_meta_list_Delete )>;
-
-    SourceMetaPtr providerList( vlc_media_source_provider_List( provider, static_cast<services_discovery_category_e>(m_sdSource) ),
-                                &vlc_media_source_meta_list_Delete );
-    if ( providerList == nullptr )
-        return false;
-
-    auto nbProviders = vlc_media_source_meta_list_Count( providerList.get() );
-
-    for ( auto i = 0u; i < nbProviders; ++i )
-    {
-        auto meta = vlc_media_source_meta_list_Get( providerList.get(), i );
-        const QString sourceName = qfu( meta->name );
-        if ( m_sourceName != '*' && m_sourceName != sourceName )
-            continue;
-
-        m_name += m_name.isEmpty() ? qfu( meta->longname ) : ", " + qfu( meta->longname );
-        emit nameChanged();
-
-        auto mediaSource = vlc_media_source_provider_GetMediaSource( provider,
-                                                                     meta->name );
-        if ( mediaSource == nullptr )
-            continue;
-        std::unique_ptr<MediaTreeListener> l{ new MediaTreeListener(
-                        MediaTreePtr{ mediaSource->tree },
-                        std::make_unique<ListenerCb>(this, MediaSourcePtr{ mediaSource }) ) };
-        if ( l->listener == nullptr )
-            return false;
-        m_listeners.push_back( std::move( l ) );
-    }
-    return m_listeners.empty() == false;
-}
-
-
-void NetworkDeviceModel::ListenerCb::onItemCleared( MediaTreePtr tree, input_item_node_t* node )
-{
-    if (node != &tree->root)
-        return;
-    model->refreshDeviceList( mediaSource, node->pp_children, node->i_children, true );
-}
-
-void NetworkDeviceModel::ListenerCb::onItemAdded( MediaTreePtr tree, input_item_node_t* parent,
-                                                  input_item_node_t *const children[],
-                                                  size_t count )
-{
-    if (parent != &tree->root)
-        return;
-    model->refreshDeviceList( mediaSource, children, count, false );
-}
-
-void NetworkDeviceModel::ListenerCb::onItemRemoved( MediaTreePtr tree, input_item_node_t* node,
-                                                    input_item_node_t *const children[],
-                                                    size_t count )
-{
-    if (node != &tree->root)
-        return;
-
-    std::vector<InputItemPtr> itemList;
-
-    itemList.reserve( count );
-    for ( auto i = 0u; i < count; ++i )
-        itemList.emplace_back( children[i]->p_item );
-
-    QMetaObject::invokeMethod(model, [model=model, itemList=std::move(itemList)]() {
-        int implicitCount = model->implicitCount();
-
-        for (auto p_item : itemList)
-        {
-            QUrl itemUri = QUrl::fromEncoded(p_item->psz_uri);
-            auto it = std::find_if( begin( model->m_items ), end( model->m_items ),
-                                   [p_item, itemUri](const NetworkDeviceItem & i) {
-                return QString::compare( qfu(p_item->psz_name), i.name, Qt::CaseInsensitive ) == 0 &&
-                    itemUri.scheme() == i.mainMrl.scheme();
-            });
-            if ( it == end( model->m_items ) )
-                continue;
-
-            auto mrlIt = std::find_if( begin( (*it).mrls ), end( (*it).mrls),
-                                       [itemUri]( const QUrl& mrl ) {
-                return mrl.matches(itemUri, QUrl::StripTrailingSlash);
-            });
-
-            if ( mrlIt == end( (*it).mrls ) )
-                continue;
-            (*it).mrls.erase( mrlIt );
-            if ( (*it).mrls.empty() == false )
-                continue;
-            auto idx = std::distance( begin( model->m_items ), it );
-
-            model->eraseItem(it, idx, implicitCount);
-        }
-
-       model->updateItems();
-    }, Qt::QueuedConnection);
-}
-
-void NetworkDeviceModel::refreshDeviceList(MediaSourcePtr mediaSource,
-                                           input_item_node_t * const children[], size_t count,
-                                           bool clear)
-{
-    if (clear)
-    {
-        QMetaObject::invokeMethod(this, [this, mediaSource]()
-        {
-            int implicitCount = this->implicitCount();
-
-            int index = 0;
-
-            std::vector<NetworkDeviceItem>::iterator it = m_items.begin();
-
-            while (it != m_items.end())
-            {
-                if (it->mediaSource != mediaSource)
-                    continue;
-
-                eraseItem(it, index, implicitCount);
-
-                index++;
-            }
-        });
-    }
-
-    std::vector<InputItemPtr> itemList;
-
-    itemList.reserve(count);
-
-    for (size_t i = 0; i < count; i++)
-    {
-        input_item_t * item = children[i]->p_item;
-
-        itemList.emplace_back(item);
-    }
-
-    QMetaObject::invokeMethod(this, [this, itemList = std::move(itemList), mediaSource]() mutable
-    {
-        addItems(itemList, mediaSource);
-    }, Qt::QueuedConnection);
-}
-
-void NetworkDeviceModel::addItems(const std::vector<InputItemPtr> & inputList,
-                                  const MediaSourcePtr & mediaSource)
-{
-    // NOTE: We need to check duplicates when we're not sorting by name. Otherwise it's handled via
-    //       the 'name' sorting functions.
-    bool checkDuplicate = (m_sortCriteria != "name");
-
-    for (const InputItemPtr & inputItem : inputList)
-    {
-        NetworkDeviceItem item;
-
-        item.name = qfu(inputItem->psz_name);
-
-        item.mainMrl = QUrl::fromEncoded(inputItem->psz_uri);
-
-        std::vector<NetworkDeviceItem>::iterator it;
-
-        if (checkDuplicate)
-        {
-            it = std::find_if(begin(m_items), end(m_items), [item](const NetworkDeviceItem & i)
-            {
-                return matchItem(item, i);
-            });
-
-            // NOTE: We don't want the same name and scheme to appear twice in the list.
-            if (it != end(m_items))
-                continue;
-
-            it = std::upper_bound(begin(m_items), end(m_items), item, m_comparator);
-
-            if (it != end(m_items))
-                continue;
-        }
-        else
-        {
-            it = std::upper_bound(begin(m_items), end(m_items), item, m_comparator);
-
-            if (it != end(m_items) && matchItem(item, *it))
-                continue;
-        }
-
-        item.mrls.push_back(item.mainMrl);
-
-        item.protocol = item.mainMrl.scheme();
-
-        item.type = static_cast<ItemType>(inputItem->i_type);
-
-        item.mediaSource = mediaSource;
-
-        item.inputItem = InputItemPtr(inputItem);
-
-        char * artwork = input_item_GetArtworkURL(inputItem.get());
-
-        if (artwork)
-        {
-            item.artworkUrl = QUrl::fromEncoded(artwork);
-
-            free(artwork);
-        }
-
-        insertItem(it, std::move(item));
-    }
-
-    updateItems();
-}
-
-void NetworkDeviceModel::eraseItem(std::vector<NetworkDeviceItem>::iterator & it,
-                                   int index, int count)
-{
-    if (index < count)
-    {
-        removeItem(it, index);
-    }
-    // NOTE: We don't want to notify the view if the item's position is beyond the
-    //       maximumCount.
-    else
-        it = m_items.erase(it);
-}
-
-// Private static function
-
-/* static */ bool NetworkDeviceModel::matchItem(const NetworkDeviceItem & a,
-                                                const NetworkDeviceItem & b)
-{
-    return (QString::compare(a.name, b.name, Qt::CaseInsensitive) == 0
-            &&
-            QString::compare(a.mainMrl.scheme(), b.mainMrl.scheme(), Qt::CaseInsensitive) == 0);
-}
-
-/* static */ bool NetworkDeviceModel::ascendingName(const NetworkDeviceItem & a,
-                                                    const NetworkDeviceItem & b)
-{
-    int result = QString::compare(a.name, b.name, Qt::CaseInsensitive);
-
-    if (result != 0)
-        return (result <= 0);
-
-    return (QString::compare(a.mainMrl.scheme(), b.mainMrl.scheme(), Qt::CaseInsensitive) <= 0);
-}
-
-/* static */ bool NetworkDeviceModel::ascendingMrl(const NetworkDeviceItem & a,
-                                                   const NetworkDeviceItem & b)
-{
-    return (QString::compare(a.mainMrl.toString(),
-                             b.mainMrl.toString(), Qt::CaseInsensitive) <= 0);
-}
-
-/* static */ bool NetworkDeviceModel::descendingName(const NetworkDeviceItem & a,
-                                                     const NetworkDeviceItem & b)
-{
-    int result = QString::compare(a.name, b.name, Qt::CaseInsensitive);
-
-    if (result != 0)
-        return (result >= 0);
-
-    return (QString::compare(a.mainMrl.scheme(), b.mainMrl.scheme(), Qt::CaseInsensitive) >= 0);
-}
-
-/* static */ bool NetworkDeviceModel::descendingMrl(const NetworkDeviceItem & a,
-                                                    const NetworkDeviceItem & b)
-{
-    return (QString::compare(a.mainMrl.toString(),
-                             b.mainMrl.toString(), Qt::CaseInsensitive) >= 0);
-}

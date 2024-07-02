@@ -4,7 +4,7 @@
  * Copyright (C) 2021 VLC authors and VideoLAN
  *
  * Authors: Samuel Bassaly <shkshk90 # gmail -dot- com>
- *          Claudio Cambra <claudio.cambra@gmail.com>
+ *          Claudio Cambra <developer@claudiocambra.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,26 +23,34 @@
 
 #import "VLCLibraryCollectionViewAlbumSupplementaryDetailView.h"
 
-#import "main/VLCMain.h"
-#import "library/VLCLibraryController.h"
-#import "library/VLCLibraryDataTypes.h"
-#import "library/VLCLibraryModel.h"
-#import "library/VLCLibraryMenuController.h"
-#import "views/VLCImageView.h"
 #import "extensions/NSString+Helpers.h"
 #import "extensions/NSFont+VLCAdditions.h"
 #import "extensions/NSColor+VLCAdditions.h"
 #import "extensions/NSView+VLCAdditions.h"
 
+#import "library/VLCLibraryController.h"
+#import "library/VLCLibraryDataTypes.h"
+#import "library/VLCLibraryImageCache.h"
+#import "library/VLCLibraryModel.h"
+#import "library/VLCLibraryMenuController.h"
+#import "library/VLCLibraryRepresentedItem.h"
+#import "library/VLCLibraryWindow.h"
+
 #import "library/audio-library/VLCLibraryAlbumTracksDataSource.h"
+#import "library/audio-library/VLCLibraryAlbumTracksTableViewDelegate.h"
 #import "library/audio-library/VLCLibraryAlbumTableCellView.h"
+
+#import "main/VLCMain.h"
+
+#import "views/VLCImageView.h"
 
 NSString *const VLCLibraryCollectionViewAlbumSupplementaryDetailViewIdentifier = @"VLCLibraryCollectionViewAlbumSupplementaryDetailViewIdentifier";
 NSCollectionViewSupplementaryElementKind const VLCLibraryCollectionViewAlbumSupplementaryDetailViewKind = @"VLCLibraryCollectionViewAlbumSupplementaryDetailViewIdentifier";
 
-@interface VLCLibraryCollectionViewAlbumSupplementaryDetailView () 
+@interface VLCLibraryCollectionViewAlbumSupplementaryDetailView ()
 {
     VLCLibraryAlbumTracksDataSource *_tracksDataSource;
+    VLCLibraryAlbumTracksTableViewDelegate *_tracksTableViewDelegate;
     VLCLibraryController *_libraryController;
 }
 
@@ -50,78 +58,120 @@ NSCollectionViewSupplementaryElementKind const VLCLibraryCollectionViewAlbumSupp
 
 @implementation VLCLibraryCollectionViewAlbumSupplementaryDetailView
 
-@synthesize representedAlbum = _representedAlbum;
-@synthesize albumTitleTextField = _albumTitleTextField;
-@synthesize albumDetailsTextField = _albumDetailsTextField;
-@synthesize albumArtworkImageView = _albumArtworkImageView;
-@synthesize albumTracksTableView = _albumTracksTableView;
-
 - (void)awakeFromNib
 {
     _tracksDataSource = [[VLCLibraryAlbumTracksDataSource alloc] init];
-    _albumTracksTableView.dataSource = _tracksDataSource;
-    _albumTracksTableView.delegate = _tracksDataSource;
-    _albumTracksTableView.rowHeight = VLCLibraryTracksRowHeight;
-    
-    _albumTitleTextField.font = [NSFont VLCLibrarySupplementaryDetailViewTitleFont];
-    _albumDetailsTextField.font = [NSFont VLCLibrarySupplementaryDetailViewSubtitleFont];
+    _tracksTableViewDelegate = [[VLCLibraryAlbumTracksTableViewDelegate alloc] init];
 
-    _albumDetailsTextField.textColor = [NSColor VLCAccentColor];
+    _albumTracksTableView.dataSource = _tracksDataSource;
+    _albumTracksTableView.delegate = _tracksTableViewDelegate;
+    _albumTracksTableView.rowHeight = VLCLibraryTracksRowHeight;
+
+    _albumTitleTextField.font = NSFont.VLCLibrarySubsectionHeaderFont;
+    self.albumPrimaryDetailTextButton.font = NSFont.VLCLibrarySubsectionSubheaderFont;
+    self.albumSecondaryDetailTextButton.font = NSFont.VLCLibrarySubsectionSubheaderFont;
+
+    self.albumPrimaryDetailTextButton.action = @selector(primaryDetailAction:);
+    self.albumSecondaryDetailTextButton.action = @selector(secondaryDetailAction:);
+
+    if (@available(macOS 10.14, *)) {
+        self.albumPrimaryDetailTextButton.contentTintColor = NSColor.VLCAccentColor;
+        self.albumSecondaryDetailTextButton.contentTintColor = NSColor.secondaryLabelColor;
+    }
 
     if(@available(macOS 10.12.2, *)) {
-        _playAlbumButton.bezelColor = [NSColor VLCAccentColor];
+        _playAlbumButton.bezelColor = NSColor.VLCAccentColor;
     }
+
+    NSNotificationCenter * const notificationCenter = NSNotificationCenter.defaultCenter;
+    [notificationCenter addObserver:self
+                           selector:@selector(handleAlbumUpdated:)
+                               name:VLCLibraryModelAlbumUpdated
+                             object:nil];
 }
 
-- (void)setRepresentedAlbum:(VLCMediaLibraryAlbum *)representedAlbum
+- (void)handleAlbumUpdated:(NSNotification *)notification
 {
-    _representedAlbum = representedAlbum;
-    [self updateRepresentation];
+    NSParameterAssert(notification);
+    if (self.representedItem == nil) {
+        return;
+    }
+
+    VLCMediaLibraryAlbum * const album = (VLCMediaLibraryAlbum *)notification.object;
+    if (album == nil || self.representedItem.item.libraryID != album.libraryID) {
+        return;
+    }
+
+    VLCLibraryRepresentedItem * const representedItem = [[VLCLibraryRepresentedItem alloc] initWithItem:album parentType:self.representedItem.parentType];
+    self.representedItem = representedItem;
 }
 
 - (void)updateRepresentation
 {
-    if (_representedAlbum == nil) {
-        NSAssert(1, @"no media item assigned for collection view item", nil);
-        return;
+    NSAssert(self.representedItem != nil, @"no media item assigned for collection view item", nil);
+    VLCMediaLibraryAlbum * const album = (VLCMediaLibraryAlbum *)self.representedItem.item;
+    NSAssert(album != nil, @"represented item is not an album", nil);
+
+    _albumTitleTextField.stringValue = album.displayString;
+    _albumPrimaryDetailTextButton.title = album.artistName;
+    _albumSecondaryDetailTextButton.title = album.genreString;
+    _albumYearAndDurationTextField.stringValue = [NSString stringWithFormat:@"%u · %@", album.year, album.durationString];
+
+    const BOOL primaryActionableDetail = album.primaryActionableDetail;
+    const BOOL secondaryActionableDetail = album.secondaryActionableDetail;
+    self.albumPrimaryDetailTextButton.enabled = primaryActionableDetail;
+    self.albumSecondaryDetailTextButton.enabled = secondaryActionableDetail;
+    if (@available(macOS 10.14, *)) {
+        self.albumPrimaryDetailTextButton.contentTintColor = primaryActionableDetail ? NSColor.VLCAccentColor : NSColor.secondaryLabelColor;
+        self.albumSecondaryDetailTextButton.contentTintColor = secondaryActionableDetail ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor;
     }
 
-    _albumTitleTextField.stringValue = _representedAlbum.displayString;
-    _albumDetailsTextField.stringValue = _representedAlbum.artistName;
-    _albumYearAndDurationTextField.stringValue = [NSString stringWithFormat:@"%u · %@", _representedAlbum.year, _representedAlbum.durationString];
-    _albumArtworkImageView.image = _representedAlbum.smallArtworkImage;
-    _tracksDataSource.representedAlbum = _representedAlbum;
+    [VLCLibraryImageCache thumbnailForLibraryItem:album withCompletion:^(NSImage * const thumbnail) {
+        self->_albumArtworkImageView.image = thumbnail;
+    }];
 
-    [_albumTracksTableView reloadData];
-}
+    __weak typeof(self) weakSelf = self; // Prevent retain cycle
+    [_tracksDataSource setRepresentedAlbum:album withCompletion:^{
+        __strong typeof(self) strongSelf = weakSelf;
 
-- (IBAction)playAction:(id)sender
-{
-    if (!_libraryController) {
-        _libraryController = [[VLCMain sharedInstance] libraryController];
-    }
-
-    // We want to add all the tracks to the playlist but only play the first one immediately,
-    // otherwise we will skip straight to the last track of the last album from the artist
-    __block BOOL playImmediately = YES;
-    [_representedAlbum iterateMediaItemsWithBlock:^(VLCMediaLibraryMediaItem* mediaItem) {
-        [_libraryController appendItemToPlaylist:mediaItem playImmediately:playImmediately];
-
-        if(playImmediately) {
-            playImmediately = NO;
+        if (strongSelf) {
+            [strongSelf->_albumTracksTableView reloadData];
         }
     }];
 }
 
+- (IBAction)playAction:(id)sender
+{
+    [self.representedItem play];
+}
+
 - (IBAction)enqueueAction:(id)sender
 {
-    if (!_libraryController) {
-        _libraryController = [[VLCMain sharedInstance] libraryController];
+    [self.representedItem queue];
+}
+
+- (IBAction)primaryDetailAction:(id)sender
+{
+    VLCMediaLibraryAlbum * const album = (VLCMediaLibraryAlbum *)self.representedItem.item;
+    if (album == nil || !album.primaryActionableDetail) {
+        return;
     }
 
-    [_representedAlbum iterateMediaItemsWithBlock:^(VLCMediaLibraryMediaItem* mediaItem) {
-        [_libraryController appendItemToPlaylist:mediaItem playImmediately:NO];
-    }];
+    VLCLibraryWindow * const libraryWindow = VLCMain.sharedInstance.libraryWindow;
+    const id<VLCMediaLibraryItemProtocol> libraryItem = album.primaryActionableDetailLibraryItem;
+    [libraryWindow presentLibraryItem:libraryItem];
+}
+
+- (IBAction)secondaryDetailAction:(id)sender
+{
+    VLCMediaLibraryAlbum * const album = (VLCMediaLibraryAlbum *)self.representedItem.item;
+    if (album == nil || !album.secondaryActionableDetail) {
+        return;
+    }
+
+    VLCLibraryWindow * const libraryWindow = VLCMain.sharedInstance.libraryWindow;
+    const id<VLCMediaLibraryItemProtocol> libraryItem = album.secondaryActionableDetailLibraryItem;
+    [libraryWindow presentLibraryItem:libraryItem];
 }
 
 @end

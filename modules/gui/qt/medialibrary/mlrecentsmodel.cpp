@@ -17,14 +17,17 @@
  *****************************************************************************/
 
 #include "mlrecentsmodel.hpp"
+
 #include <QDateTime>
+#include <QTimeZone>
+
 #include "mlhelper.hpp"
 
 
 MLRecentMedia::MLRecentMedia( const vlc_ml_media_t *media )
     : MLItem( MLItemId( media->i_id, VLC_ML_PARENT_UNKNOWN ) )
     , m_url ( media->p_files->i_nb_items > 0 ? media->p_files->p_items[0].psz_mrl : "" )
-    , m_lastPlayedDate(QDateTime::fromSecsSinceEpoch( media->i_last_played_date ))
+    , m_lastPlayedDate(QDateTime::fromSecsSinceEpoch( media->i_last_played_date, QTimeZone::systemTimeZone() ))
 {
 }
 
@@ -73,7 +76,7 @@ void MLRecentsModel::clearHistory()
     m_mediaLib->runOnMLThread(this,
     //ML thread
     [](vlc_medialibrary_t* ml){
-        vlc_ml_clear_history(ml);
+        vlc_ml_clear_history(ml, VLC_ML_HISTORY_TYPE_GLOBAL);
     });
 }
 
@@ -91,58 +94,31 @@ void MLRecentsModel::onVlcMlEvent( const MLEvent &event )
     }
     MLBaseModel::onVlcMlEvent( event );
 }
-void MLRecentsModel::setNumberOfItemsToShow( int n ){
-    m_numberOfItemsToShow = n;
-    invalidateCache();
-}
-int MLRecentsModel::getNumberOfItemsToShow() const {
-    return m_numberOfItemsToShow;
-}
 
-std::unique_ptr<MLBaseModel::BaseLoader>
-MLRecentsModel::createLoader() const
+std::unique_ptr<MLListCacheLoader>
+MLRecentsModel::createMLLoader() const
 {
-    return std::make_unique<Loader>(*this, m_numberOfItemsToShow);
+    return std::make_unique<MLListCacheLoader>(m_mediaLib, std::make_shared<MLRecentsModel::Loader>(*this));
 }
 
-MLRecentsModel::Loader::Loader(const MLRecentsModel &model, int numberOfItemsToShow)
-    : BaseLoader(model)
-    , m_numberOfItemsToShow(numberOfItemsToShow)
+size_t MLRecentsModel::Loader::count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const
 {
-}
-
-size_t MLRecentsModel::Loader::count(vlc_medialibrary_t* ml) const
-{
-    MLQueryParams params = getParams();
-    auto queryParams = params.toCQueryParams();
-
-    size_t realCount = vlc_ml_count_history( ml, &queryParams );
-    if (m_numberOfItemsToShow >= 0)
-        return std::min( realCount, static_cast<size_t>(m_numberOfItemsToShow) );
-    return realCount;
+    return vlc_ml_count_history( ml, queryParams, VLC_ML_HISTORY_TYPE_GLOBAL );
 }
 
 std::vector<std::unique_ptr<MLItem>>
-MLRecentsModel::Loader::load(vlc_medialibrary_t* ml, size_t index, size_t count) const
+MLRecentsModel::Loader::load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const
 {
-    MLQueryParams params = getParams(index, count);
-    auto queryParams = params.toCQueryParams();
-
-    std::vector<std::unique_ptr<MLItem>> res;
-    if (m_numberOfItemsToShow >= 0)
-    {
-        if (queryParams.i_offset <= static_cast<uint32_t>(m_numberOfItemsToShow))
-           queryParams.i_nbResults = static_cast<uint32_t>(m_numberOfItemsToShow) - queryParams.i_offset;
-        else
-            return res;
-    }
-
     ml_unique_ptr<vlc_ml_media_list_t> media_list{ vlc_ml_list_history(
-                ml, &queryParams ) };
+                ml, queryParams, VLC_ML_HISTORY_TYPE_GLOBAL ) };
     if ( media_list == nullptr )
         return {};
+
+    std::vector<std::unique_ptr<MLItem>> res;
+
     for( vlc_ml_media_t &media: ml_range_iterate<vlc_ml_media_t>( media_list ) )
         res.emplace_back( std::make_unique<MLRecentMedia>( &media ) );
+
     return res;
 }
 

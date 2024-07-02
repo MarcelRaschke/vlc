@@ -285,6 +285,7 @@ static subpicture_region_t *ConvertRegionRGBA(AVSubtitleRect *ffregion)
     if (!region)
         return NULL;
 
+    region->b_absolute = true; /* We have offset and size for subtitle */
     region->i_x = ffregion->x;
     region->i_y = ffregion->y;
     region->i_align = SUBPICTURE_ALIGN_TOP | SUBPICTURE_ALIGN_LEFT;
@@ -326,11 +327,10 @@ static subpicture_t *ConvertSubtitle(decoder_t *dec, AVSubtitle *ffsub, vlc_tick
     //        pts, ffsub->start_display_time, ffsub->end_display_time);
     spu->i_start    = pts + VLC_TICK_FROM_MS(ffsub->start_display_time);
     spu->i_stop     = pts + VLC_TICK_FROM_MS(ffsub->end_display_time);
-    spu->b_absolute = true; /* We have offset and size for subtitle */
     spu->b_ephemer  = p_sys->b_need_ephemer;
                     /* We only show subtitle for i_stop time only */
 
-    if (avctx->coded_width != 0 && avctx->coded_height != 0) {
+    if (avctx->coded_width > 0 && avctx->coded_height > 0) {
         spu->i_original_picture_width = avctx->coded_width;
         spu->i_original_picture_height = avctx->coded_height;
     } else {
@@ -339,8 +339,6 @@ static subpicture_t *ConvertSubtitle(decoder_t *dec, AVSubtitle *ffsub, vlc_tick
         spu->i_original_picture_height =
             dec->fmt_in->subs.spu.i_original_frame_height;
     }
-
-    subpicture_region_t **region_next = &spu->p_region;
 
     for (unsigned i = 0; i < ffsub->num_rects; i++) {
         AVSubtitleRect *rec = ffsub->rects[i];
@@ -354,17 +352,14 @@ static subpicture_t *ConvertSubtitle(decoder_t *dec, AVSubtitle *ffsub, vlc_tick
             region = ConvertRegionRGBA(rec);
             break;
         default:
-            msg_Warn(dec, "unsupported subtitle type");
-            region = NULL;
+            msg_Warn(dec, "unsupported subtitle type %" PRIu16, ffsub->format);
             break;
         }
         if (region) {
-            *region_next = region;
-            region_next = &region->p_next;
+            vlc_spu_regions_push(&spu->regions, region);
         }
     }
     avsubtitle_free(ffsub);
 
     return spu;
 }
-

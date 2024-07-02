@@ -33,9 +33,10 @@
 #include "widgets/native/animators.hpp"
 #include "util/imagehelper.hpp"
 
-#include <assert.h>
+#include <cassert>
 
 #include <vlc_modules.h>
+#include <vlc_extensions.h>
 
 #include <QTreeWidget>
 #include <QStringList>
@@ -839,7 +840,7 @@ QVariant AddonsListModel::Addon::data( int role ) const
         returnval = QVariant( (int) p_entry->i_score );
         break;
     case VersionRole:
-        returnval = QVariant( p_entry->psz_version );
+        returnval = QVariant( qfu(p_entry->psz_version) );
         break;
     case AuthorRole:
         returnval = qfu( p_entry->psz_author );

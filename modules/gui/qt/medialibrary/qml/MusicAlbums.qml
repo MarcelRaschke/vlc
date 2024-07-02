@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.medialib 0.1
 import org.videolan.vlc 0.1
@@ -31,27 +31,28 @@ MainInterface.MainViewLoader {
 
     // Properties
 
-    property int gridViewMarginTop: VLCStyle.margin_large
-    property var gridViewRowX: Helpers.get(currentItem, "rowX", 0)
+    readonly property var currentIndex: currentItem?.currentIndex ?? - 1
 
-    readonly property var currentIndex: Helpers.get(currentItem, "currentIndex", - 1)
+    property Component header: null
+    readonly property Item headerItem: currentItem?.headerItem ?? null
 
-    property Component header: Item {}
-    readonly property Item headerItem: Helpers.get(currentItem, "headerItem", null)
-
-    readonly property int contentLeftMargin: Helpers.get(currentItem, "contentLeftMargin", 0)
-    readonly property int contentRightMargin: Helpers.get(currentItem, "contentRightMargin", 0)
-
-    property var sortModel: [
-        { text: I18n.qtr("Alphabetic"),  criteria: "title"},
-        { text: I18n.qtr("Duration"),    criteria: "duration" },
-        { text: I18n.qtr("Date"),        criteria: "release_year" },
-        { text: I18n.qtr("Artist"),      criteria: "main_artist" },
-    ]
+    readonly property int contentLeftMargin: currentItem?.contentLeftMargin ?? 0
+    readonly property int contentRightMargin: currentItem?.contentRightMargin ?? 0
 
     property alias parentId: albumModelId.parentId
+    property alias searchPattern: albumModelId.searchPattern
+    property alias sortOrder: albumModelId.sortOrder
+    property alias sortCriteria: albumModelId.sortCriteria
 
+    isSearchable: true
     model: albumModelId
+
+    sortModel: [
+        { text: qsTr("Alphabetic"),  criteria: "title"},
+        { text: qsTr("Duration"),    criteria: "duration" },
+        { text: qsTr("Date"),        criteria: "release_year" },
+        { text: qsTr("Artist"),      criteria: "main_artist" },
+    ]
 
     grid: gridComponent
     list: tableComponent
@@ -61,9 +62,9 @@ MainInterface.MainViewLoader {
 
     function _actionAtIndex(index) {
         if (selectionModel.selectedIndexes.length > 1) {
-            MediaLib.addAndPlay( model.getIdsForIndexes( selectionModel.selectedIndexes ) )
+            model.addAndPlay( selectionModel.selectedIndexes )
         } else {
-            MediaLib.addAndPlay( model.getIdForIndex(index) )
+            model.addAndPlay( new Array(index) )
         }
     }
 
@@ -77,7 +78,9 @@ MainInterface.MainViewLoader {
         id: albumDragItem
 
         mlModel: albumModelId
-        indexes: selectionModel.selectedIndexes
+        indexes: indexesFlat ? selectionModel.selectedIndexesFlat
+                             : selectionModel.selectedIndexes
+        indexesFlat: !!selectionModel.selectedIndexesFlat
         defaultCover: VLCStyle.noArtAlbumCover
     }
 
@@ -94,13 +97,12 @@ MainInterface.MainViewLoader {
             id: gridView_id
 
             activeFocusOnTab:true
-            topMargin: root.gridViewMarginTop
             cellWidth: VLCStyle.gridItem_music_width
             cellHeight: VLCStyle.gridItem_music_height
 
             headerDelegate: root.header
 
-            selectionDelegateModel: selectionModel
+            selectionModel: root.selectionModel
             model: albumModelId
 
             delegate: AudioGridItem {
@@ -108,13 +110,13 @@ MainInterface.MainViewLoader {
 
                 opacity: gridView_id.expandIndex !== -1 && gridView_id.expandIndex !== audioGridItem.index ? .7 : 1
                 dragItem: albumDragItem
-                onItemClicked : gridView_id.leftClickOnItem(modifier, index)
+                onItemClicked : (modifier) => { gridView_id.leftClickOnItem(modifier, index) }
 
                 onItemDoubleClicked: {
                     gridView_id.switchExpandItem(index)
                 }
 
-                onContextMenuButtonClicked: {
+                onContextMenuButtonClicked: (_, globalMousePos) => {
                     gridView_id.rightClickOnItem(index)
                     contextMenu.popup(selectionModel.selectedIndexes, globalMousePos, {
                         "information": index
@@ -147,7 +149,7 @@ MainInterface.MainViewLoader {
                 Navigation.downAction: function() {}
             }
 
-            onActionAtIndex: {
+            onActionAtIndex: (index) => {
                 if (selectionModel.selectedIndexes.length === 1) {
                     switchExpandItem(index);
 
@@ -161,7 +163,9 @@ MainInterface.MainViewLoader {
 
             Connections {
                 target: contextMenu
-                onShowMediaInformation: gridView_id.switchExpandItem( index )
+                function onShowMediaInformation(index) {
+                    gridView_id.switchExpandItem( index )
+                }
             }
         }
     }
@@ -182,7 +186,7 @@ MainInterface.MainViewLoader {
 
                     subCriterias: [ "main_artist", "duration" ],
 
-                    text: I18n.qtr("Title"),
+                    text: qsTr("Title"),
 
                     headerDelegate: tableColumns.titleHeaderDelegate,
                     colDelegate: tableColumns.titleDelegate,
@@ -197,7 +201,7 @@ MainInterface.MainViewLoader {
                 model: {
                     criteria: "title",
 
-                    text: I18n.qtr("Title"),
+                    text: qsTr("Title"),
 
                     headerDelegate: tableColumns.titleHeaderDelegate,
                     colDelegate: tableColumns.titleDelegate,
@@ -210,13 +214,15 @@ MainInterface.MainViewLoader {
                 model: {
                     criteria: "main_artist",
 
-                    text: I18n.qtr("Artist")
+                    text: qsTr("Artist")
                 }
             }, {
                 size: 1,
 
                 model: {
                     criteria: "duration",
+
+                    text: qsTr("Duration"),
 
                     showSection: "",
 
@@ -226,23 +232,26 @@ MainInterface.MainViewLoader {
             }]
 
             model: albumModelId
-            selectionDelegateModel: selectionModel
-            onActionForSelection: _actionAtIndex(selection[0]);
+            selectionModel: root.selectionModel
+            onActionForSelection: (selection) => _actionAtIndex(selection[0])
             Navigation.parentItem: root
             section.property: "title_first_symbol"
             header: root.header
             dragItem: albumDragItem
             rowHeight: VLCStyle.tableCoverRow_height
-            headerTopPadding: VLCStyle.margin_normal
 
             sortModel: (availableRowWidth < VLCStyle.colWidth(4)) ? _modelSmall
                                                                   : _modelMedium
 
-            onContextMenuButtonClicked: contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
-            onRightClick: contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
-            onItemDoubleClicked: MediaLib.addAndPlay( model.id )
+            onContextMenuButtonClicked: (_,_,globalMousePos) => {
+                contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
+            }
+            onRightClick: (_,_,globalMousePos) => {
+                contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
+            }
+            onItemDoubleClicked: (index, model) => MediaLib.addAndPlay( model.id )
 
-            Widgets.TableColumns {
+            Widgets.MLTableColumns {
                 id: tableColumns
 
                 showCriterias: (tableView_id.sortModel === tableView_id._modelSmall)
@@ -250,7 +259,7 @@ MainInterface.MainViewLoader {
 
             Connections {
                 target: albumModelId
-                onSortCriteriaChanged: {
+                function onSortCriteriaChanged() {
                     switch (albumModelId.sortCriteria) {
                     case "title":
                     case "main_artist":
@@ -267,8 +276,8 @@ MainInterface.MainViewLoader {
     Component {
         id: emptyLabelComponent
 
-        EmptyLabelButton {
-            text: I18n.qtr("No albums found\nPlease try adding sources, by going to the Browse tab")
+        Widgets.EmptyLabelButton {
+            text: qsTr("No albums found\nPlease try adding sources, by going to the Browse tab")
             Navigation.parentItem: root
             cover: VLCStyle.noArtAlbumCover
         }

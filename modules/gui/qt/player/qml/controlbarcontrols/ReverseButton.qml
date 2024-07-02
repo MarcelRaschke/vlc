@@ -18,18 +18,18 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 
-Widgets.IconControlButton {
+Widgets.IconToolButton {
     enabled: Player.rewindable
 
-    iconText: VLCIcons.play_reverse
-    text: I18n.qtr("Reverse")
+    text: VLCIcons.play_reverse
+    description: qsTr("Reverse")
 
     onClicked: Player.reverse()
 }

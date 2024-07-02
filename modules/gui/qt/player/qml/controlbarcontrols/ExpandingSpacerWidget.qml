@@ -15,8 +15,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as T
+import QtQuick
+import QtQuick.Templates as T
+import QtQuick.Layouts
 
 import org.videolan.vlc 0.1
 
@@ -27,13 +28,13 @@ import "qrc:///style/"
 Item {
     enabled: false
 
-    implicitWidth: paintOnly ? VLCStyle.widthExtendedSpacer : Number.MAX_VALUE
+    implicitWidth: VLCStyle.widthExtendedSpacer
     implicitHeight: VLCStyle.icon_toolbar
 
     property bool paintOnly: false
     property alias spacetextExt: spacetext
 
-    readonly property real minimumWidth: 0
+    Layout.minimumWidth: 1
 
     readonly property ColorContext colorContext: ColorContext {
         id: theme
@@ -53,5 +54,7 @@ Item {
 
         verticalAlignment: Text.AlignVCenter
         horizontalAlignment: Text.AlignHCenter
+
+        Accessible.ignored: true
     }
 }

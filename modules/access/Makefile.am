@@ -166,9 +166,8 @@ if HAVE_V4L2
 access_LTLIBRARIES += libv4l2_plugin.la
 endif
 
-libdshow_plugin_la_SOURCES = access/dshow/vlc_dshow.h access/dshow/dshow.cpp access/dshow/access.h \
+libdshow_plugin_la_SOURCES = access/dshow/dshow.cpp access/dshow/access.h \
 	access/dshow/filter.cpp access/dshow/filter.h access/dshow/crossbar.cpp ../src/win32/mta_holder.h
-libdshow_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -DSTRSAFE_NO_DEPRECATE
 libdshow_plugin_la_CXXFLAGS = $(AM_CXXFLAGS) $(LIBCOMCXXFLAGS)
 libdshow_plugin_la_LIBADD = $(LIBCOM) -luuid -lstrmiids -lksuser
 if HAVE_WIN32_DESKTOP
@@ -319,7 +318,6 @@ libbda_la_LDFLAGS = -static
 libbda_la_LIBADD = -lstrmiids $(LIBCOM) -luuid
 noinst_LTLIBRARIES += libbda.la
 
-libdtv_plugin_la_DEPENDENCIES = libbda.la
 libdtv_plugin_la_LIBADD = libbda.la -lstdc++
 access_LTLIBRARIES += libdtv_plugin.la
 endif

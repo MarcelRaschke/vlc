@@ -36,6 +36,7 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_demux.h>
 #include <vlc_url.h>
@@ -151,29 +152,30 @@ static rfbBool mallocFrameBufferHandler( rfbClient* p_client )
     assert(!(p_client->height & ~0xffff)); // fits in 16 bits
     uint16_t i_height = p_client->height;
 
-    uint8_t i_bits_per_pixel = p_client->format.bitsPerPixel;
-    assert((i_bits_per_pixel & 0x7) == 0); // multiple of 8
+    if (p_client->format.depth <= 8 &&
+            !strstr(p_client->appData.encodingsString, "tight")) // libvnc does not support tight at 8 bpp
+        i_chroma = VLC_CODEC_BGR233;
+    else if (p_client->format.depth <= 16)
+        i_chroma = VLC_CODEC_RGB565LE;
+    else // skip 24 bpp pixfmt since rfb protocol forbids 24 bpp pixfmts
+        i_chroma = VLC_CODEC_BGRX;
 
-    switch( i_bits_per_pixel )
-    {
-        case 8:
-            i_chroma = VLC_CODEC_RGB8;
-            break;
-        default:
-        case 16:
-            i_chroma = VLC_CODEC_RGB16;
-            break;
-        case 24:
-            i_chroma = VLC_CODEC_RGB24;
-            break;
-        case 32:
-            i_chroma = VLC_CODEC_RGB32;
-            break;
-    }
+    p_client->format.bigEndian = 0; // we expect LE byte order regardless of native endianness
+    p_client->format.trueColour = 1; // we do not support color maps
 
     switch( i_chroma )
     {
-        case VLC_CODEC_RGB16:
+        case VLC_CODEC_BGR233:
+            p_client->format.depth = p_client->format.bitsPerPixel = 8;
+            p_client->format.redShift   =  0;
+            p_client->format.greenShift =  3;
+            p_client->format.blueShift  =  6;
+            p_client->format.redMax     = 0x7;
+            p_client->format.greenMax   = 0x7;
+            p_client->format.blueMax    = 0x3;
+            break;
+        case VLC_CODEC_RGB565LE:
+            p_client->format.depth = p_client->format.bitsPerPixel = 16;
             p_client->format.redShift   = 11;
             p_client->format.greenShift =  5;
             p_client->format.blueShift  =  0;
@@ -181,8 +183,9 @@ static rfbBool mallocFrameBufferHandler( rfbClient* p_client )
             p_client->format.greenMax   = 0x3f;
             p_client->format.blueMax    = 0x1f;
             break;
-        case VLC_CODEC_RGB24:
-        case VLC_CODEC_RGB32:
+        case VLC_CODEC_BGRX:
+            p_client->format.depth = 24;
+            p_client->format.bitsPerPixel = 32;
             p_client->format.redShift   = 16;
             p_client->format.greenShift =  8;
             p_client->format.blueShift  =  0;
@@ -193,7 +196,7 @@ static rfbBool mallocFrameBufferHandler( rfbClient* p_client )
     }
 
     /* Set up framebuffer */
-    if (mul_overflow(i_width, i_height * (i_bits_per_pixel / 8), &p_sys->i_framebuffersize)) {
+    if (mul_overflow(i_width, i_height * (p_client->format.bitsPerPixel / 8), &p_sys->i_framebuffersize)) {
         msg_Err(p_demux, "VNC framebuffersize overflow");
         return FALSE;
     }
@@ -218,6 +221,7 @@ static rfbBool mallocFrameBufferHandler( rfbClient* p_client )
 
     /* Fill input format */
     fmt.video.i_chroma = i_chroma;
+
     fmt.video.i_visible_width =
             fmt.video.i_width = i_width;
 
@@ -226,11 +230,6 @@ static rfbBool mallocFrameBufferHandler( rfbClient* p_client )
 
     fmt.video.i_frame_rate_base = 1000;
     fmt.video.i_frame_rate = 1000 * p_sys->f_fps;
-
-    fmt.video.i_bits_per_pixel = i_bits_per_pixel;
-    fmt.video.i_rmask = p_client->format.redMax << p_client->format.redShift;
-    fmt.video.i_gmask = p_client->format.greenMax << p_client->format.greenShift;
-    fmt.video.i_bmask = p_client->format.blueMax << p_client->format.blueShift;
 
     fmt.video.i_sar_num = fmt.video.i_sar_den = 1;
 

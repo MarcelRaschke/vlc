@@ -28,6 +28,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 #include <vlc_block.h>
@@ -54,7 +55,8 @@ typedef struct
     vlc_hash_md5_t hash;
 } sout_stream_id_sys_t;
 
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *
+Add( sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
     sout_stream_id_sys_t *id;
@@ -87,6 +89,7 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
 
     msg_Dbg( p_stream, "%s: Adding track type:%s id:%d", p_sys->prefix, id->type, id->id);
     return id;
+    (void)es_id;
 }
 
 static void Del( sout_stream_t *p_stream, void *_id )
@@ -213,8 +216,25 @@ static int OutputSend(sout_stream_t *stream, void *id, block_t *block)
     return VLC_SUCCESS;
 }
 
+/*****************************************************************************
+ * Close:
+ *****************************************************************************/
+static void Close( sout_stream_t *p_stream )
+{
+    sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
+
+    if( p_sys->output )
+        fclose( p_sys->output );
+
+    free( p_sys->prefix );
+    free( p_sys );
+}
+
 static const struct sout_stream_operations output_ops = {
-    Add, Del, OutputSend, NULL, NULL, NULL,
+    .add = Add,
+    .del = Del,
+    .send = OutputSend,
+    .close = Close,
 };
 
 static int OutputOpen(vlc_object_t *obj)
@@ -232,12 +252,13 @@ static int OutputOpen(vlc_object_t *obj)
     return val;
 }
 
-static void *FilterAdd(sout_stream_t *stream, const es_format_t *fmt)
+static void *
+FilterAdd(sout_stream_t *stream, const es_format_t *fmt, const char *es_id)
 {
-    sout_stream_id_sys_t *id = Add(stream, fmt);
+    sout_stream_id_sys_t *id = Add(stream, fmt, es_id);
 
     if (likely(id != NULL))
-        id->next_id = sout_StreamIdAdd(stream->p_next, fmt);
+        id->next_id = sout_StreamIdAdd(stream->p_next, fmt, es_id);
 
     return id;
 }
@@ -260,7 +281,11 @@ static int FilterSend(sout_stream_t *stream, void *opaque, block_t *block)
 }
 
 static const struct sout_stream_operations filter_ops = {
-    FilterAdd, FilterDel, FilterSend, NULL, NULL, SetPCR,
+    .add = FilterAdd,
+    .del = FilterDel,
+    .send = FilterSend,
+    .set_pcr = SetPCR,
+    .close = Close,
 };
 
 static int FilterOpen(vlc_object_t *obj)
@@ -279,21 +304,6 @@ static int FilterOpen(vlc_object_t *obj)
 }
 
 /*****************************************************************************
- * Close:
- *****************************************************************************/
-static void Close( vlc_object_t * p_this )
-{
-    sout_stream_t     *p_stream = (sout_stream_t*)p_this;
-    sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
-
-    if( p_sys->output )
-        fclose( p_sys->output );
-
-    free( p_sys->prefix );
-    free( p_sys );
-}
-
-/*****************************************************************************
  * Module descriptor
  *****************************************************************************/
 #define OUTPUT_TEXT N_("Output file")
@@ -307,11 +317,11 @@ vlc_module_begin()
     set_capability( "sout output", 0 )
     add_shortcut( "stats" )
     set_subcategory( SUBCAT_SOUT_STREAM )
-    set_callbacks( OutputOpen, Close )
-    add_string( SOUT_CFG_PREFIX "output", "", OUTPUT_TEXT,OUTPUT_LONGTEXT );
-    add_string( SOUT_CFG_PREFIX "prefix", "stats", PREFIX_TEXT, NULL );
+    set_callback( OutputOpen )
+    add_string( SOUT_CFG_PREFIX "output", "", OUTPUT_TEXT,OUTPUT_LONGTEXT )
+    add_string( SOUT_CFG_PREFIX "prefix", "stats", PREFIX_TEXT, NULL )
     add_submodule()
     set_capability( "sout filter", 0 )
     add_shortcut( "stats" )
-    set_callbacks( FilterOpen, Close )
+    set_callback( FilterOpen )
 vlc_module_end()

@@ -26,8 +26,22 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface NSImage (VLCAdditions)
 
++ (void)quickLookPreviewForLocalPath:(NSString *)path 
+                            withSize:(NSSize)size 
+                   completionHandler:(void (^)(NSImage * _Nullable))completionHandler;
++ (void)quickLookPreviewForLocalURL:(NSURL *)url 
+                           withSize:(NSSize)size 
+                  completionHandler:(void (^)(NSImage * _Nullable))completionHandler;
 + (instancetype)quickLookPreviewForLocalPath:(NSString*)path withSize:(NSSize)size;
 + (instancetype)quickLookPreviewForLocalURL:(NSURL*)url withSize:(NSSize)size;
++ (instancetype)compositeImageWithImages:(NSArray<NSImage *> * const)images
+                                  frames:(NSArray<NSValue *> * const)frames
+                                    size:(const NSSize)size;
++ (NSArray<NSValue *> *)framesForCompositeImageSquareGridWithImages:(NSArray<NSImage *> * const)images
+                                                               size:(const NSSize)size
+                                                      gridItemCount:(const NSUInteger)gridItemCount;
+
+- (instancetype)imageTintedWithColor:(NSColor *)color;
 
 @end
 

@@ -25,11 +25,23 @@
 #ifndef VLC_LIBVLC_MEDIA_PLAYER_H
 #define VLC_LIBVLC_MEDIA_PLAYER_H 1
 
+/* Definitions of enum properties for video */
+#include "libvlc_video.h"
+
 # ifdef __cplusplus
 extern "C" {
 # else
 #  include <stdbool.h>
 # endif
+
+typedef struct libvlc_video_viewpoint_t libvlc_video_viewpoint_t;
+typedef enum libvlc_media_slave_type_t libvlc_media_slave_type_t;
+typedef struct libvlc_media_t libvlc_media_t;
+typedef struct libvlc_media_track_t libvlc_media_track_t;
+typedef struct libvlc_media_tracklist_t libvlc_media_tracklist_t;
+typedef enum libvlc_track_type_t libvlc_track_type_t;
+typedef struct libvlc_renderer_item_t libvlc_renderer_item_t;
+typedef enum libvlc_state_t libvlc_state_t;
 
 /** \defgroup libvlc_media_player LibVLC media player
  * \ingroup libvlc
@@ -136,6 +148,17 @@ typedef enum libvlc_position_t {
 } libvlc_position_t;
 
 /**
+ * Enumeration of values used to set the video fitting inside the display area.
+ */
+typedef enum libvlc_video_fit_mode_t {
+    libvlc_video_fit_none = 0,    /**< Explicit zoom set by \ref libvlc_video_set_scale */
+    libvlc_video_fit_smaller, /**< Fit inside / to smallest display dimension */
+    libvlc_video_fit_larger,  /**< Fit outside / to largest display dimension */
+    libvlc_video_fit_width,   /**< Fit to display width */
+    libvlc_video_fit_height,  /**< Fit to display height */
+} libvlc_video_fit_mode_t;
+
+/**
  * Enumeration of teletext keys than can be passed via
  * libvlc_video_set_teletext()
  */
@@ -191,8 +214,9 @@ LIBVLC_API void libvlc_media_player_release( libvlc_media_player_t *p_mi );
  * libvlc_media_player_release() to decrement reference count.
  *
  * \param p_mi media player object
+ * \return the same object
  */
-LIBVLC_API void libvlc_media_player_retain( libvlc_media_player_t *p_mi );
+LIBVLC_API libvlc_media_player_t *libvlc_media_player_retain( libvlc_media_player_t *p_mi );
 
 /**
  * Set the media that will be used by the media_player. If any,
@@ -395,8 +419,8 @@ typedef void (*libvlc_video_display_cb)(void *opaque, void *picture);
  * \return the number of picture buffers allocated, 0 indicates failure
  *
  * \version LibVLC 4.0.0 and later.
- * \param[in] (width+1) - pointer to display width in pixels
- * \param[in] (height+1) - pointer to display height in pixels
+ * \param[in] width  pointer to display width - 1 in pixels
+ * \param[in] height pointer to display height - 1 in pixels
  *
  * \note
  * For each pixels plane, the scanline pitch must be bigger than or equal to
@@ -430,7 +454,7 @@ typedef void (*libvlc_video_cleanup_cb)(void *opaque);
  * \warning Rendering video into custom memory buffers is considerably less
  * efficient than rendering in a custom window as normal.
  *
- * For optimal perfomances, VLC media player renders into a custom window, and
+ * For optimal performances, VLC media player renders into a custom window, and
  * does not use this function and associated callbacks. It is <b>highly
  * recommended</b> that other LibVLC-based application do likewise.
  * To embed video in a window, use libvlc_media_player_set_xwindow() or
@@ -716,32 +740,92 @@ typedef enum libvlc_video_engine_t {
 
 
 /** Callback type that can be called to request a render size changes.
- * 
- * libvlc will provide a callback of this type when calling \ref libvlc_video_output_set_resize_cb.
- * 
- * \param report_opaque parameter passed to \ref libvlc_video_output_set_resize_cb. [IN]
+ *
+ * libvlc will provide a callback of this type when calling \ref libvlc_video_output_set_window_cb.
+ *
+ * \param report_opaque parameter passed to \ref libvlc_video_output_set_window_cb. [IN]
  * \param width new rendering width requested. [IN]
  * \param height new rendering height requested. [IN]
  */
 typedef void( *libvlc_video_output_resize_cb )( void *report_opaque, unsigned width, unsigned height );
 
 
+/**
+ * Enumeration of the different mouse buttons that can be reported for user interaction
+ * can be passed to \ref libvlc_video_output_mouse_press_cb and \ref libvlc_video_output_mouse_release_cb.
+ */
+typedef enum libvlc_video_output_mouse_button_t {
+    libvlc_video_output_mouse_button_left = 0,
+    libvlc_video_output_mouse_button_middle = 1,
+    libvlc_video_output_mouse_button_right = 2
+} libvlc_video_output_mouse_button_t;
+
+
+/** Callback type that can be called to notify the mouse position when hovering the render surface.
+ *
+ * libvlc will provide a callback of this type when calling \ref libvlc_video_output_set_window_cb.
+ *
+ * The position (0,0) denotes the top left corner, bottom right corner position
+ * is (width,height) as reported by \ref libvlc_video_output_resize_cb.
+ *
+ * \param opaque parameter passed to \ref libvlc_video_output_set_window_cb. [IN]
+ * \param x horizontal mouse position in \ref libvlc_video_output_resize_cb coordinates. [IN]
+ * \param y vertical mouse position in \ref libvlc_video_output_resize_cb coordinates. [IN]
+ */
+typedef void (*libvlc_video_output_mouse_move_cb)(void *opaque, int x, int y);
+
+/** Callback type that can be called to notify when a mouse button is pressed in the rendering surface.
+ *
+ * libvlc will provide a callback of this type when calling \ref libvlc_video_output_set_window_cb.
+ *
+ * The button event will be reported at the last position provided by \ref libvlc_video_output_mouse_move_cb
+ *
+ * \param opaque parameter passed to \ref libvlc_video_output_set_window_cb. [IN]
+ * \param button represent the button pressed, see \ref libvlc_video_output_mouse_button_t for available buttons. [IN]
+ */
+typedef void (*libvlc_video_output_mouse_press_cb)(void *opaque, libvlc_video_output_mouse_button_t button);
+
+/** Callback type that can be called to notify when a mouse button is released in the rendering surface.
+ *
+ * libvlc will provide a callback of this type when calling \ref libvlc_video_output_set_window_cb.
+ *
+ * The button event will be reported at the last position provided by \ref libvlc_video_output_mouse_move_cb.
+ *
+ * \param opaque parameter passed to \ref libvlc_video_output_set_window_cb. [IN]
+ * \param button represent the button released, see \ref libvlc_video_output_mouse_button_t for available buttons. [IN]
+ */
+typedef void (*libvlc_video_output_mouse_release_cb)(void *opaque, libvlc_video_output_mouse_button_t button);
+
 /** Set the callback to call when the host app resizes the rendering area.
  *
  * This allows text rendering and aspect ratio to be handled properly when the host
- * rendering size changes.
+ * rendering size changes and to provide mouse.
  *
  * It may be called before the \ref libvlc_video_output_setup_cb callback.
  *
+ * \warning These callbacks cannot be called concurrently, the caller is responsible for serialization
+ *
  * \param[in] opaque private pointer set on the opaque parameter of @a libvlc_video_output_setup_cb()
  * \param[in] report_size_change callback which must be called when the host size changes.
- *            The callback is valid until another call to \ref libvlc_video_output_set_resize_cb
+ *            The callback is valid until another call to \ref libvlc_video_output_set_window_cb
  *            is done. This may be called from any thread.
- * \param[in] report_opaque private pointer to pass to the \ref report_size_change callback.
+ * \param[in] report_mouse_move callback which must be called when the mouse position change on the video surface.
+ *            The coordinates are relative to the size reported through the \p report_size_change.
+ *            This may be called from any thread.
+ * \param[in] report_mouse_pressed callback which must be called when a mouse button is pressed on the video surface,
+ *            The position of the event is the last position reported by the report_mouse_move callback. This may be
+ *            called from any thread.
+ * \param[in] report_mouse_released callback which must be called when a mouse button is released on the video surface,
+ *            The position of the event is the last position reported by the report_mouse_move callback. This may be
+ *            called from any thread.
+ * \param[in] report_opaque private pointer to pass to the \p report_size_change callback.
  */
-typedef void( *libvlc_video_output_set_resize_cb )( void *opaque,
-                                                    libvlc_video_output_resize_cb report_size_change,
-                                                    void *report_opaque );
+typedef void( *libvlc_video_output_set_window_cb )( void *opaque,
+                                            libvlc_video_output_resize_cb report_size_change,
+                                            libvlc_video_output_mouse_move_cb report_mouse_move,
+                                            libvlc_video_output_mouse_press_cb report_mouse_pressed,
+                                            libvlc_video_output_mouse_release_cb report_mouse_released,
+                                            void *report_opaque );
 
 /** Tell the host the rendering for the given plane is about to start
  *
@@ -779,7 +863,7 @@ typedef bool( *libvlc_video_output_select_plane_cb )( void *opaque, size_t plane
  * \param engine the GPU engine to use
  * \param setup_cb callback called to initialize user data
  * \param cleanup_cb callback called to clean up user data
- * \param resize_cb callback to set the resize callback
+ * \param window_cb callback called to setup the window
  * \param update_output_cb callback to get the rendering format of the host (cannot be NULL)
  * \param swap_cb callback called after rendering a video frame (cannot be NULL)
  * \param makeCurrent_cb callback called to enter/leave the rendering context (cannot be NULL)
@@ -800,7 +884,7 @@ bool libvlc_video_set_output_callbacks( libvlc_media_player_t *mp,
                                         libvlc_video_engine_t engine,
                                         libvlc_video_output_setup_cb setup_cb,
                                         libvlc_video_output_cleanup_cb cleanup_cb,
-                                        libvlc_video_output_set_resize_cb resize_cb,
+                                        libvlc_video_output_set_window_cb window_cb,
                                         libvlc_video_update_output_cb update_output_cb,
                                         libvlc_video_swap_cb swap_cb,
                                         libvlc_video_makeCurrent_cb makeCurrent_cb,
@@ -911,6 +995,8 @@ LIBVLC_API uint32_t libvlc_media_player_get_xwindow ( libvlc_media_player_t *p_m
  * Set a Win32/Win64 API window handle (HWND) where the media player should
  * render its video output. If LibVLC was built without Win32/Win64 API output
  * support, then this has no effects.
+ *
+ * \warning the HWND must have the WS_CLIPCHILDREN set in its style.
  *
  * \param p_mi the Media Player
  * \param drawable windows handle of the drawable
@@ -1109,7 +1195,7 @@ void libvlc_audio_set_format_callbacks( libvlc_media_player_t *mp,
  * - "S32N" for signed 32-bit PCM
  * - "FL32" for single precision IEEE 754
  *
- * All supported formats use the native endianess.
+ * All supported formats use the native endianness.
  * If there are more than one channel, samples are interleaved.
  *
  * \param mp the media player
@@ -1141,16 +1227,33 @@ LIBVLC_API libvlc_time_t libvlc_media_player_get_length( libvlc_media_player_t *
 LIBVLC_API libvlc_time_t libvlc_media_player_get_time( libvlc_media_player_t *p_mi );
 
 /**
- * Set the movie time (in ms). This has no effect if no media is being played.
+ * Set the movie time (in ms).
+ *
+ * This has no effect if no media is being played.
  * Not all formats and protocols support this.
  *
  * \param p_mi the Media Player
- * \param b_fast prefer fast seeking or precise seeking
  * \param i_time the movie time (in ms).
+ * \param b_fast prefer fast seeking or precise seeking
  * \return 0 on success, -1 on error
  */
 LIBVLC_API int libvlc_media_player_set_time( libvlc_media_player_t *p_mi,
                                              libvlc_time_t i_time, bool b_fast );
+
+/**
+ * Jump the movie time (in ms).
+ *
+ * This will trigger a precise and relative seek (from the current time).
+ * This has no effect if no media is being played.
+ * Not all formats and protocols support this.
+ *
+ * \param p_mi the Media Player
+ * \param i_time the movie time (in ms).
+ * \return 0 on success, -1 on error
+ * \version LibVLC 4.0.0 and later.
+ */
+LIBVLC_API int libvlc_media_player_jump_time( libvlc_media_player_t *p_mi,
+                                              libvlc_time_t i_time );
 
 /**
  * Get movie position as percentage between 0.0 and 1.0.
@@ -1807,6 +1910,27 @@ LIBVLC_API char *libvlc_video_get_aspect_ratio( libvlc_media_player_t *p_mi );
 LIBVLC_API void libvlc_video_set_aspect_ratio( libvlc_media_player_t *p_mi, const char *psz_aspect );
 
 /**
+ * Get current video display fit mode.
+ *
+ * \version LibVLC 4.0.0 or later
+ *
+ * \param p_mi the media player
+ * \return the video display fit mode.
+ */
+LIBVLC_API libvlc_video_fit_mode_t libvlc_video_get_display_fit( libvlc_media_player_t *p_mi );
+
+/**
+ * Set new video display fit.
+ *
+ * \version LibVLC 4.0.0 or later
+ *
+ * \param p_mi the media player
+ * \param fit new display fit mode
+ * \note Invalid fit mode are ignored.
+ */
+LIBVLC_API void libvlc_video_set_display_fit( libvlc_media_player_t *p_mi, libvlc_video_fit_mode_t fit );
+
+/**
  * Create a video viewpoint structure.
  *
  * \version LibVLC 3.0.0 and later
@@ -2047,6 +2171,25 @@ LIBVLC_API int libvlc_video_get_teletext( libvlc_media_player_t *p_mi );
 LIBVLC_API void libvlc_video_set_teletext( libvlc_media_player_t *p_mi, int i_page );
 
 /**
+ * Set teletext background transparency.
+ *
+ * \param p_mi the media player
+ * \param transparent whether background should be transparent.
+ * \version LibVLC 4.0.0 or later
+ */
+LIBVLC_API void libvlc_video_set_teletext_transparency( libvlc_media_player_t *p_mi, bool transparent );
+
+/**
+ * Get teletext background transparency.
+ *
+ * \param p_mi the media player
+ * \retval true teletext has transparent background
+ * \retval false teletext has opaque background
+ * \version LibVLC 4.0.0 or later
+ */
+LIBVLC_API bool libvlc_video_get_teletext_transparency( libvlc_media_player_t *p_mi );
+
+/**
  * Take a snapshot of the current video window.
  *
  * If i_width AND i_height is 0, original size is used.
@@ -2181,7 +2324,7 @@ LIBVLC_API int libvlc_video_get_adjust_int( libvlc_media_player_t *p_mi,
  * starting (arg !0) or stopping (arg 0) the adjust filter.
  *
  * \param p_mi libvlc media player instance
- * \param option adust option to set, values of libvlc_video_adjust_option_t
+ * \param option adjust option to set, values of libvlc_video_adjust_option_t
  * \param value adjust option value
  * \version LibVLC 1.1.1 and later.
  */
@@ -2203,7 +2346,7 @@ LIBVLC_API float libvlc_video_get_adjust_float( libvlc_media_player_t *p_mi,
  * are ignored.
  *
  * \param p_mi libvlc media player instance
- * \param option adust option to set, values of libvlc_video_adjust_option_t
+ * \param option adjust option to set, values of libvlc_video_adjust_option_t
  * \param value adjust option value
  * \version LibVLC 1.1.1 and later.
  */
@@ -2338,7 +2481,7 @@ LIBVLC_API void libvlc_audio_output_device_list_release(
  * \param device_id device identifier string
  *               (see \ref libvlc_audio_output_device_t::psz_device)
  *
- * \return If the change of device was requested succesfully, zero is returned
+ * \return If the change of device was requested successfully, zero is returned
  * (the actual change is asynchronous and not guaranteed to succeed).
  * On error, a non-zero value is returned.
  */
@@ -2433,7 +2576,7 @@ LIBVLC_API libvlc_audio_output_stereomode_t libvlc_audio_get_stereomode( libvlc_
  * Set current audio stereo-mode.
  *
  * \param p_mi media player
- * \param channel the audio stereo-mode, \see libvlc_audio_output_stereomode_t
+ * \param mode the audio stereo-mode, \see libvlc_audio_output_stereomode_t
  * \return 0 on success, -1 on error
  * \version LibVLC 4.0.0 or later
  */
@@ -2452,7 +2595,7 @@ LIBVLC_API libvlc_audio_output_mixmode_t libvlc_audio_get_mixmode( libvlc_media_
 /**
  * Set current audio mix-mode.
  *
- * By default (libvlc_AudioMixMode_Unset), the audio output will keep its
+ * By default (::libvlc_AudioMixMode_Unset), the audio output will keep its
  * original channel configuration (play stereo as stereo, or 5.1 as 5.1). Yet,
  * the OS and Audio API might refuse a channel configuration and asks VLC to
  * adapt (Stereo played as 5.1 or vice-versa).
@@ -2460,14 +2603,14 @@ LIBVLC_API libvlc_audio_output_mixmode_t libvlc_audio_get_mixmode( libvlc_media_
  * This function allows to force a channel configuration, it will only work if
  * the OS and Audio API accept this configuration (otherwise, it won't have any
  * effects). Here are some examples:
- *  - Play multi-channels (5.1, 7.1...) as stereo (libvlc_AudioMixMode_Stereo)
- *  - Play Stereo or 5.1 as 7.1 (libvlc_AudioMixMode_7_1)
+ *  - Play multi-channels (5.1, 7.1...) as stereo (::libvlc_AudioMixMode_Stereo)
+ *  - Play Stereo or 5.1 as 7.1 (::libvlc_AudioMixMode_7_1)
  *  - Play multi-channels as stereo with a binaural effect
- *  (libvlc_AudioMixMode_Binaural). It might be selected automatically if the
+ *  (::libvlc_AudioMixMode_Binaural). It might be selected automatically if the
  *  OS and Audio API can detect if a headphone is plugged.
  *
  * \param p_mi media player
- * \param channel the audio mix-mode, \see libvlc_audio_output_mixmode_t
+ * \param mode the audio mix-mode, \see libvlc_audio_output_mixmode_t
  * \return 0 on success, -1 on error
  * \version LibVLC 4.0.0 or later
  */
@@ -2868,6 +3011,67 @@ libvlc_media_player_time_point_get_next_date(const libvlc_media_player_time_poin
                                              int64_t next_interval_us);
 
 /** @} libvlc_media_player_watch_time */
+
+/** \defgroup libvlc_media_player_concurrency LibVLC media player concurrency API
+ * @{
+ */
+
+/**
+ * Lock the media_player internal lock
+
+ * The lock is recursive, so it's safe to use it multiple times from the same
+ * thread. You must call libvlc_media_player_unlock() the same number of times
+ * you called libvlc_media_player_lock().
+ *
+ * Locking is not mandatory before calling a libvlc_media_player_t function
+ * since they will automatically hold the lock internally.
+ *
+ * This lock can be used to synchronise user variables that interact with the
+ * libvlc_media_player_t or can be used to call several functions together.
+ *
+ * \param mp media player object
+ * \version LibVLC 4.0.0 or later
+ */
+LIBVLC_API void libvlc_media_player_lock( libvlc_media_player_t *mp );
+
+/**
+ * Unlock the media_player internal lock
+ *
+ * \see libvlc_media_player_lock
+ *
+ * \param mp media player object locked using /ref libvlc_media_player_lock
+ * \version LibVLC 4.0.0 or later
+ */
+LIBVLC_API void libvlc_media_player_unlock( libvlc_media_player_t *mp );
+
+/**
+ * Wait for an event to be signalled
+ *
+ * \note this is equivalent to pthread_cond_wait() with the
+ * libvlc_media_player_t internal mutex and condition variable. This function
+ * may spuriously wake up even without libvlc_media_player_signal() being
+ * called.
+ *
+ * \warning this function must not be called from any libvlc callbacks and
+ * events. The lock should be held only one time before waiting.
+ *
+ * \param mp media player object locked using /ref libvlc_media_player_lock
+ * \version LibVLC 4.0.0 or later
+ */
+LIBVLC_API void libvlc_media_player_wait( libvlc_media_player_t *mp );
+
+/**
+ * Signal all threads waiting for a signalling event
+ *
+ * \note this is equivalent to pthread_cond_broadcast() with the
+ * libvlc_media_player_t internal condition variable.
+ *
+ * \param mp media player object locked using /ref libvlc_media_player_lock
+ * \version LibVLC 4.0.0 or later
+ */
+LIBVLC_API void libvlc_media_player_signal( libvlc_media_player_t *mp );
+
+/** @} libvlc_media_player_concurrency */
 
 /** @} media_player */
 

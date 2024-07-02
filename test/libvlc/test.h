@@ -63,10 +63,10 @@ static const char test_default_sample[] = "mock://";
 
 #define test_log( ... ) printf( "testapi: " __VA_ARGS__ );
 
-static inline void on_timeout(int signum)
+static inline void test_setup(void)
 {
-    assert(signum == SIGALRM);
-    abort(); /* Cause a core dump */
+    setenv("VLC_PLUGIN_PATH", TOP_BUILDDIR"/modules", 1);
+    setenv("VLC_LIB_PATH", TOP_BUILDDIR, 1);
 }
 
 static inline void test_init (void)
@@ -88,15 +88,9 @@ static inline void test_init (void)
             alarm_timeout = val;
     }
     if (alarm_timeout != 0)
-    {
-        struct sigaction sig = {
-            .sa_handler = on_timeout,
-        };
-        sigaction(SIGALRM, &sig, NULL);
         alarm (alarm_timeout);
-    }
 
-    setenv( "VLC_PLUGIN_PATH", "../modules", 1 );
+    test_setup();
 }
 
 #endif /* TEST_H */

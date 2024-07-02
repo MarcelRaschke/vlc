@@ -189,10 +189,8 @@ Close(struct vlc_gl_interop *interop)
 }
 
 static int
-Open(vlc_object_t *obj)
+Open(struct vlc_gl_interop *interop)
 {
-    struct vlc_gl_interop *interop = (void *) obj;
-
     if (interop->fmt_in.i_chroma != VLC_CODEC_ANDROID_OPAQUE
      || !interop->vctx)
         return VLC_EGENERIC;
@@ -240,7 +238,7 @@ Open(vlc_object_t *obj)
     interop->ops = &ops;
 
     interop->tex_target = GL_TEXTURE_EXTERNAL_OES;
-    interop->fmt_out.i_chroma = VLC_CODEC_RGB32;
+    interop->fmt_out.i_chroma = VLC_CODEC_RGBA;
     interop->fmt_out.space = COLOR_SPACE_UNDEF;
 
     interop->tex_count = 1;

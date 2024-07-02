@@ -15,14 +15,23 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as T
+import QtQuick
+import QtQuick.Templates as T
 
 import org.videolan.vlc 0.1
 import "qrc:///style/"
 
 Row {
-    property alias labels: repeater.model
+    id: root
+
+    required property var labels
+
+    onLabelsChanged: {
+        // try to reuse items, texts are assigned with Binding
+        // extra items are hidden, Row should take care of them
+        if (repeater.count < labels.length)
+            repeater.model = labels.length
+    }
 
     spacing: VLCStyle.margin_xxsmall
 
@@ -37,12 +46,11 @@ Row {
         delegate: T.Label {
             id: label
 
-            bottomPadding: VLCStyle.margin_xxxsmall
-            topPadding: VLCStyle.margin_xxxsmall
-            leftPadding: VLCStyle.margin_xxxsmall
-            rightPadding: VLCStyle.margin_xxxsmall
+            padding: VLCStyle.margin_xxxsmall
 
-            text: modelData
+            visible: index < root.labels.length
+            text: index >= root.labels.length ? "" :  root.labels[index]
+
             font.pixelSize: VLCStyle.fontSize_normal
 
             color: theme.fg.primary

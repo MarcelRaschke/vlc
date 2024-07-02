@@ -34,7 +34,7 @@ xiph_test = executable('xiph_test',
     files('xiph_test.c'),
     include_directories: [vlc_include_dirs])
 
-test('xiph_test', hpack_test, suite: 'demux')
+test('xiph_test', xiph_test, suite: 'demux')
 
 # Demux dump
 vlc_modules += {
@@ -274,10 +274,11 @@ if libebml_dep.found() and libmatroska_dep.found()
             'mkv/chapters.cpp',
             'mkv/chapter_command.cpp',
             'mkv/stream_io_callback.cpp',
+            'mkv/vlc_colors.c',
             'mp4/libmp4.c',
             '../packetizer/dts_header.c',
         ),
-        'dependencies' : [libebml_dep, libmatroska_dep, z_lib]
+        'dependencies' : [libebml_dep, libmatroska_dep, z_dep]
     }
 endif
 
@@ -294,9 +295,14 @@ vlc_modules += {
         'asf/asfpacket.c',
         'mp4/attachments.c',
     ),
-    'dependencies' : [m_lib, z_lib]
+    'dependencies' : [m_lib, z_dep]
 }
 
+# mock demux
+vlc_modules += {
+    'name' : 'demux_mock',
+    'sources' : files('mock.c')
+}
 
 # mpgv demux
 vlc_modules += {
@@ -565,6 +571,8 @@ vlc_modules += {
         'adaptive/xml/DOMHelper.h',
         'adaptive/xml/DOMParser.cpp',
         'adaptive/xml/DOMParser.h',
+        'adaptive/xml/Namespaces.cpp',
+        'adaptive/xml/Namespaces.hpp',
         'adaptive/xml/Node.cpp',
         'adaptive/xml/Node.h',
 
@@ -574,7 +582,7 @@ vlc_modules += {
 
     ),
     'include_directories' : include_directories('adaptive', './'),
-    'dependencies' : [socket_libs, m_lib, z_lib],
+    'dependencies' : [socket_libs, m_lib, z_dep],
     'link_with' : vlc_http_lib,
     # TODO: Add optional GCRYPT dependency!
 }

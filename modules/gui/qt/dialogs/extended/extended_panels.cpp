@@ -40,7 +40,7 @@
 #include <QFileDialog>
 #include <QGraphicsScene>
 #include <QPainter>
-#include <QRegExp>
+#include <QRegularExpression>
 #include <QApplication>
 #include <QScreen>
 
@@ -52,21 +52,18 @@
 #include "util/qt_dirs.hpp"
 #include "widgets/native/customwidgets.hpp"
 #include "dialogs/dialogs_provider.hpp"
+#include "util/vlctick.hpp"
 
 #include "../../../../audio_filter/equalizer_presets.h"
+#include <vlc_configuration.h>
 #include <vlc_modules.h>
 #include <vlc_plugin.h>
 #include <vlc_player.h>
+#include <vlc_interface.h>
 
 static bool filterIsPresent( const QString &filters, const QString &filter )
 {
-    QStringList list = filters.split( ':',
-                                      #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
-                                        Qt::SkipEmptyParts
-                                      #else
-                                        QString::SkipEmptyParts
-                                      #endif
-                                    );
+    QStringList list = filters.split( ':', Qt::SkipEmptyParts );
 
     foreach( const QString &filterCmp, list )
     {
@@ -109,8 +106,8 @@ static QString OptionFromWidgetName( QObject *obj )
 {
     /* Gruik ? ... nah */
     return obj->objectName()
-        .remove( QRegExp( "Slider|Combo|Dial|Check|Spin|Text" ) )
-        .replace( QRegExp( "([A-Z])" ), "-\\1" )
+        .remove( QRegularExpression( QStringLiteral( "Slider|Combo|Dial|Check|Spin|Text" ) ) )
+        .replace( QRegularExpression( QStringLiteral( "([A-Z])" ) ), QStringLiteral( "-\\1" ) )
         .toLower();
 }
 
@@ -279,8 +276,8 @@ void ExtVideo::cropChange()
         ui.cropBotPx->setValue( ui.cropTopPx->value() );
     if( ui.leftRightCropSync->isChecked() )
         ui.cropRightPx->setValue( ui.cropLeftPx->value() );
-
-    PlayerController::VoutPtrList p_vouts = THEMIM->getVouts();
+    
+    PlayerController::VOutThreadList p_vouts = THEMIM->getVouts();
     for( auto p_vout: p_vouts )
     {
         var_SetInteger( p_vout.get(), "crop-top", ui.cropTopPx->value() );
@@ -303,13 +300,7 @@ static QString ChangeFiltersString( qt_intf_t *p_intf, const char *psz_filter_ty
     char* psz_chain = var_GetString( p_intf, psz_filter_type );
 
     QString const chain = QString( psz_chain ? psz_chain : "" );
-    QStringList list = chain.split( ':',
-                                    #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
-                                        Qt::SkipEmptyParts
-                                    #else
-                                        QString::SkipEmptyParts
-                                    #endif
-                                  );
+    QStringList list = chain.split( ':', Qt::SkipEmptyParts );
 
     if( b_add && std::find(list.begin(), list.end(), psz_name) == list.end() )
         list << psz_name;
@@ -863,7 +854,7 @@ void FilterSliderData::updateText( int i )
 
 float FilterSliderData::initialValue()
 {
-    PlayerController::AoutPtr p_aout = THEMIM->getAout();
+    SharedAOut p_aout = THEMIM->getAout();
     float f = p_data->f_value;
     if( p_aout )
     {
@@ -882,7 +873,7 @@ float FilterSliderData::initialValue()
 void FilterSliderData::onValueChanged( int i )
 {
     float f = ((float) i) * p_data->f_resolution;
-    PlayerController::AoutPtr p_aout = THEMIM->getAout();
+    SharedAOut p_aout = THEMIM->getAout();
     if ( p_aout )
     {
         var_SetFloat( p_aout.get(), qtu(p_data->name), f );
@@ -992,7 +983,7 @@ EqualizerSliderData::EqualizerSliderData( QObject *parent, qt_intf_t *_p_intf,
 
 QStringList EqualizerSliderData::getBandsFromAout() const
 {
-    PlayerController::AoutPtr p_aout = THEMIM->getAout();
+    SharedAOut p_aout = THEMIM->getAout();
     QStringList bands;
     if( p_aout )
     {
@@ -1001,13 +992,7 @@ QStringList EqualizerSliderData::getBandsFromAout() const
             char *psz_bands = var_GetString( p_aout.get(), qtu(p_data->name) );
             if ( psz_bands )
             {
-                bands = QString( psz_bands ).split( " ",
-                                                    #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
-                                                        Qt::SkipEmptyParts
-                                                    #else
-                                                        QString::SkipEmptyParts
-                                                    #endif
-                                                  );
+                bands = QString( psz_bands ).split( " ", Qt::SkipEmptyParts );
                 free( psz_bands );
             }
         }
@@ -1022,13 +1007,7 @@ QStringList EqualizerSliderData::getBandsFromAout() const
     char *psz_bands = config_GetPsz( qtu(p_data->name) );
     if ( psz_bands )
     {
-        bands = QString( psz_bands ).split( " ",
-                                            #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
-                                                Qt::SkipEmptyParts
-                                            #else
-                                                QString::SkipEmptyParts
-                                            #endif
-                                          );
+        bands = QString( psz_bands ).split( " ", Qt::SkipEmptyParts );
         free( psz_bands );
     }
 
@@ -1053,7 +1032,7 @@ void EqualizerSliderData::onValueChanged( int i )
     {
         float f = ((float) i) * p_data->f_resolution;
         bands[ index ] = QLocale( QLocale::C ).toString( f );
-        PlayerController::AoutPtr p_aout = THEMIM->getAout();
+        SharedAOut p_aout = THEMIM->getAout();
         if ( p_aout )
         {
             var_SetString( p_aout.get(), qtu(p_data->name), qtu(bands.join( " " )) );
@@ -1182,7 +1161,7 @@ void Equalizer::build()
     connect( ui.presetsCombo, QOverload<int>::of(&QComboBox::activated), this, &Equalizer::setCorePreset );
 
     /* Set enable checkbox */
-    PlayerController::AoutPtr p_aout = THEMIM->getAout();
+    SharedAOut p_aout = THEMIM->getAout();
     char *psz_af;
     if( p_aout )
         psz_af = var_GetNonEmptyString( p_aout.get(), "audio-filter" );
@@ -1228,8 +1207,8 @@ void Equalizer::setCorePreset( int i_preset )
     for ( int i=0; i< qMin( eqz_preset_10b[i_preset].i_band,
                             sliderDatas.count() ) ; i++ )
         sliderDatas[i]->setValue( eqz_preset_10b[i_preset].f_amp[i] );
-
-    PlayerController::AoutPtr p_aout = THEMIM->getAout();
+    
+    SharedAOut p_aout = THEMIM->getAout();
     if( p_aout )
     {
         var_SetString( p_aout.get() , "equalizer-preset" , preset_list[i_preset] );
@@ -1240,7 +1219,7 @@ void Equalizer::setCorePreset( int i_preset )
 /* Function called when the set2Pass button is activated */
 void Equalizer::enable2Pass( bool b_enable )
 {
-    PlayerController::AoutPtr p_aout= THEMIM->getAout();
+    SharedAOut p_aout= THEMIM->getAout();
 
     if( p_aout )
     {
@@ -1454,6 +1433,11 @@ SyncControls::SyncControls( qt_intf_t *_p_intf, QWidget *_parent )
 
     updateButton = new QToolButton;
     updateButton->setAutoRaise( true );
+    updateButton->setText("");
+    updateButton->setToolTip(qtr( "Eject the disc" ));
+    updateButton->setIcon( QIcon( ":/menu/update.svg") );
+    BUTTONACT( updateButton, &SyncControls::update );
+
     mainLayout->addWidget( updateButton, 0, 4, 1, 1 );
 
     /* Various Connects */
@@ -1480,9 +1464,6 @@ SyncControls::SyncControls( qt_intf_t *_p_intf, QWidget *_parent )
     });
     connect( THEMIM, &PlayerController::subtitleFPSChanged, subSpeedSpin, &QDoubleSpinBox::setValue );
     connect( &m_SubsDelayCfgFactor, &QVLCFloat::valueChanged, subDurationSpin, &QDoubleSpinBox::setValue);
-
-    BUTTON_SET_ACT( updateButton, "", qtr( "Eject the disc" ), &SyncControls::update );
-    updateButton->setIcon( QIcon( ":/menu/update.svg") );
 
     initSubsDuration();
 
@@ -1596,7 +1577,7 @@ void SyncControls::subsdelayClean()
 
 void SyncControls::subsdelaySetFactor( double f_factor )
 {
-    PlayerController::VoutPtrList p_vouts = THEMIM->getVouts();
+    PlayerController::VOutThreadList p_vouts = THEMIM->getVouts();
     for( auto p_vout: p_vouts )
     {
         var_SetFloat( p_vout.get(), SUBSDELAY_CFG_FACTOR, f_factor );

@@ -29,13 +29,13 @@
 #include <vlc_network.h>
 #include <vlc_fs.h>
 #include "../libvlc.h"
-#include "config/configuration.h"
+#include "../config/configuration.h"
 
 #include <string.h>
 #include <jni.h>
 
 static JavaVM *s_jvm = NULL;
-#define GENERIC_DIR_COUNT (VLC_VIDEOS_DIR - VLC_DESKTOP_DIR + 1)
+#define GENERIC_DIR_COUNT (VLC_SNAPSHOTS_DIR - VLC_DESKTOP_DIR + 1)
 static char *ppsz_generic_names[GENERIC_DIR_COUNT] = {};
 static struct {
     struct {
@@ -120,6 +120,7 @@ JNI_OnLoad(JavaVM *vm, void *reserved)
         "DIRECTORY_MUSIC",      /* VLC_MUSIC_DIR */
         "DIRECTORY_PICTURES",   /* VLC_PICTURES_DIR */
         "DIRECTORY_MOVIES",     /* VLC_VIDEOS_DIR */
+        "DIRECTORY_SCREENSHOTS",/* VLC_SNAPSHOTS_DIR */
     };
     for (size_t i = 0; i < GENERIC_DIR_COUNT; ++i)
     {
@@ -270,7 +271,7 @@ error:
     return psz_ret;
 }
 
-char *config_GetUserDir (vlc_userdir_t type)
+char *platform_GetUserDir (vlc_userdir_t type)
 {
     switch (type)
     {
@@ -291,6 +292,7 @@ char *config_GetUserDir (vlc_userdir_t type)
         case VLC_PUBLICSHARE_DIR:
         case VLC_DOCUMENTS_DIR:
         case VLC_MUSIC_DIR:
+        case VLC_SNAPSHOTS_DIR:
         case VLC_PICTURES_DIR:
         case VLC_VIDEOS_DIR:
         {
@@ -329,19 +331,18 @@ char *config_GetSysPath(vlc_sysdir_t type, const char *filename)
     return path;
 }
 
-/**
- * Determines the network proxy server to use (if any).
- *
- * This function fetch the Android proxy using the System.getProperty() method
- * with "http.proxyHost" and "http.proxyPort" keys. This is working only for
- * Android 4.0 and after.
- *
- * @param url absolute URL for which to get the proxy server (unused)
- * @return proxy URL, NULL if no proxy or error
- */
 char *vlc_getProxyUrl(const char *url)
 {
     VLC_UNUSED(url);
+
+    /**
+     * Determines the network proxy server to use (if any).
+     *
+     * This function fetch the Android proxy using the System.getProperty()
+     * method with "http.proxyHost" and "http.proxyPort" keys. This is working
+     * only for Android 4.0 and after.
+     */
+
     JNIEnv *env;
     bool b_detach;
     char *psz_ret = NULL;

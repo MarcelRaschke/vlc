@@ -27,7 +27,6 @@
 #include "mlthreadpool.hpp"
 #include "mlqmltypes.hpp"
 
-#include "util/qmlinputitem.hpp"
 
 class MLCustomCover;
 
@@ -74,7 +73,7 @@ public:
 
     Q_INVOKABLE void reload();
 
-    Q_INVOKABLE void mlInputItem(const QVariantList& variantList, QJSValue callback);
+    Q_INVOKABLE void mlInputItem(const QVector<MLItemId>& itemIdVector, QJSValue callback);
 
     inline bool idle() const { return m_idle; }
     inline int discoveryPending() const { return m_discoveryPending; }
@@ -218,6 +217,8 @@ private:
     quint64 m_taskId = 1;
     QMap<quint64, RunOnMLThreadBaseRunner*> m_runningTasks;
     QMultiMap<const QObject*, quint64> m_objectTasks;
+
+    QMap<QVector<MLItemId>, QVector<QJSValue>> m_inputItemQuery;
 };
 
 class RunOnMLThreadBaseRunner : public QObject, public QRunnable

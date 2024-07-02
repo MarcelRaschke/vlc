@@ -198,8 +198,9 @@ static int Open( filter_t *p_filter ) {
     /* Reject 0 bpp and unsupported chroma */
     const vlc_fourcc_t fourcc = p_filter->fmt_in.video.i_chroma;
     const vlc_chroma_description_t *p_chroma =
-        vlc_fourcc_GetChromaDescription( p_filter->fmt_in.video.i_chroma );
-    if( !p_chroma || p_chroma->pixel_size == 0
+        vlc_fourcc_GetChromaDescription( fourcc );
+    assert( p_chroma != NULL );
+    if( p_chroma->pixel_size == 0
         || p_chroma->plane_count < 3 || p_chroma->pixel_size > 1
         || !vlc_fourcc_IsYUV( fourcc ) ) {
 
@@ -482,7 +483,7 @@ static int oldmovie_sliding_offset_apply( filter_t *p_filter, picture_t *p_pic_o
     for ( size_t i_p = 0; i_p < i_planes; i_p++ ) {
         /* first allocate temporary buffer for swap operation */
         uint8_t *p_temp_buf = calloc( p_pic_out->p[i_p].i_lines * p_pic_out->p[i_p].i_pitch,
-                                      sizeof(uint8_t) );
+                                      1 );
         if ( unlikely( !p_temp_buf ) )
             return VLC_ENOMEM;
         memcpy( p_temp_buf,p_pic_out->p[i_p].p_pixels,

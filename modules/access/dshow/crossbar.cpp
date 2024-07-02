@@ -30,10 +30,9 @@
 
 #include <vlc_common.h>
 
-#include <assert.h>
+#include <cassert>
 
 #include "access.h"
-#include "vlc_dshow.h"
 
 namespace dshow {
 

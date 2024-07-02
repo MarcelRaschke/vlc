@@ -39,16 +39,23 @@ struct d3d11_vertex_shader_t {
 /* A Quad is texture that can be displayed in a rectangle */
 struct d3d11_quad_t
 {
+    d3d11_quad_t()
+    {
+        video_format_Init(&quad_fmt, 0);
+    }
+
     ~d3d11_quad_t()
     {
         ReleaseD3D11PictureSys(&picSys);
+        video_format_Clean(&quad_fmt);
     }
 
     void Reset();
-    void UpdateViewport(const RECT *, const d3d_format_t *display);
+    void UpdateViewport(const vout_display_place_t *, const d3d_format_t *display);
 
     picture_sys_d3d11_t       picSys = {};
     d3d_quad_t                generic = {};
+    video_format_t            quad_fmt = {};
     UINT                      resourceCount = 0;
     Microsoft::WRL::ComPtr<ID3D11Buffer> vertexBuffer;
     Microsoft::WRL::ComPtr<ID3D11Buffer> indexBuffer;

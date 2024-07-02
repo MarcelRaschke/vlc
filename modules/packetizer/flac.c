@@ -120,7 +120,7 @@ static void ProcessHeader(decoder_t *p_dec)
         p_extra += 8;
     }
 
-    if (p_dec->fmt_in->i_extra < FLAC_STREAMINFO_SIZE)
+    if (i_extra < FLAC_STREAMINFO_SIZE)
         return;
 
     FLAC_ParseStreamInfo( (uint8_t *) p_extra, &p_sys->stream_info );
@@ -459,7 +459,9 @@ static block_t *Packetize(decoder_t *p_dec, block_t **pp_block)
             msg_Warn(p_dec, "discarding bytes as we're over framesize %u, %zu",
                      p_sys->stream_info.max_framesize,
                      p_sys->i_offset);
-            block_SkipBytes( &p_sys->bytestream, FLAC_HEADER_SIZE_MAX + 2 );
+            if( block_SkipBytes( &p_sys->bytestream,
+                                 FLAC_HEADER_SIZE_MAX + 2 ) != VLC_SUCCESS )
+                return NULL;
             block_BytestreamFlush( &p_sys->bytestream );
             p_sys->crc = 0;
             p_sys->i_buf_offset = 0;

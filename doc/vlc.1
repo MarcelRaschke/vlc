@@ -35,7 +35,7 @@ For a precise description of options, please use "vlc \-\-help".
 The complete list of
 .B VLC
 options depends on what plugins are installed because they automatically
-add their own options. Please use "vlc \-\-longhelp \-\-advanced" for a
+add their own options. Please use "vlc \-\-longhelp" for a
 complete list of available options.
 
 .SH ITEMS
@@ -90,8 +90,17 @@ used by the OSSv4 output plugin.
 The directory containing VLC run-time data files (e.g. /usr/share/vlc).
 
 .TP
+.B VLC_LIB_PATH
+The directory containing VLC binary folder, which is used for the dynamically
+loaded libraries and architecture-dependant executables (e.g. /usr/lib/).
+
+.TP
 .B VLC_PLUGIN_PATH
 An extra directory to load VLC plugins from.
+
+.TP
+.B VLC_USERDATA_PATH
+The directory where the userdata will be stored (e.g. ~/.local/share/).
 
 .TP
 .B VLC_VERBOSE

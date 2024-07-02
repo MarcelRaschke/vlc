@@ -143,7 +143,7 @@ static int Open (filter_t *filter)
 
     switch (filter->fmt_out.video.i_chroma)
     {
-        case VLC_CODEC_RGB16:
+        case VLC_CODEC_RGB565LE:
             switch (filter->fmt_in.video.i_chroma)
             {
                 case VLC_CODEC_I420:
@@ -154,11 +154,7 @@ static int Open (filter_t *filter)
             }
             break;
 
-        case VLC_CODEC_RGB32:
-            if(        filter->fmt_out.video.i_rmask != 0x000000ff
-                    || filter->fmt_out.video.i_gmask != 0x0000ff00
-                    || filter->fmt_out.video.i_bmask != 0x00ff0000 )
-                return VLC_EGENERIC;
+        case VLC_CODEC_XBGR:
 
             switch (filter->fmt_in.video.i_chroma)
             {

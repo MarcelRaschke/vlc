@@ -21,6 +21,7 @@
  *****************************************************************************/
 
 #include <vlc_es.h>
+#include <vlc_threads.h>
 
 /*****************************************************************************
  * OMX macros
@@ -190,22 +191,9 @@ void PrintOmxEvent(vlc_object_t *p_this, OMX_EVENTTYPE event, OMX_U32 data_1,
 /*****************************************************************************
  * Picture utility functions
  *****************************************************************************/
-typedef struct ArchitectureSpecificCopyData
-{
-    void *data;
-} ArchitectureSpecificCopyData;
-
-void ArchitectureSpecificCopyHooks( decoder_t *p_dec, int i_color_format,
-                                    int i_slice_height, int i_src_stride,
-                                    ArchitectureSpecificCopyData *p_architecture_specific );
-
-void ArchitectureSpecificCopyHooksDestroy( int i_color_format,
-                                           ArchitectureSpecificCopyData *p_architecture_specific );
-
 void CopyOmxPicture( int i_color_format, picture_t *p_pic,
                      int i_slice_height,
-                     int i_src_stride, uint8_t *p_src, int i_chroma_div,
-                     ArchitectureSpecificCopyData *p_architecture_specific );
+                     int i_src_stride, uint8_t *p_src, int i_chroma_div );
 
 void CopyVlcPicture( decoder_t *, OMX_BUFFERHEADERTYPE *, picture_t * );
 
@@ -237,23 +225,14 @@ int OMXCodec_GetQuirks( enum es_format_category_e i_cat, vlc_fourcc_t i_codec,
 /*****************************************************************************
  * fourcc -> omx id mapping
  *****************************************************************************/
-int GetOmxVideoFormat( vlc_fourcc_t i_fourcc,
-                       OMX_VIDEO_CODINGTYPE *pi_omx_codec,
-                       const char **ppsz_name );
-int GetVlcVideoFormat( OMX_VIDEO_CODINGTYPE i_omx_codec,
-                       vlc_fourcc_t *pi_fourcc, const char **ppsz_name );
-int GetOmxAudioFormat( vlc_fourcc_t i_fourcc,
-                       OMX_AUDIO_CODINGTYPE *pi_omx_codec,
-                       const char **ppsz_name );
-int OmxToVlcAudioFormat( OMX_AUDIO_CODINGTYPE i_omx_codec,
-                       vlc_fourcc_t *pi_fourcc, const char **ppsz_name );
-const char *GetOmxRole( vlc_fourcc_t i_fourcc, enum es_format_category_e i_cat,
+OMX_VIDEO_CODINGTYPE GetOmxVideoFormat( const es_format_t * );
+vlc_fourcc_t GetVlcVideoFormat( OMX_VIDEO_CODINGTYPE i_omx_codec );
+OMX_AUDIO_CODINGTYPE GetOmxAudioFormat( vlc_fourcc_t i_fourcc );
+vlc_fourcc_t OmxToVlcAudioFormat( OMX_AUDIO_CODINGTYPE i_omx_codec );
+const char *GetOmxRole( const es_format_t *,
                         bool b_enc );
-int GetOmxChromaFormat( vlc_fourcc_t i_fourcc,
-                        OMX_COLOR_FORMATTYPE *pi_omx_codec,
-                        const char **ppsz_name );
-int GetVlcChromaFormat( OMX_COLOR_FORMATTYPE i_omx_codec,
-                        vlc_fourcc_t *pi_fourcc, const char **ppsz_name );
+OMX_COLOR_FORMATTYPE GetOmxChromaFormat( vlc_fourcc_t i_fourcc );
+vlc_fourcc_t GetVlcChromaFormat( OMX_COLOR_FORMATTYPE i_omx_codec );
 int GetVlcChromaSizes( vlc_fourcc_t i_fourcc,
                        unsigned int width, unsigned int height,
                        unsigned int *size, unsigned int *pitch,
@@ -284,6 +263,4 @@ unsigned int GetAudioParamSize(OMX_INDEXTYPE index);
 /*****************************************************************************
  * H264 specific code
  *****************************************************************************/
-size_t convert_omx_to_profile_idc(OMX_VIDEO_AVCPROFILETYPE profile_type);
-
-size_t convert_omx_to_level_idc(OMX_VIDEO_AVCLEVELTYPE level_type);
+int convert_omx_to_profile_idc(vlc_fourcc_t codec, int profile_type);

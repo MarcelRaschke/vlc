@@ -29,22 +29,16 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_vout_display.h>
+#include <vlc_subpicture.h>
 
 #include <vlc_vector.h>
 #include <vlc_opengl.h>
 #include "utils.h"
 #include "../opengl/gl_api.h"
 #include "../opengl/sub_renderer.h"
-
-struct sub_region
-{
-    int x;
-    int y;
-    unsigned int width;
-    unsigned int height;
-};
 
 struct subpicture
 {
@@ -53,13 +47,12 @@ struct subpicture
     struct vlc_gl_api api;
     struct vlc_gl_interop *interop;
     struct vlc_gl_sub_renderer *renderer;
-    vout_display_place_t place;
     bool place_changed;
     bool is_dirty;
     bool clear;
 
     int64_t last_order;
-    struct VLC_VECTOR(struct sub_region) regions;
+    struct VLC_VECTOR(vout_display_place_t) regions;
 
     struct {
         PFNGLFLUSHPROC Flush;
@@ -74,15 +67,6 @@ struct sys
     struct subpicture sub;
 };
 
-static void FlipVerticalAlign(struct vout_display_placement *dp)
-{
-    /* Reverse vertical alignment as the GL tex are Y inverted */
-    if (dp->align.vertical == VLC_VIDEO_ALIGN_TOP)
-        dp->align.vertical = VLC_VIDEO_ALIGN_BOTTOM;
-    else if (dp->align.vertical == VLC_VIDEO_ALIGN_BOTTOM)
-        dp->align.vertical = VLC_VIDEO_ALIGN_TOP;
-}
-
 static int subpicture_Control(vout_display_t *vd, int query)
 {
     struct sys *sys = vd->sys;
@@ -91,15 +75,11 @@ static int subpicture_Control(vout_display_t *vd, int query)
     switch (query)
     {
     case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
-    case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
-    case VOUT_DISPLAY_CHANGE_ZOOM:
+        vlc_gl_Resize(sub->gl, vd->cfg->display.width, vd->cfg->display.height);
+        // fallthrough
+    case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
     {
-        struct vout_display_placement dp = vd->cfg->display;
-
-        FlipVerticalAlign(&dp);
-        vout_display_PlacePicture(&sub->place, vd->source, &dp);
         sub->place_changed = true;
-        vlc_gl_Resize(sub->gl, dp.width, dp.height);
         return VLC_SUCCESS;
     }
 
@@ -112,7 +92,8 @@ static int subpicture_Control(vout_display_t *vd, int query)
     return VLC_EGENERIC;
 }
 
-static bool subpicture_NeedDraw(vout_display_t *vd, subpicture_t *subpicture)
+static bool subpicture_NeedDraw(vout_display_t *vd,
+                                const vlc_render_subpicture *subpicture)
 {
     struct sys *sys = vd->sys;
     struct subpicture *sub = &sys->sub;
@@ -128,10 +109,8 @@ static bool subpicture_NeedDraw(vout_display_t *vd, subpicture_t *subpicture)
 
     sub->clear = true;
 
-    size_t count = 0;
-    for (subpicture_region_t *r = subpicture->p_region;
-         r != NULL; r = r->p_next)
-        count++;
+    size_t count = subpicture->regions.size;
+    const struct subpicture_region_rendered *r;
 
     if (subpicture->i_order != sub->last_order)
     {
@@ -145,13 +124,10 @@ static bool subpicture_NeedDraw(vout_display_t *vd, subpicture_t *subpicture)
     if (count == sub->regions.size)
     {
         size_t i = 0;
-        for (subpicture_region_t *r = subpicture->p_region;
-             r != NULL; r = r->p_next)
+        vlc_vector_foreach(r, &subpicture->regions)
         {
-            struct sub_region *cmp = &sub->regions.data[i++];
-            if (cmp->x != r->i_x || cmp->y != r->i_y
-             || cmp->width != r->fmt.i_visible_width
-             || cmp->height != r->fmt.i_visible_height)
+            vout_display_place_t *cmp = &sub->regions.data[i++];
+            if (!vout_display_PlaceEquals(cmp, &r->place))
             {
                 /* Subpicture regions are different */
                 draw = true;
@@ -176,16 +152,9 @@ end:
 
     sub->regions.size = 0;
 
-    for (subpicture_region_t *r = subpicture->p_region;
-         r != NULL; r = r->p_next)
+    vlc_vector_foreach(r, &subpicture->regions)
     {
-        struct sub_region reg = {
-            .x = r->i_x,
-            .y = r->i_y,
-            .width = r->fmt.i_visible_width,
-            .height = r->fmt.i_visible_height,
-        };
-        bool res = vlc_vector_push(&sub->regions, reg);
+        bool res = vlc_vector_push(&sub->regions, r->place);
         /* Already checked with vlc_vector_reserve */
         assert(res); (void) res;
     }
@@ -193,7 +162,7 @@ end:
     return true;
 }
 
-static void subpicture_Prepare(vout_display_t *vd, subpicture_t *subpicture)
+static void subpicture_Prepare(vout_display_t *vd, const vlc_render_subpicture *subpicture)
 {
     struct sys *sys = vd->sys;
     struct subpicture *sub = &sys->sub;
@@ -217,8 +186,8 @@ static void subpicture_Prepare(vout_display_t *vd, subpicture_t *subpicture)
 
     if (sub->place_changed)
     {
-        sub->api.vt.Viewport(sub->place.x, sub->place.y,
-                             sub->place.width, sub->place.height);
+        sub->api.vt.Viewport(0, 0,
+                             vd->cfg->display.width, vd->cfg->display.height);
         sub->place_changed = false;
     }
 
@@ -246,7 +215,15 @@ static void subpicture_CloseDisplay(vout_display_t *vd)
     struct sys *sys = vd->sys;
     struct subpicture *sub = &sys->sub;
 
-    vlc_gl_MakeCurrent(sub->gl);
+    int ret = vlc_gl_MakeCurrent(sub->gl);
+
+    if (ret == 0)
+    {
+        /* Clear the surface */
+        sub->api.vt.ClearColor(0.f, 0.f, 0.f, 0.f);
+        sub->api.vt.Clear(GL_COLOR_BUFFER_BIT);
+        vlc_gl_Swap(sub->gl);
+    }
 
     vlc_gl_sub_renderer_Delete(sub->renderer);
     vlc_gl_interop_Delete(sub->interop);
@@ -326,11 +303,8 @@ static int subpicture_OpenDisplay(vout_display_t *vd)
         goto disable_win;
 
     /* Initialize and configure subpicture renderer/interop */
-    struct vout_display_placement dp = vd->cfg->display;
-    FlipVerticalAlign(&dp);
-    vout_display_PlacePicture(&sub->place, vd->source, &dp);
     sub->place_changed = true;
-    vlc_gl_Resize(sub->gl, dp.width, dp.height);
+    vlc_gl_Resize(sub->gl, vd->cfg->display.width, vd->cfg->display.height);
 
     if (vlc_gl_MakeCurrent(sub->gl))
         goto delete_gl;
@@ -379,22 +353,13 @@ delete_win:
 }
 
 static void Prepare(vout_display_t *vd, picture_t *picture,
-                    subpicture_t *subpicture, vlc_tick_t date)
+                    const vlc_render_subpicture *subpicture, vlc_tick_t date)
 {
     struct sys *sys = vd->sys;
 
     assert(picture->context);
     if (sys->avctx->render_ts != NULL)
-    {
-        vlc_tick_t now = vlc_tick_now();
-        if (date > now)
-        {
-            if (date - now <= VLC_TICK_FROM_SEC(1))
-                sys->avctx->render_ts(picture->context, date);
-            else /* The picture will be displayed from the Display callback */
-                msg_Warn(vd, "picture way too early to release at time");
-        }
-    }
+        sys->avctx->render_ts(picture->context, date);
 
     if (sys->sub.window != NULL)
         subpicture_Prepare(vd, subpicture);
@@ -456,8 +421,7 @@ static int Control(vout_display_t *vd, int query)
                                                   vd->cfg->display.height);
         return VLC_SUCCESS;
     }
-    case VOUT_DISPLAY_CHANGE_ZOOM:
-    case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
+    case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
         return VLC_SUCCESS;
     default:
         msg_Warn(vd, "Unknown request in android-display: %d", query);
@@ -481,9 +445,12 @@ static int Open(vout_display_t *vd,
                 video_format_t *fmtp, vlc_video_context *context)
 {
     vlc_window_t *embed = vd->cfg->window;
+    AWindowHandler *awh = embed->display.anativewindow;
+
     if (embed->type != VLC_WINDOW_TYPE_ANDROID_NATIVE
      || fmtp->i_chroma != VLC_CODEC_ANDROID_OPAQUE
-     || context == NULL)
+     || context == NULL
+     || !AWindowHandler_canSetVideoLayout(awh))
         return VLC_EGENERIC;
 
     if (!vd->obj.force && fmtp->projection_mode != PROJECTION_MODE_RECTANGULAR)
@@ -499,7 +466,7 @@ static int Open(vout_display_t *vd,
 
     video_format_ApplyRotation(&sys->fmt, fmtp);
 
-    sys->awh = embed->display.anativewindow;
+    sys->awh = awh;
     sys->avctx = vlc_video_context_GetPrivate(context, VLC_VIDEO_CONTEXT_AWINDOW);
     assert(sys->avctx);
     if (sys->avctx->texture != NULL)
@@ -509,13 +476,23 @@ static int Open(vout_display_t *vd,
         return VLC_EGENERIC;
     }
 
-    int ret = subpicture_OpenDisplay(vd);
-    if (ret != 0 && !vd->obj.force)
+    const bool has_subtitle_surface =
+        AWindowHandler_getANativeWindow(sys->awh, AWindow_Subtitles) != NULL;
+    if (has_subtitle_surface)
     {
-        msg_Warn(vd, "cannot blend subtitle with an opaque surface, "
-                     "trying next vout");
-        free(sys);
-        return VLC_EGENERIC;
+        int ret = subpicture_OpenDisplay(vd);
+        if (ret != 0 && !vd->obj.force)
+        {
+            msg_Warn(vd, "cannot blend subtitle with an opaque surface, "
+                         "trying next vout");
+            free(sys);
+            return VLC_EGENERIC;
+        }
+    }
+    else
+    {
+        msg_Warn(vd, "using android display without subtitles support");
+        sys->sub.window = NULL;
     }
 
     video_format_t rot_fmt;

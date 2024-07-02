@@ -28,7 +28,7 @@
 #include <vlc_common.h>
 
 #include "../libvlc.h"
-#include "config/configuration.h"
+#include "../config/configuration.h"
 
 #include <unistd.h>
 #include <pwd.h>
@@ -265,7 +265,7 @@ static char *config_GetTypeDir (const char *xdg_name)
 }
 
 
-char *config_GetUserDir (vlc_userdir_t type)
+char *platform_GetUserDir (vlc_userdir_t type)
 {
     switch (type)
     {
@@ -290,6 +290,7 @@ char *config_GetUserDir (vlc_userdir_t type)
             return config_GetTypeDir ("DOCUMENTS");
         case VLC_MUSIC_DIR:
             return config_GetTypeDir ("MUSIC");
+        case VLC_SNAPSHOTS_DIR:
         case VLC_PICTURES_DIR:
             return config_GetTypeDir ("PICTURES");
         case VLC_VIDEOS_DIR:

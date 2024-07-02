@@ -32,6 +32,8 @@
 #include <stdatomic.h>
 #endif
 
+#include <vlc_tick.h>
+
 /**
  * \ingroup os
  * \defgroup thread Threads and synchronization primitives
@@ -62,18 +64,6 @@ typedef struct vlc_thread *vlc_thread_t;
 typedef struct vlc_threadvar *vlc_threadvar_t;
 typedef struct vlc_timer *vlc_timer_t;
 
-static inline int vlc_poll(struct pollfd *fds, unsigned nfds, int timeout)
-{
-    int val;
-
-    vlc_testcancel();
-    val = poll(fds, nfds, timeout);
-    if (val < 0)
-        vlc_testcancel();
-    return val;
-}
-# define poll(u,n,t) vlc_poll(u, n, t)
-
 #elif defined (__OS2__)
 # include <errno.h>
 
@@ -85,26 +75,6 @@ typedef struct vlc_timer *vlc_timer_t;
 
 # define pthread_sigmask  sigprocmask
 
-static inline int vlc_poll (struct pollfd *fds, unsigned nfds, int timeout)
-{
-    static int (*vlc_poll_os2)(struct pollfd *, unsigned, int) = NULL;
-
-    if (!vlc_poll_os2)
-    {
-        HMODULE hmod;
-        CHAR szFailed[CCHMAXPATH];
-
-        if (DosLoadModule(szFailed, sizeof(szFailed), "vlccore", &hmod))
-            return -1;
-
-        if (DosQueryProcAddr(hmod, 0, "_vlc_poll_os2", (PFN *)&vlc_poll_os2))
-            return -1;
-    }
-
-    return (*vlc_poll_os2)(fds, nfds, timeout);
-}
-# define poll(u,n,t) vlc_poll(u, n, t)
-
 #elif defined (__ANDROID__)      /* pthreads subset without pthread_cancel() */
 # include <unistd.h>
 # include <pthread.h>
@@ -115,26 +85,6 @@ typedef struct vlc_thread *vlc_thread_t;
 #define VLC_THREAD_CANCELED ((void*) UINTPTR_MAX)
 typedef pthread_key_t   vlc_threadvar_t;
 typedef struct vlc_timer *vlc_timer_t;
-
-static inline int vlc_poll (struct pollfd *fds, unsigned nfds, int timeout)
-{
-    int val;
-
-    do
-    {
-        int ugly_timeout = ((unsigned)timeout >= 50) ? 50 : timeout;
-        if (timeout >= 0)
-            timeout -= ugly_timeout;
-
-        vlc_testcancel ();
-        val = poll (fds, nfds, ugly_timeout);
-    }
-    while (val == 0 && timeout != 0);
-
-    return val;
-}
-
-# define poll(u,n,t) vlc_poll(u, n, t)
 
 #else /* POSIX threads */
 # include <unistd.h> /* _POSIX_SPIN_LOCKS */
@@ -210,12 +160,12 @@ typedef struct
  * Static initializer for (static) mutex.
  *
  * \note This only works in C code.
- * In C++, consider using a global \ref vlc::threads::mutex instance instead.
+ * In C++, consider using a global ::vlc::threads::mutex instance instead.
  */
 #define VLC_STATIC_MUTEX { \
-    .value = ATOMIC_VAR_INIT(0), \
-    .recursion = ATOMIC_VAR_INIT(0), \
-    .owner = ATOMIC_VAR_INIT(0), \
+    .value = 0, \
+    .recursion = 0, \
+    .owner = 0, \
 }
 
 /**
@@ -396,8 +346,6 @@ VLC_API void vlc_cond_wait(vlc_cond_t *cond, vlc_mutex_t *mutex);
 VLC_API int vlc_cond_timedwait(vlc_cond_t *cond, vlc_mutex_t *mutex,
                                vlc_tick_t deadline);
 
-int vlc_cond_timedwait_daytime(vlc_cond_t *, vlc_mutex_t *, time_t);
-
 /** @} */
 
 /**
@@ -428,9 +376,10 @@ typedef struct
 /**
  * Initializes a semaphore.
  *
+ * @param sem a semaphore to initialize
  * @param count initial semaphore value (typically 0)
  */
-VLC_API void vlc_sem_init(vlc_sem_t *, unsigned count);
+VLC_API void vlc_sem_init(vlc_sem_t *sem, unsigned count);
 
 /**
  * Increments the value of a semaphore.
@@ -502,9 +451,10 @@ typedef struct
 /**
  * Initializes a latch.
  *
+ * @param latch a latch instance
  * @param value initial latch value (typically 1)
  */
-VLC_API void vlc_latch_init(vlc_latch_t *, size_t value);
+VLC_API void vlc_latch_init(vlc_latch_t *latch, size_t value);
 
 /**
  * Decrements the value of a latch.
@@ -516,11 +466,12 @@ VLC_API void vlc_latch_init(vlc_latch_t *, size_t value);
  * \warning If the result is (arithmetically) strictly negative, the behaviour
  * is undefined.
  *
+ * \param latch an initialized latch
  * \param n quantity to subtract from the latch value (typically 1)
  *
  * \note This function is not a cancellation point.
  */
-VLC_API void vlc_latch_count_down(vlc_latch_t *, size_t n);
+VLC_API void vlc_latch_count_down(vlc_latch_t *latch, size_t n);
 
 /**
  * Decrements the value of a latch and waits on it.
@@ -534,11 +485,12 @@ VLC_API void vlc_latch_count_down(vlc_latch_t *, size_t n);
  *
  * \warning If the result is strictly negative, the behaviour is undefined.
  *
- * @param n number of times to decrement the value (typically 1)
+ * \param latch an initialized latch
+ * \param n number of times to decrement the value (typically 1)
  *
  * \note This function may be a cancellation point.
  */
-VLC_API void vlc_latch_count_down_and_wait(vlc_latch_t *, size_t n);
+VLC_API void vlc_latch_count_down_and_wait(vlc_latch_t *latch, size_t n);
 
 /**
  * Checks if a latch is ready.
@@ -561,50 +513,6 @@ VLC_API void vlc_latch_wait(vlc_latch_t *);
 
 /** @} */
 
-/*
- * Queued mutex
- *
- * A queued mutex is a type of thread-safe mutual exclusion lock that is
- * acquired in strict FIFO order.
- *
- * In most cases, a regular mutex (\ref vlc_mutex_t) should be used instead.
- * There are important differences:
- * - A queued mutex is generally slower, especially on the fast path.
- * - A queued mutex cannot be combined with a condition variable.
- *   Indeed, the scheduling policy of the condition variable would typically
- *   conflict with that of the queued mutex, leading to a dead lock.
- * - The try-lock operation is not implemented.
- */
-typedef struct {
-    atomic_uint head;
-    atomic_uint tail;
-    atomic_ulong owner;
-} vlc_queuedmutex_t;
-
-#define VLC_STATIC_QUEUEDMUTEX { ATOMIC_VAR_INIT(0), ATOMIC_VAR_INIT(0), ATOMIC_VAR_INIT(0) }
-
-void vlc_queuedmutex_init(vlc_queuedmutex_t *m);
-
-void vlc_queuedmutex_lock(vlc_queuedmutex_t *m);
-
-void vlc_queuedmutex_unlock(vlc_queuedmutex_t *m);
-
-/**
- * Checks if a queued mutex is locked.
- *
- * This function checks if the calling thread holds a given queued mutual
- * exclusion lock. It has no side effects and is essentially intended for
- * run-time debugging.
- *
- * @note To assert that the calling thread holds a lock, the helper macro
- * vlc_queuedmutex_assert() should be used instead of this function.
- *
- * @retval false the mutex is not locked by the calling thread
- * @retval true the mutex is locked by the calling thread
- */
-bool vlc_queuedmutex_held(vlc_queuedmutex_t *m);
-
-#define vlc_queuedmutex_assert(m) assert(vlc_queuedmutex_held(m))
 /**
  * One-time initialization.
  *
@@ -619,7 +527,7 @@ typedef struct
 /**
  * Static initializer for one-time initialization.
  */
-#define VLC_STATIC_ONCE { ATOMIC_VAR_INIT(0) }
+#define VLC_STATIC_ONCE { 0 }
 
 /**
  * Begins a one-time initialization.

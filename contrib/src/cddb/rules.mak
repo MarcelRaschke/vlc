@@ -18,17 +18,20 @@ $(TARBALLS)/libcddb-$(CDDB_VERSION).tar.bz2:
 
 cddb: libcddb-$(CDDB_VERSION).tar.bz2 .sum-cddb
 	$(UNPACK)
+	# $(call update_autoconfig,.)
 	$(APPLY) $(SRC)/cddb/cross.patch
 	$(APPLY) $(SRC)/cddb/getenv-crash.patch
 	$(APPLY) $(SRC)/cddb/cddb-no-alarm.patch
 	$(APPLY) $(SRC)/cddb/fix-header-guards.patch
 	$(APPLY) $(SRC)/cddb/no-gettext.patch
-ifdef HAVE_WIN32
-	$(APPLY) $(SRC)/cddb/win32-pkg.patch
-endif
+	# Avoid relying on iconv.m4 from gettext, when reconfiguring.
+	# This is only used by the frontend which we disable.
+	sed -i.orig 's/^AM_ICONV/#&/' $(UNPACK_DIR)/configure.ac
+	# add internal dependencies
+	sed -i.orig 's/-lcddb @LIBICONV@/-lcddb @LIBICONV@ @LIBS@/' $(UNPACK_DIR)/libcddb.pc.in
 	$(MOVE)
 
-DEPS_cddb = regex $(DEPS_regex) gettext $(DEPS_gettext)
+DEPS_cddb = regex $(DEPS_regex)
 
 CDDB_CONF := --without-iconv
 

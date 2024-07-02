@@ -29,14 +29,84 @@
 #include "hxxx_nal.h"
 #include "hxxx_ep3b.h"
 
-bool h264_decode_slice( const uint8_t *p_buffer, size_t i_buffer,
-                        void (* get_sps_pps)(uint8_t, void *,
+struct h264_slice_s
+{
+    int i_nal_type;
+    int i_nal_ref_idc;
+
+    int type;
+    int i_pic_parameter_set_id;
+    unsigned i_frame_num;
+
+    int i_field_pic_flag;
+    int i_bottom_field_flag;
+
+    int i_idr_pic_id;
+
+    int i_pic_order_cnt_type;
+    int i_pic_order_cnt_lsb;
+    int i_delta_pic_order_cnt_bottom;
+
+    int i_delta_pic_order_cnt0;
+    int i_delta_pic_order_cnt1;
+
+    bool no_output_of_prior_pics_flag;
+    bool has_mmco5;
+};
+
+enum h264_slice_type_e h264_get_slice_type( const h264_slice_t *p_slice )
+{
+    return p_slice->type;
+}
+
+bool h264_has_mmco5( const h264_slice_t *p_slice )
+{
+    return p_slice->has_mmco5;
+}
+
+bool h264_is_field_pic( const h264_slice_t *p_slice )
+{
+    return p_slice->i_field_pic_flag;
+}
+
+int h264_get_slice_pps_id( const h264_slice_t *p_slice )
+{
+    return p_slice->i_pic_parameter_set_id;
+}
+
+unsigned h264_get_frame_num( const h264_slice_t *p_slice )
+{
+    return p_slice->i_frame_num;
+}
+
+unsigned h264_get_nal_ref_idc( const h264_slice_t *p_slice )
+{
+    return p_slice->i_nal_ref_idc;
+}
+
+void h264_slice_release( h264_slice_t *p_slice )
+{
+    free( p_slice );
+}
+
+void h264_slice_copy_idr_id( const h264_slice_t *src, h264_slice_t *dst )
+{
+    if( !src || src->i_nal_type != H264_NAL_SLICE_IDR ) /* value only set on IDR */
+        return;
+    dst->i_idr_pic_id = src->i_idr_pic_id;
+}
+
+h264_slice_t * h264_decode_slice( const uint8_t *p_buffer, size_t i_buffer,
+                                  void (* get_sps_pps)(uint8_t, void *,
                                              const h264_sequence_parameter_set_t **,
                                              const h264_picture_parameter_set_t ** ),
-                        void *priv, h264_slice_t *p_slice )
+                                  void *priv )
 {
+    h264_slice_t *p_slice = calloc( 1, sizeof(*p_slice) );
+    if( !p_slice )
+        return NULL;
+
     int i_slice_type;
-    h264_slice_init( p_slice );
     bs_t s;
     struct hxxx_bsfw_ep3b_ctx_s bsctx;
     hxxx_bsfw_ep3b_ctx_init( &bsctx );
@@ -52,6 +122,8 @@ bool h264_decode_slice( const uint8_t *p_buffer, size_t i_buffer,
 
     /* slice_type */
     i_slice_type = bs_read_ue( &s );
+    if( i_slice_type > 9 )
+        goto error;
     p_slice->type = i_slice_type % 5;
 
     /* */
@@ -60,7 +132,7 @@ bool h264_decode_slice( const uint8_t *p_buffer, size_t i_buffer,
 
     p_slice->i_pic_parameter_set_id = bs_read_ue( &s );
     if( p_slice->i_pic_parameter_set_id > H264_PPS_ID_MAX )
-        return false;
+        goto error;
 
     const h264_sequence_parameter_set_t *p_sps;
     const h264_picture_parameter_set_t *p_pps;
@@ -68,7 +140,7 @@ bool h264_decode_slice( const uint8_t *p_buffer, size_t i_buffer,
     /* Bind matched/referred PPS and SPS */
     get_sps_pps( p_slice->i_pic_parameter_set_id, priv, &p_sps, &p_pps );
     if( !p_sps || !p_pps )
-        return false;
+        goto error;
 
     p_slice->i_frame_num = bs_read( &s, p_sps->i_log2_max_frame_num + 4 );
 
@@ -81,7 +153,11 @@ bool h264_decode_slice( const uint8_t *p_buffer, size_t i_buffer,
     }
 
     if( p_slice->i_nal_type == H264_NAL_SLICE_IDR )
+    {
         p_slice->i_idr_pic_id = bs_read_ue( &s );
+        if( p_slice->i_idr_pic_id > 65535 )
+            goto error;
+    }
 
     p_slice->i_pic_order_cnt_type = p_sps->i_pic_order_cnt_type;
     if( p_sps->i_pic_order_cnt_type == 0 )
@@ -122,7 +198,7 @@ bool h264_decode_slice( const uint8_t *p_buffer, size_t i_buffer,
     {
         /* Early END, don't waste parsing below */
         p_slice->has_mmco5 = false;
-        return true;
+        return p_slice;
     }
 
     /* ref_pic_list_[mvc_]modification() */
@@ -149,7 +225,7 @@ bool h264_decode_slice( const uint8_t *p_buffer, size_t i_buffer,
     }
 
     if( bs_error( &s ) )
-        return false;
+        goto error;
 
     /* pred_weight_table() */
     if( ( p_pps->weighted_pred_flag && ( i_slice_type == 0 || i_slice_type == 5 || /* P, SP */
@@ -185,7 +261,12 @@ bool h264_decode_slice( const uint8_t *p_buffer, size_t i_buffer,
     }
 
     /* dec_ref_pic_marking() */
-    if( p_slice->i_nal_type != 5 ) /* IdrFlag */
+    if( p_slice->i_nal_type == 5 ) /* IdrFlag */
+    {
+        p_slice->no_output_of_prior_pics_flag = bs_read1( &s );
+        bs_skip( &s, 1 ); /* long_term_reference_flag */
+    }
+    else
     {
         if( bs_read1( &s ) ) /* adaptive_ref_pic_marking_mode_flag */
         {
@@ -193,6 +274,8 @@ bool h264_decode_slice( const uint8_t *p_buffer, size_t i_buffer,
             do
             {
                 mmco = bs_read_ue( &s );
+                if( mmco > 6 )
+                    goto error;
                 if( mmco == 1 || mmco == 3 )
                     bs_read_ue( &s ); /* diff_pics_minus1 */
                 if( mmco == 2 )
@@ -213,7 +296,13 @@ bool h264_decode_slice( const uint8_t *p_buffer, size_t i_buffer,
 
     /* If you need to store anything else than MMCO presence above, care of "Early END" cases */
 
-    return !bs_error( &s );
+    if(bs_error( &s ))
+        goto error;
+    return p_slice;
+
+error:
+    h264_slice_release( p_slice );
+    return NULL;
 }
 
 
@@ -377,4 +466,50 @@ uint8_t h264_get_num_ts( const h264_sequence_parameter_set_t *p_sps,
     /* !WARN modified with nuit field based multiplier for values 0, 7 and 8 */
     const uint8_t rgi_numclock[9] = { 2, 1, 1, 2, 2, 3, 3, 4, 6 };
     return rgi_numclock[ i_pic_struct ];
+}
+
+bool h264_slice_top_field( const h264_slice_t *p_slice )
+{
+    return !p_slice->i_bottom_field_flag;
+}
+
+bool h264_IsFirstVCLNALUnit( const h264_slice_t *p_prev, const h264_slice_t *p_cur )
+{
+    /* Detection of the first VCL NAL unit of a primary coded picture
+     * (cf. 7.4.1.2.4) */
+    if( !p_prev )
+        return true;
+    if( p_cur->i_frame_num != p_prev->i_frame_num ||
+        p_cur->i_pic_parameter_set_id != p_prev->i_pic_parameter_set_id ||
+        p_cur->i_field_pic_flag != p_prev->i_field_pic_flag ||
+        !p_cur->i_nal_ref_idc != !p_prev->i_nal_ref_idc )
+        return true;
+    if( p_cur->i_field_pic_flag && /* present in both and differs in value */
+        p_cur->i_bottom_field_flag != p_prev->i_bottom_field_flag )
+        return true;
+    if( p_cur->i_pic_order_cnt_type == p_prev->i_pic_order_cnt_type )
+    {
+        if( p_cur->i_pic_order_cnt_type == 0 &&
+            ( p_cur->i_pic_order_cnt_lsb != p_prev->i_pic_order_cnt_lsb ||
+             p_cur->i_delta_pic_order_cnt_bottom != p_prev->i_delta_pic_order_cnt_bottom ) )
+            return true;
+        else if( p_cur->i_pic_order_cnt_type == 1 &&
+                 ( p_cur->i_delta_pic_order_cnt0 != p_prev->i_delta_pic_order_cnt0 ||
+                  p_cur->i_delta_pic_order_cnt1 != p_prev->i_delta_pic_order_cnt1 ) )
+            return true;
+    }
+    if( ( p_cur->i_nal_type == H264_NAL_SLICE_IDR || p_prev->i_nal_type == H264_NAL_SLICE_IDR ) &&
+        ( p_cur->i_nal_type != p_prev->i_nal_type || p_cur->i_idr_pic_id != p_prev->i_idr_pic_id ) )
+        return true;
+    return false;
+}
+
+bool h264_CanSwapPTSWithDTS( const h264_slice_t *p_slice, const h264_sequence_parameter_set_t *p_sps )
+{
+    if( p_slice->i_nal_ref_idc == 0 && p_slice->type == H264_SLICE_TYPE_B )
+        return true;
+    else if( p_sps->vui_parameters_present_flag )
+        return p_sps->vui.i_max_num_reorder_frames == 0;
+    else
+        return p_sps->i_profile == PROFILE_H264_CAVLC_INTRA;
 }

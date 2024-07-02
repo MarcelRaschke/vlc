@@ -30,7 +30,9 @@
 #include "../../packetizer/h264_nal.h" /* h264_AnnexB_get_spspps */
 #include "../../packetizer/hxxx_nal.h"
 #include "../../packetizer/iso_color_tables.h"
+#include "../../codec/ttml/ttml.h"
 
+#include <vlc_arrays.h>
 #include <vlc_es.h>
 #include <vlc_iso_lang.h>
 #include <vlc_bits.h>
@@ -99,6 +101,7 @@ static void mp4mux_AddExtraBrandForFormat(mp4mux_handle_t *h, const es_format_t 
             mp4mux_AddExtraBrand(h, BRAND_iso6);
             break;
         case VLC_CODEC_MP3:
+        case VLC_CODEC_MP2:
         case VLC_CODEC_MPGA:
         case VLC_CODEC_MP4V:
         case VLC_CODEC_DIV1:
@@ -132,7 +135,9 @@ static bool mp4mux_trackinfo_Init(mp4mux_trackinfo_t *p_stream, unsigned i_id,
 static void mp4mux_trackinfo_Clear(mp4mux_trackinfo_t *p_stream)
 {
     es_format_Clean(&p_stream->fmt);
-    mp4mux_track_SetSamplePriv(p_stream, NULL, 0);
+    int ret = mp4mux_track_SetSamplePriv(p_stream, NULL, 0);
+    assert(ret == VLC_SUCCESS);
+
     free(p_stream->samples);
     free(p_stream->p_edits);
 }
@@ -283,6 +288,11 @@ uint32_t mp4mux_track_GetID(const mp4mux_trackinfo_t *t)
     return t->i_track_id;
 }
 
+void mp4mux_track_ChangeID(mp4mux_trackinfo_t *t, uint32_t id)
+{
+    t->i_track_id = id;
+}
+
 void mp4mux_track_SetInterlacing(mp4mux_trackinfo_t *t, enum mp4mux_interlacing i)
 {
     t->e_interlace = i;
@@ -293,8 +303,8 @@ enum mp4mux_interlacing mp4mux_track_GetInterlacing(const mp4mux_trackinfo_t *t)
     return t->e_interlace;
 }
 
-void mp4mux_track_SetSamplePriv(mp4mux_trackinfo_t *t,
-                                const uint8_t *p_data, size_t i_data)
+int mp4mux_track_SetSamplePriv(mp4mux_trackinfo_t *t,
+                               const uint8_t *p_data, size_t i_data)
 {
     if(t->sample_priv.p_data)
     {
@@ -306,12 +316,12 @@ void mp4mux_track_SetSamplePriv(mp4mux_trackinfo_t *t,
     if(p_data && i_data)
     {
         t->sample_priv.p_data = malloc(i_data);
-        if(i_data)
-        {
-            memcpy(t->sample_priv.p_data, p_data, i_data);
-            t->sample_priv.i_data = i_data;
-        }
+        if (t->sample_priv.p_data == NULL)
+            return VLC_ENOMEM;
+        memcpy(t->sample_priv.p_data, p_data, i_data);
+        t->sample_priv.i_data = i_data;
     }
+    return VLC_SUCCESS;
 }
 
 bool mp4mux_track_HasSamplePriv(const mp4mux_trackinfo_t *t)
@@ -541,35 +551,27 @@ static bo_t *GetEDTS( mp4mux_trackinfo_t *p_track, uint32_t i_movietimescale, bo
     return edts;
 }
 
-static bo_t *GetESDS(mp4mux_trackinfo_t *p_track)
+static bo_t *GetESDS(const mp4mux_trackinfo_t *p_track)
 {
     bo_t *esds;
-    const uint8_t *p_extradata = NULL;
-    int i_extradata = 0;
-    uint8_t *p_extradata_allocated = NULL;
+    const uint8_t *p_extradata = p_track->fmt.p_extra;
+    int i_extradata = p_track->fmt.i_extra;
+    uint32_t local_palette[ARRAY_SIZE(p_track->fmt.subs.spu.palette)];
 
     switch(p_track->fmt.i_codec)
     {
         case VLC_CODEC_SPU:
-            if(p_track->fmt.subs.spu.palette[0] == SPU_PALETTE_DEFINED)
+            if(p_track->fmt.subs.spu.b_palette)
             {
 #ifndef WORDS_BIGENDIAN
-                p_extradata = p_extradata_allocated = malloc(16*4);
-                if(p_extradata_allocated)
-                {
-                    for(int i=0; i<16; i++)
-                        SetDWBE(&p_extradata_allocated[i*4], p_track->fmt.subs.spu.palette[i+1]);
-                    i_extradata = 16*4;
-                }
+                for(size_t i=0; i<ARRAY_SIZE(p_track->fmt.subs.spu.palette); i++)
+                    SetDWBE(&local_palette[i], p_track->fmt.subs.spu.palette[i]);
+                p_extradata = (const uint8_t *) local_palette;
 #else
-                p_extradata = (const uint8_t *) &p_track->fmt.subs.spu.palette[1];
-                i_extradata = 16 * sizeof(p_track->fmt.subs.spu.palette[1]);
+                p_extradata = (const uint8_t *) p_track->fmt.subs.spu.palette;
 #endif
+                i_extradata = sizeof(p_track->fmt.subs.spu.palette);
             }
-            break;
-        default:
-            p_extradata = p_track->fmt.p_extra;
-            i_extradata = p_track->fmt.i_extra;
             break;
     }
 
@@ -579,7 +581,6 @@ static bo_t *GetESDS(mp4mux_trackinfo_t *p_track)
     esds = box_full_new("esds", 0, 0);
     if(!esds)
     {
-        free(p_extradata_allocated);
         return NULL;
     }
 
@@ -637,6 +638,7 @@ static bo_t *GetESDS(mp4mux_trackinfo_t *p_track)
         i_object_profile_indication = 0x40; /* Audio 14496-3 */
         break;
     case VLC_CODEC_MP3:
+    case VLC_CODEC_MP2:
     case VLC_CODEC_MPGA:
         i_object_profile_indication =
             p_track->fmt.audio.i_rate < 32000 ? 0x69 /* Audio 13818-3 */
@@ -682,8 +684,6 @@ static bo_t *GetESDS(mp4mux_trackinfo_t *p_track)
 
         for (int i = 0; i < i_extradata; i++)
             bo_add_8(esds, p_extradata[i]);
-
-        free(p_extradata_allocated);
     }
 
     /* SL_Descr mandatory */
@@ -1110,6 +1110,13 @@ static bo_t *GetSratBox(uint32_t i_sample_rate)
     return srat;
 }
 
+static void FillSampleDescBoxHeader(bo_t *bo, uint16_t reference_index)
+{
+    for (int i = 0; i < 6; i++)
+        bo_add_8(bo, 0); // reserved;
+    bo_add_16be(bo, reference_index);// data-reference-index
+}
+
 static bo_t *GetSounBox(vlc_object_t *p_obj, mp4mux_trackinfo_t *p_track, bool b_mov)
 {
     VLC_UNUSED(p_obj);
@@ -1181,6 +1188,7 @@ static bo_t *GetSounBox(vlc_object_t *p_obj, mp4mux_trackinfo_t *p_track, bool b
             } else b_descr = true;
             break;
         case VLC_CODEC_MPGA:
+        case VLC_CODEC_MP2:
         case VLC_CODEC_MP3:
             if (b_mov) {
                 /* mpeg audio in mov */
@@ -1254,9 +1262,7 @@ static bo_t *GetSounBox(vlc_object_t *p_obj, mp4mux_trackinfo_t *p_track, bool b
     bo_t *soun = box_new(fcc);
     if(!soun)
         return NULL;
-    for (int i = 0; i < 6; i++)
-        bo_add_8(soun, 0);        // reserved;
-    bo_add_16be(soun, 1);         // data-reference-index
+    FillSampleDescBoxHeader(soun, 1);
 
     /* SoundDescription */
     bo_add_16be(soun, i_qt_version);
@@ -1362,9 +1368,7 @@ static bo_t *GetVideBox(vlc_object_t *p_obj, mp4mux_trackinfo_t *p_track, bool b
     bo_t *vide = box_new(fcc);
     if(!vide)
         return NULL;
-    for (int i = 0; i < 6; i++)
-        bo_add_8(vide, 0);        // reserved;
-    bo_add_16be(vide, 1);         // data-reference-index
+    FillSampleDescBoxHeader(vide, 1);
 
     bo_add_16be(vide, 0);         // predefined;
     bo_add_16be(vide, 0);         // reserved;
@@ -1459,10 +1463,7 @@ static bo_t *GetTextBox(vlc_object_t *p_obj, mp4mux_trackinfo_t *p_track, bool b
         if(!text)
             return NULL;
 
-        /* Sample Entry Header */
-        for (int i = 0; i < 6; i++)
-            bo_add_8(text, 0);        // reserved;
-        bo_add_16be(text, 1);         // data-reference-index
+        FillSampleDescBoxHeader(text, 1);
 
         if(p_track->fmt.i_extra >= 44)
         {
@@ -1471,10 +1472,6 @@ static bo_t *GetTextBox(vlc_object_t *p_obj, mp4mux_trackinfo_t *p_track, bool b
         }
         else
         {
-            for (int i = 0; i < 6; i++)
-                bo_add_8(text, 0);        // reserved;
-            bo_add_16be(text, 1);         // data-reference-index
-
             bo_add_32be(text, 0);         // display flags
             bo_add_32be(text, 0);         // justification
             for (int i = 0; i < 3; i++)
@@ -1503,10 +1500,7 @@ static bo_t *GetTextBox(vlc_object_t *p_obj, mp4mux_trackinfo_t *p_track, bool b
         if(!tx3g)
             return NULL;
 
-        /* Sample Entry Header */
-        for (int i = 0; i < 6; i++)
-            bo_add_8(tx3g, 0);        // reserved;
-        bo_add_16be(tx3g, 1);         // data-reference-index
+        FillSampleDescBoxHeader(tx3g, 1);
 
         if(p_track->fmt.i_codec == VLC_CODEC_TX3G &&
            p_track->fmt.i_extra >= 32)
@@ -1561,10 +1555,7 @@ static bo_t *GetTextBox(vlc_object_t *p_obj, mp4mux_trackinfo_t *p_track, bool b
         if(!wvtt)
             return NULL;
 
-        /* Sample Entry Header */
-        for (int i = 0; i < 6; i++)
-            bo_add_8(wvtt, 0);        // reserved;
-        bo_add_16be(wvtt, 1);         // data-reference-index
+        FillSampleDescBoxHeader(wvtt, 1);
 
         bo_t *ftab = box_new("vttc");
         box_gather(wvtt, ftab);
@@ -1577,10 +1568,13 @@ static bo_t *GetTextBox(vlc_object_t *p_obj, mp4mux_trackinfo_t *p_track, bool b
         if(!stpp)
             return NULL;
 
-        /* Sample Entry Header */
-        for (int i = 0; i < 6; i++)
-            bo_add_8(stpp, 0);        // reserved;
-        bo_add_16be(stpp, 1);         // data-reference-index
+        FillSampleDescBoxHeader(stpp, 1);
+
+        bo_add_mem(stpp, sizeof(TT_NS)-1, TT_NS);
+        bo_add_8(stpp, ' ');
+        bo_add_mem(stpp, sizeof(TT_NS_STYLING), TT_NS_STYLING);
+        bo_add_8(stpp, '\0'); // schema
+        bo_add_8(stpp, '\0'); // ext-mime
 
         return stpp;
     }
@@ -2322,9 +2316,9 @@ bool mp4mux_CanMux(vlc_object_t *p_obj, const es_format_t *p_fmt,
     case VLC_CODEC_A52:
     case VLC_CODEC_DTS:
     case VLC_CODEC_EAC3:
-    case VLC_CODEC_MP4A:
     case VLC_CODEC_MP4V:
     case VLC_CODEC_MPGA:
+    case VLC_CODEC_MP2:
     case VLC_CODEC_MP3:
     case VLC_CODEC_MPGV:
     case VLC_CODEC_MP2V:
@@ -2348,9 +2342,29 @@ bool mp4mux_CanMux(vlc_object_t *p_obj, const es_format_t *p_fmt,
     case VLC_CODEC_WMAP:
     case VLC_CODEC_AV1:
         break;
+    case VLC_CODEC_MP4A:
+        if(!p_fmt->i_extra)
+        {
+            if(p_obj)
+                msg_Err(p_obj, "Missing AudioDescriptor for AAC");
+            return false;
+        }
+        break;
     case VLC_CODEC_H264:
-        if(!p_fmt->i_extra && p_obj)
+        if(p_fmt->i_extra)
+        {
+            /* we only accept annexB for now */
+            if(((const uint8_t*)p_fmt->p_extra)[0] == 0x01)
+            {
+                if(p_obj)
+                    msg_Err(p_obj, "H264 input is not annexB. Missing packetizer ?");
+                return false;
+            }
+        }
+        else if(p_obj)
+        {
             msg_Warn(p_obj, "H264 muxing from AnnexB source will set an incorrect default profile");
+        }
         break;
     case VLC_CODEC_HEVC:
         if(!p_fmt->i_extra)
@@ -2367,9 +2381,7 @@ bool mp4mux_CanMux(vlc_object_t *p_obj, const es_format_t *p_fmt,
             msg_Warn(p_obj, "subtitle track added like in .mov (even when creating .mp4)");
         return !b_fragmented;
     case VLC_CODEC_TTML:
-        /* Special case with smooth headers where we need to force frag TTML */
-        /* TTML currently not supported in sout, until we can keep original timestamps */
-            return i_brand == BRAND_smoo;
+        return true;
     case VLC_CODEC_QTXT:
     case VLC_CODEC_TX3G:
     case VLC_CODEC_WEBVTT:

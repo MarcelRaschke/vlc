@@ -30,6 +30,8 @@
 #import "library/VLCInputItem.h"
 #import "windows/VLCDetachedAudioWindow.h"
 
+#import <vlc_configuration.h>
+
 @interface VLCStatusBarIcon ()
 {
     NSMenuItem *_vlcStatusBarMenuItem;
@@ -103,9 +105,9 @@
     // Set our selves up as delegate, to receive menuNeedsUpdate messages, so
     // we can update our menu as needed/before it's drawn
     [_vlcStatusBarIconMenu setDelegate:self];
-    
+
     // Register notifications
-    NSNotificationCenter *notificationCenter = [NSNotificationCenter defaultCenter];
+    NSNotificationCenter *notificationCenter = NSNotificationCenter.defaultCenter;
     [notificationCenter addObserver:self
                            selector:@selector(updateTimeAndPosition:)
                                name:VLCPlayerTimeAndPositionChanged
@@ -211,7 +213,7 @@
     }
 
     // Cleanup
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
 #pragma mark -
@@ -277,12 +279,12 @@
 
 - (void)hasPreviousChanged:(NSNotification *)aNotification
 {
-    backwardsButton.enabled = [[VLCMain sharedInstance] playlistController].hasPreviousPlaylistItem;
+    backwardsButton.enabled = VLCMain.sharedInstance.playlistController.hasPreviousPlaylistItem;
 }
 
 - (void)hasNextChanged:(NSNotification *)aNotification
 {
-    forwardButton.enabled = [[VLCMain sharedInstance] playlistController].hasNextPlaylistItem;
+    forwardButton.enabled = VLCMain.sharedInstance.playlistController.hasNextPlaylistItem;
 }
 
 /* Updates the Metadata for the currently
@@ -328,7 +330,7 @@
         title = inputItem.title;
         nowPlaying = inputItem.nowPlaying;
         artist = inputItem.artist;
-        album = inputItem.albumName;
+        album = inputItem.album;
     } else {
         /* Nothing playing */
         title = _NS("VLC media player");
@@ -371,7 +373,7 @@
 - (void)updateMenuItemRandom
 {
     // Get current random status
-    [randomButton setState:[[VLCMain sharedInstance] playlistController].playbackOrder == VLC_PLAYLIST_PLAYBACK_ORDER_RANDOM ? NSOnState : NSOffState];
+    [randomButton setState:VLCMain.sharedInstance.playlistController.playbackOrder == VLC_PLAYLIST_PLAYBACK_ORDER_RANDOM ? NSOnState : NSOffState];
 }
 
 #pragma mark -
@@ -427,7 +429,7 @@
 
     if ([itemURI.scheme isEqualToString:@"file"]) {
         // Local file, open in Finder
-        [[NSWorkspace sharedWorkspace] selectFile:itemURI.path
+        [NSWorkspace.sharedWorkspace selectFile:itemURI.path
                          inFileViewerRootedAtPath:itemURI.path];
     } else {
         // URL, copy to pasteboard
@@ -440,14 +442,14 @@
 // Action: Show VLC main window
 - (IBAction)statusBarIconShowMainWindow:(id)sender
 {
-    [[NSApplication sharedApplication] activateIgnoringOtherApps:YES];
-    [(NSWindow *)[[VLCMain sharedInstance] libraryWindow] makeKeyAndOrderFront:sender];
+    [NSApplication.sharedApplication activateIgnoringOtherApps:YES];
+    [(NSWindow *)VLCMain.sharedInstance.libraryWindow makeKeyAndOrderFront:sender];
 }
 
 // Action: Toggle Play / Pause
 - (IBAction)statusBarIconTogglePlayPause:(id)sender
 {
-    VLCPlaylistController *playlistController = [[VLCMain sharedInstance] playlistController];
+    VLCPlaylistController *playlistController = VLCMain.sharedInstance.playlistController;
     VLCPlayerController *playerController = playlistController.playerController;
     enum vlc_player_state playerState = playerController.playerState;
     if (playerState != VLC_PLAYER_STATE_PAUSED) {
@@ -462,19 +464,19 @@
 // Action: Go to next track
 - (IBAction)statusBarIconNext:(id)sender
 {
-    [[[VLCMain sharedInstance] playlistController] playNextItem];
+    [VLCMain.sharedInstance.playlistController playNextItem];
 }
 
 // Action: Go to previous track
 - (IBAction)statusBarIconPrevious:(id)sender
 {
-    [[[VLCMain sharedInstance] playlistController] playPreviousItem];
+    [VLCMain.sharedInstance.playlistController playPreviousItem];
 }
 
 // Action: Toggle random playback (shuffle)
 - (IBAction)statusBarIconToggleRandom:(id)sender
 {
-    VLCPlaylistController *playlistController = [[VLCMain sharedInstance] playlistController];
+    VLCPlaylistController *playlistController = VLCMain.sharedInstance.playlistController;
     playlistController.playbackOrder = (playlistController.playbackOrder == VLC_PLAYLIST_PLAYBACK_ORDER_RANDOM) ? VLC_PLAYLIST_PLAYBACK_ORDER_NORMAL : VLC_PLAYLIST_PLAYBACK_ORDER_RANDOM;
 }
 
@@ -487,18 +489,12 @@
 // Action: Quit VLC
 - (IBAction)quitAction:(id)sender
 {
-    [[NSApplication sharedApplication] terminate:nil];
+    [NSApplication.sharedApplication terminate:nil];
 }
 
 - (IBAction)statusBarIconShowMiniAudioPlayer:(id)sender
 {
-    if (!_detachedAudioWindow) {
-        NSWindowController *windowController = [[NSWindowController alloc] initWithWindowNibName:@"VLCDetachedAudioWindow"];
-        [windowController loadWindow];
-        _detachedAudioWindow = (VLCDetachedAudioWindow *)[windowController window];
-    }
-
-    [_detachedAudioWindow makeKeyAndOrderFront:sender];
+    [VLCMain.sharedInstance.detachedAudioWindow makeKeyAndOrderFront:sender];
 }
 
 @end

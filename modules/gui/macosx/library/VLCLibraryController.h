@@ -24,6 +24,7 @@
 
 #import <vlc_media_library.h>
 
+@class VLCInputItem;
 @class VLCLibraryModel;
 @class VLCMediaLibraryMediaItem;
 
@@ -36,10 +37,13 @@ NS_ASSUME_NONNULL_BEGIN
 - (int)appendItemToPlaylist:(VLCMediaLibraryMediaItem *)mediaItem playImmediately:(BOOL)playImmediately;
 - (int)appendItemsToPlaylist:(NSArray <VLCMediaLibraryMediaItem *> *)mediaItemArray playFirstItemImmediately:(BOOL)playFirstItemImmediately;
 
+- (void)reloadMediaLibraryFoldersForInputItems:(NSArray<VLCInputItem *> *)inputItems;
+
 - (int)addFolderWithFileURL:(NSURL *)fileURL;
 - (int)banFolderWithFileURL:(NSURL *)fileURL;
 - (int)unbanFolderWithFileURL:(NSURL *)fileURL;
 - (int)removeFolderWithFileURL:(NSURL *)fileURL;
+- (int)reloadFolderWithFileURL:(NSURL *)fileURL;
 
 - (int)clearHistory;
 

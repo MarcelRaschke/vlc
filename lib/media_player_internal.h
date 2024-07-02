@@ -24,10 +24,6 @@
 #ifndef _LIBVLC_MEDIA_PLAYER_INTERNAL_H
 #define _LIBVLC_MEDIA_PLAYER_INTERNAL_H 1
 
-#ifdef HAVE_CONFIG_H
-# include "config.h"
-#endif
-
 #include <vlc/vlc.h>
 #include <vlc/libvlc_media.h>
 #include <vlc_input.h>
@@ -45,6 +41,7 @@ struct libvlc_media_player_t
     vlc_player_t *player;
     vlc_player_listener_id *listener;
     vlc_player_aout_listener_id *aout_listener;
+    vlc_cond_t wait;
 
     struct libvlc_instance_t * p_libvlc_instance; /* Parent instance */
     libvlc_media_t * p_md; /* current media descriptor */
@@ -57,10 +54,6 @@ struct libvlc_media_player_t
         void *cbs_data;
     } timer;
 };
-
-libvlc_track_description_t * libvlc_get_track_description(
-        libvlc_media_player_t *p_mi,
-        enum es_format_category_e cat );
 
 /**
  * Internal equalizer structure.

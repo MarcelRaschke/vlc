@@ -39,6 +39,8 @@
 #import "windows/video/VLCVideoOutputProvider.h"
 #import "windows/video/VLCVoutView.h"
 
+#import <vlc_configuration.h>
+
 const CGFloat VLCVideoWindowCommonMinimalHeight = 70.;
 NSString *VLCVideoWindowShouldShowFullscreenController = @"VLCVideoWindowShouldShowFullscreenController";
 NSString *VLCVideoWindowDidEnterFullscreen = @"VLCVideoWindowDidEnterFullscreen";
@@ -68,9 +70,9 @@ NSString *VLCWindowShouldShowController = @"VLCWindowShouldShowController";
     BOOL _preFullScreenVideoViewLibraryControlsDisplayed;
 }
 
-- (void)customZoom:(id)sender;
 - (void)hasBecomeFullscreen;
 - (void)hasEndedFullscreen;
+
 @end
 
 @implementation VLCVideoWindowCommon
@@ -93,7 +95,7 @@ NSString *VLCWindowShouldShowController = @"VLCWindowShouldShowController";
 
 - (void)dealloc
 {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
 - (void)awakeFromNib
@@ -108,7 +110,7 @@ NSString *VLCWindowShouldShowController = @"VLCWindowShouldShowController";
         _videoViewController = [[VLCMainVideoViewController alloc] init];
     }
 
-    NSNotificationCenter *notificationCenter = [NSNotificationCenter defaultCenter];
+    NSNotificationCenter *notificationCenter = NSNotificationCenter.defaultCenter;
     [notificationCenter addObserver:self
                            selector:@selector(mediaMetadataChanged:)
                                name:VLCPlayerMetadataChangedForCurrentMedia
@@ -125,7 +127,7 @@ NSString *VLCWindowShouldShowController = @"VLCWindowShouldShowController";
     o_temp_view = [[NSView alloc] init];
     [o_temp_view setAutoresizingMask:NSViewHeightSizable | NSViewWidthSizable];
 
-    _playerController = [[[VLCMain sharedInstance] playlistController] playerController];
+    _playerController = VLCMain.sharedInstance.playlistController.playerController;
     _videoViewController = [[VLCMainVideoViewController alloc] init];
 
     [self mediaMetadataChanged:nil];
@@ -142,7 +144,7 @@ NSString *VLCWindowShouldShowController = @"VLCWindowShouldShowController";
 
 - (void)mediaMetadataChanged:(NSNotification *)aNotification
 {
-    VLCPlaylistController *playlistController = [[VLCMain sharedInstance] playlistController];
+    VLCPlaylistController *playlistController = VLCMain.sharedInstance.playlistController;
     VLCInputItem *inputItem = [playlistController currentlyPlayingInputItem];
     if (inputItem == NULL || _playerController.playerState == VLC_PLAYER_STATE_STOPPED) {
         [self setTitle:_NS("VLC media player")];
@@ -167,149 +169,6 @@ NSString *VLCWindowShouldShowController = @"VLCWindowShouldShowController";
         return;
 
     [super setTitle: title];
-}
-
-#pragma mark -
-#pragma mark zoom / minimize / close
-
-- (BOOL)validateMenuItem:(NSMenuItem *)menuItem
-{
-    SEL s_menuAction = [menuItem action];
-
-    if ((s_menuAction == @selector(performClose:)) || (s_menuAction == @selector(performMiniaturize:)) || (s_menuAction == @selector(performZoom:)))
-        return YES;
-
-    return [super validateMenuItem:menuItem];
-}
-
-- (BOOL)windowShouldClose:(id)sender
-{
-    return YES;
-}
-
-- (void)performClose:(id)sender
-{
-    if (!([self styleMask] & NSTitledWindowMask)) {
-        [[NSNotificationCenter defaultCenter] postNotificationName:NSWindowWillCloseNotification object:self];
-
-        [self close];
-    } else
-        [super performClose: sender];
-}
-
-- (void)performMiniaturize:(id)sender
-{
-    if (!([self styleMask] & NSTitledWindowMask))
-        [self miniaturize: sender];
-    else
-        [super performMiniaturize: sender];
-}
-
-- (void)performZoom:(id)sender
-{
-    if (!([self styleMask] & NSTitledWindowMask))
-        [self customZoom: sender];
-    else
-        [super performZoom: sender];
-}
-
-- (void)zoom:(id)sender
-{
-    if (!([self styleMask] & NSTitledWindowMask))
-        [self customZoom: sender];
-    else
-        [super zoom: sender];
-}
-
-/**
- * Given a proposed frame rectangle, return a modified version
- * which will fit inside the screen.
- *
- * This method is based upon NSWindow.m, part of the GNUstep GUI Library, licensed under LGPLv2+.
- *    Authors:  Scott Christley <scottc@net-community.com>, Venkat Ajjanagadde <venkat@ocbi.com>,
- *              Felipe A. Rodriguez <far@ix.netcom.com>, Richard Frith-Macdonald <richard@brainstorm.co.uk>
- *    Copyright (C) 1996 Free Software Foundation, Inc.
- */
-- (NSRect) customConstrainFrameRect: (NSRect)frameRect toScreen: (NSScreen*)screen
-{
-    NSRect screenRect = [screen visibleFrame];
-    CGFloat difference;
-
-    /* Move top edge of the window inside the screen */
-    difference = NSMaxY (frameRect) - NSMaxY (screenRect);
-    if (difference > 0) {
-        frameRect.origin.y -= difference;
-    }
-
-    /* If the window is resizable, resize it (if needed) so that the
-     bottom edge is on the screen or can be on the screen when the user moves
-     the window */
-    difference = NSMaxY (screenRect) - NSMaxY (frameRect);
-    if (self.styleMask & NSResizableWindowMask) {
-        CGFloat difference2;
-
-        difference2 = screenRect.origin.y - frameRect.origin.y;
-        difference2 -= difference;
-        // Take in account the space between the top of window and the top of the
-        // screen which can be used to move the bottom of the window on the screen
-        if (difference2 > 0) {
-            frameRect.size.height -= difference2;
-            frameRect.origin.y += difference2;
-        }
-
-        /* Ensure that resizing doesn't makewindow smaller than minimum */
-        difference2 = [self minSize].height - frameRect.size.height;
-        if (difference2 > 0) {
-            frameRect.size.height += difference2;
-            frameRect.origin.y -= difference2;
-        }
-    }
-
-    return frameRect;
-}
-
-#define DIST 3
-
-/**
- Zooms the receiver.   This method calls the delegate method
- windowShouldZoom:toFrame: to determine if the window should
- be allowed to zoom to full screen.
- *
- * This method is based upon NSWindow.m, part of the GNUstep GUI Library, licensed under LGPLv2+.
- *    Authors:  Scott Christley <scottc@net-community.com>, Venkat Ajjanagadde <venkat@ocbi.com>,
- *              Felipe A. Rodriguez <far@ix.netcom.com>, Richard Frith-Macdonald <richard@brainstorm.co.uk>
- *    Copyright (C) 1996 Free Software Foundation, Inc.
- */
-- (void) customZoom: (id)sender
-{
-    NSRect maxRect = [[self screen] visibleFrame];
-    NSRect currentFrame = [self frame];
-
-    if ([[self delegate] respondsToSelector: @selector(windowWillUseStandardFrame:defaultFrame:)]) {
-        maxRect = [[self delegate] windowWillUseStandardFrame: self defaultFrame: maxRect];
-    }
-
-    maxRect = [self customConstrainFrameRect: maxRect toScreen: [self screen]];
-
-    // Compare the new frame with the current one
-    if ((fabs(NSMaxX(maxRect) - NSMaxX(currentFrame)) < DIST)
-        && (fabs(NSMaxY(maxRect) - NSMaxY(currentFrame)) < DIST)
-        && (fabs(NSMinX(maxRect) - NSMinX(currentFrame)) < DIST)
-        && (fabs(NSMinY(maxRect) - NSMinY(currentFrame)) < DIST)) {
-        // Already in zoomed mode, reset user frame, if stored
-        if ([self frameAutosaveName] != nil) {
-            [self setFrame: self.previousSavedFrame display: YES animate: YES];
-            [self saveFrameUsingName: [self frameAutosaveName]];
-        }
-        return;
-    }
-
-    if ([self frameAutosaveName] != nil) {
-        [self saveFrameUsingName: [self frameAutosaveName]];
-        self.previousSavedFrame = [self frame];
-    }
-
-    [self setFrame: maxRect display: YES animate: YES];
 }
 
 # pragma mark -
@@ -391,7 +250,7 @@ NSString *VLCWindowShouldShowController = @"VLCWindowShouldShowController";
 
     NSInteger i_currLevel = [self level];
     // self.fullscreen and _inFullscreenTransition must not be true yet
-    [[[VLCMain sharedInstance] voutProvider] updateWindowLevelForHelperWindows: NSNormalWindowLevel];
+    [VLCMain.sharedInstance.voutProvider updateWindowLevelForHelperWindows: NSNormalWindowLevel];
     [self setLevel:NSNormalWindowLevel];
     i_originalLevel = i_currLevel;
 
@@ -422,7 +281,7 @@ NSString *VLCWindowShouldShowController = @"VLCWindowShouldShowController";
     _inFullscreenTransition = NO;
 
     if ([self hasActiveVideo]) {
-        NSNotificationCenter *notificationCenter = [NSNotificationCenter defaultCenter];
+        NSNotificationCenter *notificationCenter = NSNotificationCenter.defaultCenter;
         if (![_videoViewController.view isHidden]) {
             [notificationCenter postNotificationName:VLCVideoWindowShouldShowFullscreenController object:self];
         }
@@ -458,7 +317,7 @@ NSString *VLCWindowShouldShowController = @"VLCWindowShouldShowController";
 {
     _inFullscreenTransition = NO;
 
-    [[[VLCMain sharedInstance] voutProvider] updateWindowLevelForHelperWindows: i_originalLevel];
+    [VLCMain.sharedInstance.voutProvider updateWindowLevelForHelperWindows: i_originalLevel];
     [self setLevel:i_originalLevel];
 }
 
@@ -492,7 +351,7 @@ NSString *VLCWindowShouldShowController = @"VLCWindowShouldShowController";
     /* Make sure we don't see the window flashes in float-on-top mode */
     NSInteger i_currLevel = [self level];
     // self.fullscreen must not be true yet
-    [[[VLCMain sharedInstance] voutProvider] updateWindowLevelForHelperWindows: NSNormalWindowLevel];
+    [VLCMain.sharedInstance.voutProvider updateWindowLevelForHelperWindows: NSNormalWindowLevel];
     [self setLevel:NSNormalWindowLevel];
     i_originalLevel = i_currLevel; // would be overwritten by previous call
 
@@ -625,7 +484,7 @@ NSString *VLCWindowShouldShowController = @"VLCWindowShouldShowController";
     [o_fullscreen_window makeKeyWindow];
     [o_fullscreen_window setAcceptsMouseMovedEvents: YES];
 
-    NSNotificationCenter *notificationCenter = [NSNotificationCenter defaultCenter];
+    NSNotificationCenter *notificationCenter = NSNotificationCenter.defaultCenter;
     [notificationCenter postNotificationName:VLCVideoWindowDidEnterFullscreen object:self];
     [notificationCenter postNotificationName:VLCVideoWindowShouldShowFullscreenController object:self];
 
@@ -755,7 +614,7 @@ NSString *VLCWindowShouldShowController = @"VLCWindowShouldShowController";
 
     o_fullscreen_window = nil;
 
-    [[[VLCMain sharedInstance] voutProvider] updateWindowLevelForHelperWindows: i_originalLevel];
+    [VLCMain.sharedInstance.voutProvider updateWindowLevelForHelperWindows: i_originalLevel];
     [self setLevel:i_originalLevel];
 
     [self setAlphaValue: config_GetFloat("macosx-opaqueness")];

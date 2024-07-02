@@ -30,6 +30,7 @@
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_codec.h>
+#include <vlc_ancillary.h>
 
 /*****************************************************************************
  * decoder_sys_t : raw video decoder descriptor
@@ -314,6 +315,9 @@ static block_t *SendFrame( decoder_t *p_dec, block_t **pp_block )
 static int OpenPacketizer( vlc_object_t *p_this )
 {
     decoder_t *p_dec = (decoder_t *)p_this;
+
+    if ( p_dec->fmt_in->i_cat != VIDEO_ES )
+        return VLC_ENOTSUP;
 
     int ret = OpenCommon( p_dec );
     if( ret == VLC_SUCCESS )

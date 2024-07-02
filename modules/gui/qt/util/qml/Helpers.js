@@ -26,14 +26,6 @@ function isValidInstanceOf(object, type) {
     return (!!object && (object instanceof type))
 }
 
-// Returns the value associated with the key.
-// If the hash contains no item with the key,
-// or the value is invalid, returns defaultValue
-function get(dict, key, defaultValue) {
-    var v = typeof dict !== "undefined" && !!dict ? dict[key] : undefined
-    return typeof v === "undefined" ? defaultValue : v
-}
-
 // NOTE: This allows us to force another 'reason' even when the item has activeFocus.
 function enforceFocus(item, reason) {
     if (item.activeFocus && item.focusReason === reason)
@@ -42,6 +34,20 @@ function enforceFocus(item, reason) {
     item.focus = false;
 
     item.forceActiveFocus(reason);
+}
+
+function applyVolume(player, delta) {
+    // Degrees to steps for standard mouse
+    delta = delta / 8 / 15
+
+    const steps = Math.ceil(Math.abs(delta))
+
+    player.muted = false
+
+    if (delta > 0)
+        player.setVolumeUp(steps)
+    else
+        player.setVolumeDown(steps)
 }
 
 function pointInRadius(x, y, radius) {
@@ -68,4 +74,53 @@ function alignUp(a, b) {
 
 function alignDown(a, b) {
     return Math.floor(a / b) * b
+}
+
+function isSortedIntegerArrayConsecutive(array) {
+    for (let i = 1; i < array.length; ++i) {
+        if ((array[i] - array[i - 1]) !== 1)
+            return false
+    }
+
+    return true
+}
+
+function itemsMovable(sortedItemIndexes, targetIndex) {
+    return !isSortedIntegerArrayConsecutive(sortedItemIndexes) ||
+            (targetIndex > (sortedItemIndexes[sortedItemIndexes.length - 1] + 1) ||
+             targetIndex < sortedItemIndexes[0])
+}
+
+/**
+ * calculate content y for flickable such that item with given param will be fully visible
+ * @param type:Flickable flickable
+ * @param type:real y
+ * @param type:real height
+ * @param type:real topMargin
+ * @param type:real bottomMargin
+ * @return type:real appropriate contentY for flickable
+ */
+function flickablePositionContaining(flickable, y, height, topMargin, bottomMargin) {
+    const itemTopY = flickable.originY + y
+    const itemBottomY = itemTopY + height
+
+    const viewTopY = flickable.contentY
+    const viewBottomY = viewTopY + flickable.height
+
+    let newContentY
+
+    if (itemTopY < viewTopY)
+         //item above view
+        newContentY = itemTopY - topMargin
+    else if (itemBottomY > viewBottomY)
+         //item below view
+        newContentY = itemBottomY + bottomMargin - flickable.height
+    else
+        newContentY = flickable.contentY
+
+    return newContentY
+}
+
+function isArray(obj) {
+    return (obj?.length !== undefined) ?? false
 }

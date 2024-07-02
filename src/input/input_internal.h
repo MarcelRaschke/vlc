@@ -23,17 +23,11 @@
 #ifndef LIBVLC_INPUT_INTERNAL_H
 #define LIBVLC_INPUT_INTERNAL_H 1
 
-#include <stddef.h>
-#include <stdatomic.h>
-
-#include <vlc_access.h>
 #include <vlc_demux.h>
 #include <vlc_input.h>
-#include <vlc_viewpoint.h>
-#include <vlc_atomic.h>
-#include <libvlc.h>
 #include "input_interface.h"
-#include "misc/interrupt.h"
+#include "../misc/interrupt.h"
+#include "./source.h"
 
 struct input_stats;
 
@@ -149,13 +143,18 @@ typedef enum input_event_type_e
 
     /* Thumbnail generation */
     INPUT_EVENT_THUMBNAIL_READY,
+
+    /* Attachments */
+    INPUT_EVENT_ATTACHMENTS,
+
+    /* The demux is not able to navigate */
+    INPUT_EVENT_NAV_FAILED,
 } input_event_type_e;
 
 #define VLC_INPUT_CAPABILITIES_SEEKABLE (1<<0)
 #define VLC_INPUT_CAPABILITIES_PAUSEABLE (1<<1)
 #define VLC_INPUT_CAPABILITIES_CHANGE_RATE (1<<2)
 #define VLC_INPUT_CAPABILITIES_REWINDABLE (1<<3)
-#define VLC_INPUT_CAPABILITIES_RECORDABLE (1<<4)
 
 struct vlc_input_event_state
 {
@@ -264,6 +263,12 @@ struct vlc_input_event_vout
     vlc_es_id_t *id;
 };
 
+struct vlc_input_event_attachments
+{
+    input_attachment_t *const* array;
+    size_t count;
+};
+
 struct vlc_input_event
 {
     input_event_type_e type;
@@ -307,6 +312,10 @@ struct vlc_input_event
         float subs_fps;
         /* INPUT_EVENT_THUMBNAIL_READY */
         picture_t *thumbnail;
+        /* INPUT_EVENT_ATTACHMENTS */
+        struct vlc_input_event_attachments attachments;
+        /* INPUT_EVENT_NAV_FAILED */
+        int nav_type;
     };
 };
 
@@ -314,11 +323,23 @@ typedef void (*input_thread_events_cb)( input_thread_t *input,
                                         const struct vlc_input_event *event,
                                         void *userdata);
 
-/*****************************************************************************
- * Prototypes
- *****************************************************************************/
+/**
+ * Create a new input_thread_t.
+ *
+ * You need to call input_Start on it when you are done
+ * adding callback on the variables/events you want to monitor.
+ *
+ * \param p_parent a vlc_object
+ * \param events_cb the events virtual table
+ * \param events_data an opaque given to the events callbacks (\p events_cb)
+ * \param p_item an input item
+ * \param type the type of task the input is created for (thumbnailing, playback, ...)
+ * \param p_resource an optional input ressource
+ * \param p_renderer an optional renderer object to render the input to
+ * \return a pointer to the spawned input thread
+ */
 input_thread_t * input_Create( vlc_object_t *p_parent,
-                               input_thread_events_cb event_cb, void *events_data,
+                               input_thread_events_cb events_cb, void *events_data,
                                input_item_t *, enum input_type type,
                                input_resource_t *, vlc_renderer_item_t* p_renderer ) VLC_USED;
 #define input_Create(a,b,c,d,e,f,g) input_Create(VLC_OBJECT(a),b,c,d,e,f,g)
@@ -352,50 +373,6 @@ input_item_t* input_GetItem( input_thread_t * ) VLC_USED;
  *****************************************************************************/
 
 #define INPUT_CONTROL_FIFO_SIZE    100
-
-/* input_source_t: gathers all information per input source */
-struct input_source_t
-{
-    vlc_atomic_rc_t rc;
-
-    demux_t  *p_demux; /**< Demux object (most downstream) */
-    es_out_t *p_slave_es_out; /**< Slave es out */
-
-    char *str_id;
-    int auto_id;
-    bool autoselected;
-
-    /* Title infos for that input */
-    bool         b_title_demux; /* Titles/Seekpoints provided by demux */
-    int          i_title;
-    input_title_t **title;
-
-    int i_title_offset;
-    int i_seekpoint_offset;
-
-    int i_title_start;
-    int i_title_end;
-    int i_seekpoint_start;
-    int i_seekpoint_end;
-
-    /* Properties */
-    bool b_can_pause;
-    bool b_can_pace_control;
-    bool b_can_rate_control;
-    bool b_can_stream_record;
-    bool b_rescale_ts;
-    double f_fps;
-
-    /* sub-fps handling */
-    bool b_slave_sub;
-    float sub_rate;
-
-    /* */
-    vlc_tick_t i_pts_delay;
-
-    bool       b_eof;   /* eof of demuxer */
-
-};
 
 typedef union
 {
@@ -465,7 +442,6 @@ typedef struct input_thread_private_t
     bool        is_stopped;
     bool        b_recording;
     float       rate;
-    vlc_tick_t  normal_time;
 
     /* Playtime configuration and state */
     vlc_tick_t  i_start;    /* :start-time,0 by default */
@@ -478,8 +454,8 @@ typedef struct input_thread_private_t
     /* Output */
     bool            b_out_pace_control; /* XXX Move it ot es_sout ? */
     sout_stream_t   *p_sout;            /* Idem ? */
-    es_out_t        *p_es_out;
-    es_out_t        *p_es_out_display;
+    struct vlc_input_es_out *p_es_out;
+    struct vlc_input_es_out *p_es_out_display;
     vlc_viewpoint_t viewpoint;
     bool            viewpoint_changed;
     vlc_renderer_item_t *p_renderer;
@@ -500,7 +476,7 @@ typedef struct input_thread_private_t
     /* Main source */
     input_source_t *master;
     /* Slave sources (subs, and others) */
-    int            i_slave;
+    size_t         i_slave;
     input_source_t **slave;
     float          slave_subs_rate;
 
@@ -535,10 +511,8 @@ enum input_control_e
     INPUT_CONTROL_SET_RATE,
 
     INPUT_CONTROL_SET_POSITION,
-    INPUT_CONTROL_JUMP_POSITION,
 
     INPUT_CONTROL_SET_TIME,
-    INPUT_CONTROL_JUMP_TIME,
 
     INPUT_CONTROL_SET_PROGRAM,
 
@@ -626,6 +600,26 @@ static inline int input_ControlPushEsHelper( input_thread_t *p_input, int i_type
 void input_SetProgramId(input_thread_t *input, int group_id);
 
 /**
+ * Set the default delay applied to the given category.
+ *
+ * Set the default delay for the given \p es_format_category_e synchronously
+ * if the input is not running yet, otherwise push a control to signal to the
+ * input which delay should be updated.
+ *
+ * @param input Any input to change the delay for.
+ * @param cat The ES category to apply the delay to.
+ * @param delay The delay to apply to the category, a positive delay shifting
+ *              the track to the future.
+ * @return VLC_SUCCESS when the delay has been applied, or signal an error
+ *         otherwise.
+ *
+ * @note This function can be called before start or while running.
+ * @note This function is not thread-safe, the caller should handle the locking.
+ */
+int input_SetEsCatDelay(input_thread_t *input, enum es_format_category_e cat,
+                        vlc_tick_t delay);
+
+/**
  * Set the list of string ids to enable for a category
  *
  * cf. ES_OUT_SET_ES_CAT_IDS
@@ -642,37 +636,6 @@ int input_GetAttachments(input_thread_t *input, input_attachment_t ***attachment
 input_attachment_t *input_GetAttachment(input_thread_t *input, const char *name);
 
 bool input_CanPaceControl(input_thread_t *input);
-
-/**
- * Hold the input_source_t
- */
-input_source_t *input_source_Hold( input_source_t *in );
-
-/**
- * Release the input_source_t
- */
-void input_source_Release( input_source_t *in );
-
-/**
- * Returns the string identifying this input source
- *
- * @return a string id or NULL if the source is the master
- */
-const char *input_source_GetStrId( input_source_t *in );
-
-/**
- * Get a new fmt.i_id from the input source
- *
- * This auto id will be relative to this input source. It allows to have stable
- * ids across different playback instances, by not relying on the input source
- * addition order.
- */
-int input_source_GetNewAutoId( input_source_t *in );
-
-/**
- * Returns true if a given source should be auto-selected
- */
-bool input_source_IsAutoSelected( input_source_t *in );
 
 /* Bound pts_delay */
 #define INPUT_PTS_DELAY_MAX VLC_TICK_FROM_SEC(60)

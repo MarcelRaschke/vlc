@@ -147,6 +147,39 @@ static inline void GetUUID( UUID_t *p_uuid, const uint8_t *p_buff )
     memcpy( p_uuid, p_buff, 16 );
 }
 
+static video_palette_t * ReadQuicktimePalette( uint8_t **pp_peek, uint64_t *pi_read )
+{
+    uint8_t *p_peek = *pp_peek;
+    uint64_t i_read = *pi_read;
+    uint32_t v;
+    MP4_GET4BYTES(v);
+    if( v != 0 )
+        return NULL;
+    MP4_GET2BYTES(v); // should be == 0x8000, but does not in the wild
+    uint16_t i_colors_count;
+    MP4_GET2BYTES(i_colors_count);
+    if( i_colors_count == UINT16_MAX ||
+        ++i_colors_count > VIDEO_PALETTE_COLORS_MAX ||
+        i_read < i_colors_count * 8U)
+        return NULL;
+    video_palette_t *p_palette = malloc( sizeof(video_palette_t) );
+    if( p_palette == NULL )
+        return NULL;
+    for( uint16_t i=0; i<i_colors_count; i++ )
+    {
+        uint16_t dummy;
+        MP4_GET2BYTES(dummy); VLC_UNUSED(dummy);
+        MP4_GET2BYTES(p_palette->palette[i][0]);
+        MP4_GET2BYTES(p_palette->palette[i][1]);
+        MP4_GET2BYTES(p_palette->palette[i][2]);
+        p_palette->palette[i][3] = 0xFF;
+    }
+    p_palette->i_entries = i_colors_count;
+    *pp_peek = p_peek;
+    *pi_read = i_read;
+    return p_palette;
+}
+
 static uint8_t *mp4_readbox_enter_common( stream_t *s, MP4_Box_t *box,
                                           size_t typesize,
                                           void (*release)( MP4_Box_t * ),
@@ -168,11 +201,10 @@ static uint8_t *mp4_readbox_enter_common( stream_t *s, MP4_Box_t *box,
         goto error;
     }
 
-    box->data.p_payload = malloc( typesize );
+    box->data.p_payload = calloc( 1, typesize );
     if( unlikely(box->data.p_payload == NULL) )
         goto error;
 
-    memset( box->data.p_payload, 0, typesize );
     box->pf_free = release;
     return buf;
 error:
@@ -281,6 +313,7 @@ MP4_Box_t * MP4_BoxExtract( MP4_Box_t **pp_chain, uint32_t i_type )
         {
             *pp_chain = p_box->p_next;
             p_box->p_next = NULL;
+            p_box->p_father = NULL;
             return p_box;
         }
         pp_chain = &p_box->p_next;
@@ -626,6 +659,33 @@ static int MP4_ReadBoxSkip( stream_t *p_stream, MP4_Box_t *p_box )
         msg_Dbg( p_stream, "skip box: \"c%3.3s\"", (char*)&p_box->i_type+1 );
 #endif
     return 1;
+}
+
+static int MP4_ReadBox_mdia( stream_t *p_stream, MP4_Box_t *p_container )
+{
+    if( p_container->i_size &&
+        ( p_container->i_size <= (size_t)mp4_box_headersize(p_container ) + 8 ) )
+    {
+        /* container is empty, 8 stand for the first header in this box */
+        return 1;
+    }
+
+    /* enter box */
+    if ( MP4_Seek( p_stream, p_container->i_pos +
+                               mp4_box_headersize( p_container ) ) )
+        return 0;
+    int ret = MP4_ReadBoxContainerChildren( p_stream, p_container, NULL );
+    MP4_Box_t *stsd = MP4_BoxGet( p_container, "minf/stbl/stsd" );
+    if( stsd && stsd->i_handler == 0 )
+    {
+        /* Delayed parsing due to missing hdlr */
+        if( MP4_Seek( p_stream, stsd->i_pos ) ||
+            MP4_Box_Read_Specific( p_stream, stsd, stsd->p_father ) ||
+            stsd->i_handler == 0 )
+            msg_Warn( p_stream, "Failed to re-parse stsd" );
+    }
+
+    return ret;
 }
 
 static int MP4_ReadBox_ilst( stream_t *p_stream, MP4_Box_t *p_box )
@@ -1575,12 +1635,13 @@ static int MP4_ReadBox_stts( stream_t *p_stream, MP4_Box_t *p_box )
     }
 
     p_box->data.p_stts->pi_sample_count = vlc_alloc( count, sizeof(uint32_t) );
-    p_box->data.p_stts->pi_sample_delta = vlc_alloc( count, sizeof(int32_t) );
+    p_box->data.p_stts->pi_sample_delta = vlc_alloc( count, sizeof(uint32_t) );
     p_box->data.p_stts->i_entry_count = count;
 
     if( p_box->data.p_stts->pi_sample_count == NULL
      || p_box->data.p_stts->pi_sample_delta == NULL )
     {
+        MP4_FreeBox_stts( p_box );
         MP4_READBOX_EXIT( 0 );
     }
 
@@ -1588,6 +1649,10 @@ static int MP4_ReadBox_stts( stream_t *p_stream, MP4_Box_t *p_box )
     {
         MP4_GET4BYTES( p_box->data.p_stts->pi_sample_count[i] );
         MP4_GET4BYTES( p_box->data.p_stts->pi_sample_delta[i] );
+        /* Patch bogus durations, including negative stored values */
+        if( p_box->data.p_stts->pi_sample_delta[i] == 0 ||
+            p_box->data.p_stts->pi_sample_delta[i] >= 0xF0000000 )
+            p_box->data.p_stts->pi_sample_delta[i] = 1;
     }
 
 #ifdef MP4_VERBOSE
@@ -1621,7 +1686,10 @@ static int MP4_ReadBox_ctts( stream_t *p_stream, MP4_Box_t *p_box )
     p_box->data.p_ctts->pi_sample_offset = vlc_alloc( count, sizeof(int32_t) );
     if( unlikely(p_box->data.p_ctts->pi_sample_count == NULL
               || p_box->data.p_ctts->pi_sample_offset == NULL) )
+    {
+        MP4_FreeBox_ctts( p_box );
         MP4_READBOX_EXIT( 0 );
+    }
     p_box->data.p_ctts->i_entry_count = count;
 
     for( uint32_t i = 0; i < count; i++ )
@@ -2215,6 +2283,7 @@ static int MP4_ReadBox_sgpd( stream_t *p_stream, MP4_Box_t *p_box )
     switch( p_sgpd->i_grouping_type )
     {
         case SAMPLEGROUP_rap:
+        case SAMPLEGROUP_roll:
             break;
 
         default:
@@ -2271,6 +2340,23 @@ static int MP4_ReadBox_sgpd( stream_t *p_stream, MP4_Box_t *p_box )
                     MP4_GET1BYTE( i_data );
                     p_sgpd->p_entries[i].rap.i_num_leading_samples_known = i_data & 0x80;
                     p_sgpd->p_entries[i].rap.i_num_leading_samples = i_data & 0x7F;
+                }
+                break;
+
+            case SAMPLEGROUP_roll:
+                {
+                    if( i_read < 2 )
+                    {
+                        free( p_sgpd->p_entries );
+                        MP4_READBOX_EXIT( 0 );
+                    }
+                    union
+                    {
+                        uint16_t u;
+                        int16_t  s;
+                    } readsigned;
+                    MP4_GET2BYTES( readsigned.u );
+                    p_sgpd->p_entries[i].roll.i_roll_distance = readsigned.s;
                 }
                 break;
 
@@ -2684,6 +2770,7 @@ static int MP4_ReadBox_sample_soun( stream_t *p_stream, MP4_Box_t *p_box )
 static void MP4_FreeBox_sample_vide( MP4_Box_t *p_box )
 {
     free( p_box->data.p_sample_vide->p_qt_image_description );
+    free( p_box->data.p_sample_vide->p_palette );
 }
 
 int MP4_ReadBox_sample_vide( stream_t *p_stream, MP4_Box_t *p_box )
@@ -2740,6 +2827,14 @@ int MP4_ReadBox_sample_vide( stream_t *p_stream, MP4_Box_t *p_box )
 
     MP4_GET2BYTES( p_box->data.p_sample_vide->i_depth );
     MP4_GET2BYTES( p_box->data.p_sample_vide->i_qt_color_table );
+
+    if( p_box->data.p_sample_vide->i_depth == 8 &&
+        p_box->data.p_sample_vide->i_qt_color_table == 0 )
+    {
+        p_box->data.p_sample_vide->p_palette = ReadQuicktimePalette( &p_peek, &i_read );
+        if( p_box->data.p_sample_vide->p_palette == NULL )
+            MP4_READBOX_EXIT( 0 );
+    }
 
     if( p_box->i_type == ATOM_drmi )
     {
@@ -2852,6 +2947,11 @@ static int MP4_ReadBox_stsd( stream_t *p_stream, MP4_Box_t *p_box )
     if( p_mdia == NULL || p_mdia->i_type != ATOM_mdia ||
         (p_hdlr = MP4_BoxGet( p_mdia, "hdlr" )) == NULL )
     {
+        if ( MP4_Seek( p_stream, p_box->i_pos + p_box->i_size ) == VLC_SUCCESS )
+        {
+            msg_Warn( p_stream, "missing hdlr for stsd, delaying" );
+            MP4_READBOX_EXIT( 1 );
+        }
         MP4_READBOX_EXIT( 0 );
     }
 
@@ -3271,7 +3371,7 @@ static int MP4_ReadBox_stdp( stream_t *p_stream, MP4_Box_t *p_box )
     MP4_GETVERSIONFLAGS( p_box->data.p_stdp );
 
     p_box->data.p_stdp->i_priority =
-        calloc( i_read / 2, sizeof(uint16_t) );
+        calloc( i_read / 2, sizeof(*p_box->data.p_stdp->i_priority) );
 
     if( unlikely( !p_box->data.p_stdp->i_priority ) )
         MP4_READBOX_EXIT( 0 );
@@ -3418,8 +3518,6 @@ static int MP4_ReadBox_cmvd( stream_t *p_stream, MP4_Box_t *p_box )
     /* now copy compressed data */
     memcpy( p_box->data.p_cmvd->p_data, p_peek,i_read);
 
-    p_box->data.p_cmvd->b_compressed = 1;
-
 #ifdef MP4_VERBOSE
     msg_Dbg( p_stream, "read box: \"cmvd\" compressed data size %d",
                       p_box->data.p_cmvd->i_compressed_size );
@@ -3430,26 +3528,18 @@ static int MP4_ReadBox_cmvd( stream_t *p_stream, MP4_Box_t *p_box )
 
 static int MP4_ReadBox_cmov( stream_t *p_stream, MP4_Box_t *p_box )
 {
+#ifndef HAVE_ZLIB
+    (void)p_box;
+    msg_Dbg( p_stream, "read box: \"cmov\" zlib unsupported" );
+    return 0;
+#else
+
     MP4_Box_t *p_dcom;
     MP4_Box_t *p_cmvd;
 
-#ifdef HAVE_ZLIB
     stream_t *p_stream_memory;
     z_stream z_data;
     uint8_t *p_data;
-    int i_result;
-#endif
-
-    if( !( p_box->data.p_cmov = calloc(1, sizeof( MP4_Box_data_cmov_t ) ) ) )
-        return 0;
-
-    if( !p_box->p_father ||
-        ( p_box->p_father->i_type != ATOM_moov &&
-          p_box->p_father->i_type != ATOM_foov ) )
-    {
-        msg_Warn( p_stream, "Read box: \"cmov\" box alone" );
-        return 1;
-    }
 
     if( !MP4_ReadBoxContainer( p_stream, p_box ) )
     {
@@ -3471,11 +3561,6 @@ static int MP4_ReadBox_cmov( stream_t *p_stream, MP4_Box_t *p_box )
         return 0;
     }
 
-#ifndef HAVE_ZLIB
-    msg_Dbg( p_stream, "read box: \"cmov\" zlib unsupported" );
-    return 0;
-
-#else
     /* decompress data */
     /* allocate a new buffer */
     if( !( p_data = malloc( p_cmvd->data.p_cmvd->i_uncompressed_size ) ) )
@@ -3498,10 +3583,10 @@ static int MP4_ReadBox_cmov( stream_t *p_stream, MP4_Box_t *p_box )
     }
 
     /* uncompress */
-    i_result = inflate( &z_data, Z_NO_FLUSH );
-    if( i_result != Z_OK && i_result != Z_STREAM_END )
+    if( inflate( &z_data, Z_FINISH ) != Z_STREAM_END )
     {
         msg_Err( p_stream, "read box: \"cmov\" error while uncompressing" );
+        inflateEnd( &z_data );
         free( p_data );
         return 0;
     }
@@ -3511,7 +3596,6 @@ static int MP4_ReadBox_cmov( stream_t *p_stream, MP4_Box_t *p_box )
         msg_Warn( p_stream, "read box: \"cmov\" uncompressing data size "
                   "mismatch" );
     }
-    p_cmvd->data.p_cmvd->i_uncompressed_size = z_data.total_out;
 
     /* close zlib */
     if( inflateEnd( &z_data ) != Z_OK )
@@ -3520,28 +3604,30 @@ static int MP4_ReadBox_cmov( stream_t *p_stream, MP4_Box_t *p_box )
                   "data (ignored)" );
     }
 
-    free( p_cmvd->data.p_cmvd->p_data );
-    p_cmvd->data.p_cmvd->p_data = p_data;
-    p_cmvd->data.p_cmvd->b_compressed = 0;
-
     msg_Dbg( p_stream, "read box: \"cmov\" box successfully uncompressed" );
 
     /* now create a memory stream */
-    p_stream_memory =
-        vlc_stream_MemoryNew( VLC_OBJECT(p_stream),
-                              p_cmvd->data.p_cmvd->p_data,
-                              p_cmvd->data.p_cmvd->i_uncompressed_size, true );
+    p_stream_memory = vlc_stream_MemoryNew( VLC_OBJECT(p_stream),
+                                            p_data, z_data.total_out, false );
+    if( !p_stream_memory )
+    {
+        free( p_data );
+        return 0;
+    }
 
     /* and read uncompressd moov */
-    p_box->data.p_cmov->p_moov = MP4_ReadBox( p_stream_memory, NULL );
+    MP4_Box_t *p_moov =  MP4_ReadBox( p_stream_memory, NULL );
 
     vlc_stream_Delete( p_stream_memory );
+
+    if( p_moov )
+        MP4_BoxAddChild( p_box, p_moov );
 
 #ifdef MP4_VERBOSE
     msg_Dbg( p_stream, "read box: \"cmov\" compressed movie header completed");
 #endif
 
-    return p_box->data.p_cmov->p_moov ? 1 : 0;
+    return p_moov ? 1 : 0;
 #endif /* HAVE_ZLIB */
 }
 
@@ -4938,10 +5024,9 @@ static const struct
 {
     /* Containers */
     { ATOM_moov,    MP4_ReadBoxContainer,     0 },
-    { ATOM_foov,    MP4_ReadBoxContainer,     0 },
     { ATOM_trak,    MP4_ReadBoxContainer,     ATOM_moov },
     { ATOM_trak,    MP4_ReadBoxContainer,     ATOM_foov },
-    { ATOM_mdia,    MP4_ReadBoxContainer,     ATOM_trak },
+    { ATOM_mdia,    MP4_ReadBox_mdia,         ATOM_trak },
     { ATOM_moof,    MP4_ReadBoxContainer,     0 },
     { ATOM_minf,    MP4_ReadBoxContainer,     ATOM_mdia },
     { ATOM_stbl,    MP4_ReadBoxContainer,     ATOM_minf },
@@ -4970,10 +5055,16 @@ static const struct
     { ATOM_mvex,    MP4_ReadBoxContainer,     ATOM_moov },
     { ATOM_mvex,    MP4_ReadBoxContainer,     ATOM_ftyp },
 
+    /* Quicktime compression */
+    { ATOM_foov,    MP4_ReadBoxContainer,     0 },
+    { ATOM_cmov,    MP4_ReadBox_cmov,         ATOM_foov },
+    { ATOM_cmov,    MP4_ReadBox_cmov,         ATOM_moov },
+    { ATOM_dcom,    MP4_ReadBox_dcom,         ATOM_cmov },
+    { ATOM_cmvd,    MP4_ReadBox_cmvd,         ATOM_cmov },
+
     /* specific box */
     { ATOM_ftyp,    MP4_ReadBox_ftyp,         0 },
     { ATOM_styp,    MP4_ReadBox_ftyp,         0 },
-    { ATOM_cmov,    MP4_ReadBox_cmov,         0 },
     { ATOM_mvhd,    MP4_ReadBox_mvhd,         ATOM_moov },
     { ATOM_mvhd,    MP4_ReadBox_mvhd,         ATOM_foov },
     { ATOM_tkhd,    MP4_ReadBox_tkhd,         ATOM_trak },
@@ -5007,12 +5098,11 @@ static const struct
     { ATOM_esds,    MP4_ReadBox_esds,         ATOM_mp4a },
     { ATOM_esds,    MP4_ReadBox_esds,         ATOM_mp4v },
     { ATOM_esds,    MP4_ReadBox_esds,         ATOM_mp4s },
-    { ATOM_dcom,    MP4_ReadBox_dcom,         0 },
     { ATOM_dfLa,    MP4_ReadBox_Binary,       ATOM_fLaC },
-    { ATOM_cmvd,    MP4_ReadBox_cmvd,         0 },
     { ATOM_av1C,    MP4_ReadBox_av1C,         ATOM_av01 },
     { ATOM_avcC,    MP4_ReadBox_avcC,         ATOM_avc1 },
     { ATOM_avcC,    MP4_ReadBox_avcC,         ATOM_avc3 },
+    { ATOM_vvcC,    MP4_ReadBox_Binary,       ATOM_vvc1 },
     { ATOM_hvcC,    MP4_ReadBox_Binary,       0 },
     { ATOM_jpeC,    MP4_ReadBox_Binary,       0 }, /* heif */
     { ATOM_av1C,    MP4_ReadBox_av1C,         ATOM_ipco }, /* heif */
@@ -5492,29 +5582,19 @@ MP4_Box_t *MP4_BoxGetRoot( stream_t *p_stream )
             goto error;
     }
 
-    MP4_Box_t *p_moov;
     MP4_Box_t *p_cmov;
-
     /* check if there is a cmov, if so replace
       compressed moov by  uncompressed one */
-    if( ( ( p_moov = MP4_BoxGet( p_vroot, "moov" ) ) &&
-          ( p_cmov = MP4_BoxGet( p_vroot, "moov/cmov" ) ) ) ||
-        ( ( p_moov = MP4_BoxGet( p_vroot, "foov" ) ) &&
-          ( p_cmov = MP4_BoxGet( p_vroot, "foov/cmov" ) ) ) )
+    if( ( p_cmov = MP4_BoxGet( p_vroot, "moov/cmov" ) ) ||
+        ( p_cmov = MP4_BoxGet( p_vroot, "foov/cmov" ) ) )
     {
-        /* rename the compressed moov as a box to skip */
-        p_moov->i_type = ATOM_skip;
-
+        MP4_Box_t *p_moov = MP4_BoxExtract( &p_vroot->p_first, p_cmov->p_father->i_type );
         /* get uncompressed p_moov */
-        p_moov = p_cmov->data.p_cmov->p_moov;
-        p_cmov->data.p_cmov->p_moov = NULL;
-
+        MP4_Box_t *p_umoov = MP4_BoxExtract( &p_cmov->p_first, ATOM_moov );
         /* make p_root father of this new moov */
-        p_moov->p_father = p_vroot;
-
-        /* insert this new moov box as first child of p_root */
-        p_moov->p_next = p_vroot->p_first;
-        p_vroot->p_first = p_moov;
+        MP4_BoxAddChild( p_vroot, p_umoov );
+        /* Release old moov and compressed info */
+        MP4_BoxFree( p_moov );
     }
 
     return p_vroot;

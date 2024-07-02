@@ -15,9 +15,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQml.Models 2.2
+import QtQuick
+import QtQuick.Controls
+import QtQml.Models
 import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
 
@@ -28,51 +28,35 @@ import "qrc:///style/"
 Widgets.PageLoader {
     id: root
 
-    property var sortModel
-    property var model
-
     pageModel: [{
         name: "all",
+        default: true,
         component: genresComponent
     }, {
         name: "albums",
         component: albumGenreComponent
     }]
 
-    loadDefaultView: function () {
-        History.update(["mc", "music", "genres", "all"])
-        loadPage("all")
-    }
-
-    onCurrentItemChanged: {
-        sortModel = currentItem.sortModel
-        model = currentItem.model
-    }
-
-
-    function _updateGenresAllHistory(currentIndex) {
-        History.update(["mc", "music", "genres", "all", { "initialIndex": currentIndex }])
-    }
-
-    function _updateGenresAlbumsHistory(currentIndex, parentId, genreName) {
-        History.update(["mc","music", "genres", "albums", {
-            "initialIndex": currentIndex,
-            "parentId": parentId,
-            "genreName": genreName,
-        }])
-    }
-
     Component {
         id: genresComponent
         /* List View */
         MusicGenres {
-            onCurrentIndexChanged: _updateGenresAllHistory(currentIndex)
+            id: genresView
 
-            onShowAlbumView: {
-                History.push(["mc", "music", "genres", "albums",
-                             { parentId: id, genreName: name }]);
+            header: Widgets.ViewHeader {
+                view: genresView
 
-                stackView.currentItem.setCurrentItemFocus(reason);
+                text: qsTr("Genres")
+            }
+
+            onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
+
+            searchPattern: MainCtx.search.pattern
+            sortOrder: MainCtx.sort.order
+            sortCriteria: MainCtx.sort.criteria
+
+            onShowAlbumView: (id, name, reason) => {
+                History.push([...root.pagePrefix, "albums"], { parentId: id, genreName: name }, reason)
             }
         }
     }
@@ -85,20 +69,17 @@ Widgets.PageLoader {
 
             property string genreName: ""
 
-            gridViewMarginTop: 0
+            header: Widgets.ViewHeader {
+                view: albumsView
 
-            header: Widgets.SubtitleLabel {
-                text: I18n.qtr("Genres - %1").arg(genreName)
-                leftPadding: albumsView.contentLeftMargin
-                rightPadding: albumsView.contentRightMargin
-                topPadding: VLCStyle.margin_large
-                bottomPadding: VLCStyle.margin_normal
-                width: root.width
+                text: qsTr("Genres - %1").arg(genreName)
             }
 
-            onParentIdChanged: _updateGenresAlbumsHistory(currentIndex, parentId, genreName)
-            onGenreNameChanged: _updateGenresAlbumsHistory(currentIndex, parentId, genreName)
-            onCurrentIndexChanged: _updateGenresAlbumsHistory(currentIndex, parentId, genreName)
+            searchPattern: MainCtx.search.pattern
+            sortOrder: MainCtx.sort.order
+            sortCriteria: MainCtx.sort.criteria
+
+            onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
         }
     }
 }

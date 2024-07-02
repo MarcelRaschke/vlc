@@ -15,13 +15,12 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts 1.11
-import QtGraphicalEffects 1.0
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import Qt5Compat.GraphicalEffects
 
 import org.videolan.vlc 0.1
-import org.videolan.compat 0.1
 
 import "qrc:///style/"
 import "qrc:///main/" as Main
@@ -34,100 +33,65 @@ import "qrc:///util/Helpers.js" as Helpers
 import "qrc:///dialogs/" as DG
 
 FocusScope {
-    id: root
-
-    //name and properties of the tab to be initially loaded
-    property var view: ({
-        "name": "",
-        "properties": {}
-    })
+    id: g_mainDisplay
 
     // Properties
 
     property bool hasMiniPlayer: miniPlayer.visible
 
     // NOTE: The main view must be above the indexing bar and the mini player.
-    property int displayMargin: (loaderProgress.active) ? miniPlayer.height + loaderProgress.height
-                                                        : miniPlayer.height
+    property real displayMargin: (height - miniPlayer.y) + (loaderProgress.active ? loaderProgress.height : 0)
 
-    property bool _inhibitMiniPlayer: false
+    //MainDisplay behave as a PageLoader
+    property alias pagePrefix: stackView.pagePrefix
+
+    readonly property int positionSliderY: {
+        var size = miniPlayer.y + miniPlayer.sliderY
+
+        if (MainCtx.pinVideoControls)
+            return size - VLCStyle.margin_xxxsmall
+        else
+            return size
+    }
+
     property bool _showMiniPlayer: false
-    property var _oldViewProperties: ({}) // saves last state of the views
 
-    // Aliases
+    // functions
 
-    property alias g_mainDisplay: root
+    //MainDisplay behave as a PageLoader
+    function loadView(path, properties, focusReason) {
+        const found = stackView.loadView(path, properties, focusReason)
+        if (!found)
+            return
 
-    onViewChanged: {
-        _oldViewProperties[view.name] = view.properties
-        loadView()
-    }
-
-    Component.onCompleted: {
-        loadView()
-        if (MainCtx.mediaLibraryAvailable && !MainCtx.hasFirstrun)
-            // asynchronous call
-            MainCtx.mediaLibrary.reload()
-    }
-
-    function loadView() {
-        var found = stackView.loadView(root.pageModel, root.view.name, root.view.properties)
-
-        var item = stackView.currentItem
-
-        item.Navigation.parentItem = medialibId
-        item.Navigation.upItem = sourcesBanner
-        item.Navigation.rightItem = playlistColumn
-
-        item.Navigation.downItem = Qt.binding(function() {
-            return miniPlayer.visible ? miniPlayer : medialibId
-        })
+        const item = stackView.currentItem
 
         sourcesBanner.localMenuDelegate = Qt.binding(function () {
-            return !!item.localMenuDelegate ? item.localMenuDelegate : null
+            return item.localMenuDelegate ?? null
         })
 
         // NOTE: sortMenu is declared with the SortMenu type, so when it's undefined we have to
         //       return null to avoid a QML warning.
         sourcesBanner.sortMenu = Qt.binding(function () {
-            if (item.sortMenu)
-                return item.sortMenu
-            else
-                return null
+            return item.sortMenu ?? null
         })
 
-        sourcesBanner.sortModel = Qt.binding(function () { return item.sortModel })
-        sourcesBanner.contentModel = Qt.binding(function () { return item.contentModel })
-
-        sourcesBanner.extraLocalActions = Qt.binding(function () { return item.extraLocalActions })
-
-        sourcesBanner.isViewMultiView = Qt.binding(function () {
-            return item.isViewMultiView === undefined || item.isViewMultiView
-        })
-
-        // Restore sourcesBanner state
-        sourcesBanner.selectedIndex = pageModel.filter(function (e) {
-            return e.listed
-        }).findIndex(function (e) {
-            return e.name === root.view.name
-        })
-
-        if (item.pageModel !== undefined)
-            sourcesBanner.subSelectedIndex = item.pageModel.findIndex(function (e) {
-                return e.name === item.view.name
-            })
+        MainCtx.hasGridListMode = Qt.binding(() => item.hasGridListMode !== undefined && item.hasGridListMode)
+        MainCtx.search.available = Qt.binding(() => item.isSearchable !== undefined && item.isSearchable)
+        MainCtx.sort.model = Qt.binding(function () { return item.sortModel })
+        MainCtx.sort.available = Qt.binding(function () { return Helpers.isArray(item.sortModel) && item.sortModel.length > 0 })
 
         if (Player.hasVideoOutput && MainCtx.hasEmbededVideo)
             _showMiniPlayer = true
     }
 
     Navigation.cancelAction: function() {
-        History.previous()
+        History.previous(Qt.BacktabFocusReason)
     }
 
-    Keys.onPressed: {
+    Keys.onPressed: (event) => {
         if (KeyHelper.matchSearch(event)) {
-            sourcesBanner.search()
+            MainCtx.search.askShow()
             event.accepted = true
         }
         //unhandled keys are forwarded as hotkeys
@@ -140,31 +104,31 @@ FocusScope {
     readonly property var pageModel: [
         {
             listed: MainCtx.mediaLibraryAvailable,
-            displayText: I18n.qtr("Video"),
+            displayText: qsTr("Video"),
             icon: VLCIcons.topbar_video,
             name: "video",
             url: "qrc:///medialibrary/VideoDisplay.qml"
         }, {
             listed: MainCtx.mediaLibraryAvailable,
-            displayText: I18n.qtr("Music"),
+            displayText: qsTr("Music"),
             icon: VLCIcons.topbar_music,
             name: "music",
             url: "qrc:///medialibrary/MusicDisplay.qml"
         }, {
             listed: !MainCtx.mediaLibraryAvailable,
-            displayText: I18n.qtr("Home"),
+            displayText: qsTr("Home"),
             icon: VLCIcons.home,
             name: "home",
             url: "qrc:///main/NoMedialibHome.qml"
         }, {
             listed: true,
-            displayText: I18n.qtr("Browse"),
+            displayText: qsTr("Browse"),
             icon: VLCIcons.topbar_network,
             name: "network",
             url: "qrc:///network/BrowseDisplay.qml"
         }, {
             listed: true,
-            displayText: I18n.qtr("Discover"),
+            displayText: qsTr("Discover"),
             icon: VLCIcons.topbar_discover,
             name: "discover",
             url: "qrc:///network/DiscoverDisplay.qml"
@@ -191,389 +155,394 @@ FocusScope {
         }
     }
 
-
-    function showPlayer() {
-        root._inhibitMiniPlayer = true
-        History.push(["player"])
-    }
-
-    function play(backend, ids) {
-        showPlayer();
-
-        backend.addAndPlay(ids);
-    }
-
-    Util.ModelSortSettingHandler {
-        id: modelSortSettingHandler
-    }
-
-    Connections {
-        target: sourcesBanner
-
-        onContentModelChanged: modelSortSettingHandler.set(sourcesBanner.contentModel, History.viewPath)
-    }
-
     ColorContext {
         id: theme
         palette: VLCStyle.palette
         colorSet: ColorContext.View
     }
 
-    FocusScope {
-        focus: true
-        id: medialibId
+    ColumnLayout {
+        id: mainColumn
         anchors.fill: parent
 
-        Navigation.parentItem: root
+        Layout.minimumWidth: VLCStyle.minWindowWidth
+        spacing: 0
 
-        Rectangle {
-            id: parentRectangle
-            anchors.fill: parent
+        Navigation.parentItem: g_mainDisplay
 
-            color: theme.bg.primary
+        /* Source selection*/
+        Main.BannerSources {
+            id: sourcesBanner
+            z: 2
+            Layout.preferredHeight: height
+            Layout.minimumHeight: height
+            Layout.maximumHeight: height
+            Layout.fillWidth: true
 
-            layer.enabled: (((GraphicsInfo.shaderType === GraphicsInfo.GLSL)) &&
-                           ((GraphicsInfo.shaderSourceType & GraphicsInfo.ShaderSourceString))) &&
-                           (miniPlayer.visible || (loaderProgress.active && loaderProgress.item.visible))
+            model: g_mainDisplay.tabModel
 
-            layer.effect: Widgets.FrostedGlassEffect {
-                ColorContext {
-                    id: frostedTheme
-                    palette: VLCStyle.palette
-                    colorSet: ColorContext.Window
+            plListView: playlistLoader.active ? playlistLoader.item
+                                              : (playlistWindowLoader.status === Loader.Ready ? playlistWindowLoader.item.playlistView
+                                                                                              : null)
+
+            onItemClicked: (index) => {
+                const name = g_mainDisplay.tabModel.get(index).name
+
+                //don't add the ["mc"] prefix as we are only testing subviers from MainDisplay
+                if (stackView.isDefaulLoadedForPath([name])) {
+                    return
                 }
 
-                tint: frostedTheme.bg.secondary
+                selectedIndex = index
+                History.push(["mc", name])
+            }
 
-                effectRect: {
-                    var _height = 0
-                    if (loaderProgress.active && loaderProgress.item.visible)
-                        _height += loaderProgress.item.height
-                    if (miniPlayer.visible)
-                        _height += miniPlayer.height
+            Navigation.parentItem: mainColumn
+            Navigation.downItem: stackView
+        }
 
-                    return Qt.rect(0, height - _height, width, _height)
+        Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            z: 0
+
+            Rectangle {
+                id: stackViewParent
+
+                // This rectangle is used to display the effect in
+                // the area of miniplayer background.
+                // We can not directly apply the effect on the
+                // view because its size is limited and the effect
+                // should exceed the size. Also, it is beneficial
+                // to have a rectangle here because if the background
+                // is transparent we would lose subpixel font rendering
+                // support.
+
+                anchors.fill: parent
+
+                implicitWidth: stackView.implicitWidth
+                implicitHeight: stackView.implicitHeight
+
+                color: theme.bg.primary
+
+                layer.enabled: (GraphicsInfo.shaderType === GraphicsInfo.RhiShader) &&
+                               (miniPlayer.visible || (loaderProgress.active && loaderProgress.item.visible))
+
+                layer.effect: Widgets.PartialEffect {
+                    id: stackViewParentLayerEffect
+
+                    blending: stackViewParent.color.a < (1.0 - Number.EPSILON)
+
+                    effectRect: Qt.rect(0,
+                                        stackView.height,
+                                        width,
+                                        height - stackView.height)
+
+                    effectLayer.effect: Component {
+                        Widgets.FrostedGlassEffect {
+                            ColorContext {
+                                id: frostedTheme
+                                palette: VLCStyle.palette
+                                colorSet: ColorContext.Window
+                            }
+
+                            blending: stackViewParentLayerEffect.blending
+
+                            tint: frostedTheme.bg.secondary
+                        }
+                    }
+                }
+
+                Widgets.PageLoader {
+                    id: stackView
+
+                    focus: true
+
+                    anchors.fill: parent
+                    anchors.rightMargin: (playlistLoader.shown && !VLCStyle.isScreenSmall)
+                                         ? playlistLoader.width
+                                         : 0
+                    anchors.bottomMargin: g_mainDisplay.displayMargin
+
+                    pageModel: g_mainDisplay.pageModel
+
+                    leftPadding: VLCStyle.applicationHorizontalMargin
+
+                    rightPadding: playlistLoader.shown
+                                  ? 0
+                                  : VLCStyle.applicationHorizontalMargin
+
+
+                    Navigation.parentItem: mainColumn
+                    Navigation.upItem: sourcesBanner
+                    Navigation.rightItem: playlistLoader
+                    Navigation.downItem:  miniPlayer.visible ? miniPlayer : null
+                }
+
+                Rectangle {
+                    // overlay for smallscreens
+
+                    anchors.fill: parent
+                    visible: VLCStyle.isScreenSmall && playlistLoader.shown
+                    color: "black"
+                    opacity: 0.4
+
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: {
+                            MainCtx.playlistVisible = false
+                        }
+
+                        // Capture WheelEvents before they reach stackView
+                        onWheel: {
+                            wheel.accepted = true
+                        }
+                    }
                 }
             }
 
-            ColumnLayout {
-                id: mainColumn
-                anchors.fill: parent
+            Loader {
+                id: playlistLoader
 
-                Layout.minimumWidth: VLCStyle.minWindowWidth
-                spacing: 0
+                anchors {
+                    top: parent.top
+                    right: parent.right
+                }
 
-                /* Source selection*/
-                Main.BannerSources {
-                    id: sourcesBanner
-                    z: 2
-                    Layout.preferredHeight: height
-                    Layout.minimumHeight: height
-                    Layout.maximumHeight: height
-                    Layout.fillWidth: true
+                width: 0
+                height: parent.height - g_mainDisplay.displayMargin
 
-                    model: root.tabModel
+                visible: false
 
-                    plListView: playlist
+                active: MainCtx.playlistDocked
 
-                    onItemClicked: {
-                        var name = root.tabModel.get(index).name
-                        selectedIndex = index
-                        if (_oldViewProperties[name] === undefined)
-                            History.push(["mc", name])
-                        else
-                            History.push(["mc", name, _oldViewProperties[name]])
-                    }
+                state: ((status === Loader.Ready) && MainCtx.playlistVisible) ? "expanded" : ""
 
-                    Navigation.parentItem: medialibId
+                readonly property bool shown: (status === Loader.Ready) && item.visible
 
-                    Navigation.downAction: function() {
-                        stackView.currentItem.setCurrentItemFocus(Qt.TabFocusReason);
+                Component.onCompleted: {
+                    Qt.callLater(() => { playlistTransition.enabled = true; })
+                }
+
+                states: State {
+                    name: "expanded"
+                    PropertyChanges {
+                        target: playlistLoader
+                        width: Math.round(playlistLoader.implicitWidth)
+                        visible: true
                     }
                 }
 
-                Item {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    z: 0
+                transitions: Transition {
+                    id: playlistTransition
+                    enabled: false
 
-                    Widgets.StackViewExt {
-                        id: stackView
+                    from: ""; to: "expanded";
+                    reversible: true
 
-                        focus: true
+                    SequentialAnimation {
+                        PropertyAction { property: "visible" }
 
-                        anchors {
-                            top: parent.top
-                            left: parent.left
-                            bottom: parent.bottom
-
-                            bottomMargin: root.displayMargin
-
-                            right: (playlistColumn.visible && !VLCStyle.isScreenSmall)
-                                   ? playlistColumn.left
-                                   : parent.right
+                        NumberAnimation {
+                            property: "width"
+                            duration: VLCStyle.duration_short
+                            easing.type: Easing.InOutSine
                         }
+                    }
+                }
 
-                        leftPadding: VLCStyle.applicationHorizontalMargin
+                sourceComponent: PL.PlaylistListView {
+                    id: playlist
 
-                        rightPadding: (MainCtx.playlistDocked && MainCtx.playlistVisible)
-                                      ? 0
-                                      : VLCStyle.applicationHorizontalMargin
+                    implicitWidth: VLCStyle.isScreenSmall
+                                   ? g_mainDisplay.width * 0.8
+                                   : Helpers.clamp(g_mainDisplay.width / resizeHandle.widthFactor,
+                                                   minimumWidth,
+                                                   g_mainDisplay.width / 2)
+
+                    focus: true
+
+                    leftPadding: playlistLeftBorder.width
+                    rightPadding: VLCStyle.applicationHorizontalMargin
+                    topPadding: VLCStyle.layoutTitle_top_padding
+                    bottomPadding: VLCStyle.margin_normal + Math.max(VLCStyle.applicationVerticalMargin - g_mainDisplay.displayMargin, 0)
+
+                    Navigation.parentItem: mainColumn
+                    Navigation.upItem: sourcesBanner
+                    Navigation.downItem: miniPlayer.visible ? miniPlayer : null
+
+                    Navigation.leftAction: function() {
+                        stackView.currentItem.setCurrentItemFocus(Qt.TabFocusReason);
+                    }
+
+                    Navigation.cancelAction: function() {
+                        MainCtx.playlistVisible = false
+                        stackView.forceActiveFocus()
                     }
 
                     Rectangle {
-                        anchors.fill: parent
-                        visible: VLCStyle.isScreenSmall && MainCtx.playlistVisible
-                        color: "black"
-                        opacity: 0.4
+                        id: playlistLeftBorder
 
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            onClicked: {
-                                MainCtx.playlistVisible = false
-                            }
+                        parent: playlist
 
-                            // Capture WheelEvents before they reach stackView
-                            onWheel: {
-                                wheel.accepted = true
-                            }
-                        }
-                    }
-
-                    FocusScope {
-                        id: playlistColumn
                         anchors {
                             top: parent.top
-                            right: parent.right
-                        }
-                        focus: false
-
-                        implicitWidth: VLCStyle.isScreenSmall
-                                       ? root.width * 0.8
-                                       : Helpers.clamp(root.width / resizeHandle.widthFactor,
-                                                       playlist.minimumWidth,
-                                                       root.width / 2)
-                        width: 0
-                        height: parent.height - root.displayMargin
-
-                        visible: false
-
-                        state: (MainCtx.playlistDocked && MainCtx.playlistVisible) ? "expanded" : ""
-
-                        states: State {
-                            name: "expanded"
-                            PropertyChanges {
-                                target: playlistColumn
-                                width: Math.round(playlistColumn.implicitWidth)
-                                visible: true
-                            }
+                            bottom: parent.bottom
+                            left: parent.left
                         }
 
-                        transitions: Transition {
-                            from: ""; to: "expanded";
-                            reversible: true
+                        width: VLCStyle.border
+                        color: theme.separator
 
-                            SequentialAnimation {
-                                PropertyAction { property: "visible" }
+                        visible: playlistLoader.shown
+                    }
 
-                                NumberAnimation {
-                                    property: "width"
-                                    duration: VLCStyle.duration_short
-                                    easing.type: Easing.InOutSine
-                                }
-                            }
+                    Widgets.HorizontalResizeHandle {
+                        id: resizeHandle
+
+                        property bool _inhibitMainInterfaceUpdate: false
+
+                        parent: playlist
+
+                        anchors {
+                            top: parent.top
+                            bottom: parent.bottom
+                            left: parent.left
                         }
 
-                        Rectangle {
-                            id: playlistLeftBorder
+                        atRight: false
+                        targetWidth: parent.width
+                        sourceWidth: g_mainDisplay.width
 
-                            anchors.top: parent.top
-                            anchors.bottom: parent.bottom
-                            anchors.left: parent.left
-
-                            width: VLCStyle.border
-                            color: theme.separator
+                        onWidthFactorChanged: {
+                            if (!_inhibitMainInterfaceUpdate)
+                                MainCtx.setPlaylistWidthFactor(widthFactor)
                         }
 
-                        PL.PlaylistListView {
-                            id: playlist
+                        Component.onCompleted:  _updateFromMainInterface()
 
-                            anchors {
-                                top: parent.top
-                                bottom: parent.bottom
-                                left: playlistLeftBorder.right
-                                right: parent.right
-                            }
+                        function _updateFromMainInterface() {
+                            if (widthFactor == MainCtx.playlistWidthFactor)
+                                return
 
-                            focus: true
+                            _inhibitMainInterfaceUpdate = true
+                            widthFactor = MainCtx.playlistWidthFactor
+                            _inhibitMainInterfaceUpdate = false
+                        }
 
-                            rightPadding: VLCStyle.applicationHorizontalMargin
+                        Connections {
+                            target: MainCtx
 
-                            bottomPadding: topPadding + Math.max(VLCStyle.applicationVerticalMargin
-                                                                 - root.displayMargin, 0)
-
-                            Navigation.parentItem: medialibId
-                            Navigation.upItem: sourcesBanner
-                            Navigation.downItem: miniPlayer.visible ? miniPlayer : null
-
-                            Navigation.leftAction: function() {
-                                stackView.currentItem.setCurrentItemFocus(Qt.TabFocusReason);
-                            }
-
-                            Navigation.cancelAction: function() {
-                                MainCtx.playlistVisible = false
-                                stackView.forceActiveFocus()
-                            }
-
-                            Widgets.HorizontalResizeHandle {
-                                id: resizeHandle
-
-                                property bool _inhibitMainInterfaceUpdate: false
-
-                                anchors {
-                                    top: parent.top
-                                    bottom: parent.bottom
-                                    left: parent.left
-                                }
-
-                                atRight: false
-                                targetWidth: playlistColumn.width
-                                sourceWidth: root.width
-
-                                onWidthFactorChanged: {
-                                    if (!_inhibitMainInterfaceUpdate)
-                                        MainCtx.setPlaylistWidthFactor(widthFactor)
-                                }
-
-                                Component.onCompleted:  _updateFromMainInterface()
-
-                                function _updateFromMainInterface() {
-                                    if (widthFactor == MainCtx.playlistWidthFactor)
-                                        return
-
-                                    _inhibitMainInterfaceUpdate = true
-                                    widthFactor = MainCtx.playlistWidthFactor
-                                    _inhibitMainInterfaceUpdate = false
-                                }
-
-                                Connections {
-                                    target: MainCtx
-
-                                    onPlaylistWidthFactorChanged: {
-                                        resizeHandle._updateFromMainInterface()
-                                    }
-                                }
+                            function onPlaylistWidthFactorChanged() {
+                                resizeHandle._updateFromMainInterface()
                             }
                         }
                     }
                 }
             }
         }
+    }
 
-        Loader {
-            id: loaderProgress
 
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: miniPlayer.top
+    Loader {
+        id: loaderProgress
 
-            active: (MainCtx.mediaLibraryAvailable && MainCtx.mediaLibrary.idle === false)
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: miniPlayer.top
 
-            source: "qrc:///widgets/ScanProgressBar.qml"
+        active: (MainCtx.mediaLibraryAvailable && MainCtx.mediaLibrary.idle === false)
 
-            onLoaded: {
-                item.background.visible = Qt.binding(function() { return !parentRectangle.layer.enabled })
+        height: active ? implicitHeight : 0
 
-                item.leftPadding = Qt.binding(function() { return VLCStyle.margin_large + VLCStyle.applicationHorizontalMargin })
-                item.rightPadding = Qt.binding(function() { return VLCStyle.margin_large + VLCStyle.applicationHorizontalMargin })
-                item.bottomPadding = Qt.binding(function() { return VLCStyle.margin_small + (miniPlayer.visible ? 0 : VLCStyle.applicationVerticalMargin) })
-            }
+        source: "qrc:///widgets/ScanProgressBar.qml"
+
+        onLoaded: {
+            item.background.visible = Qt.binding(function() { return !stackViewParent.layer.enabled })
+
+            item.leftPadding = Qt.binding(function() { return VLCStyle.margin_large + VLCStyle.applicationHorizontalMargin })
+            item.rightPadding = Qt.binding(function() { return VLCStyle.margin_large + VLCStyle.applicationHorizontalMargin })
+            item.bottomPadding = Qt.binding(function() { return VLCStyle.margin_small + (miniPlayer.visible ? 0 : VLCStyle.applicationVerticalMargin) })
+        }
+    }
+
+    P.PIPPlayer {
+        id: playerPip
+        anchors {
+            bottom: miniPlayer.top
+            left: parent.left
+            bottomMargin: VLCStyle.margin_normal
+            leftMargin: VLCStyle.margin_normal + VLCStyle.applicationHorizontalMargin
         }
 
-        P.PIPPlayer {
-            id: playerPip
-            anchors {
-                bottom: miniPlayer.top
-                left: parent.left
-                bottomMargin: VLCStyle.margin_normal
-                leftMargin: VLCStyle.margin_normal + VLCStyle.applicationHorizontalMargin
-            }
+        width: VLCStyle.dp(320, VLCStyle.scale)
+        height: VLCStyle.dp(180, VLCStyle.scale)
+        z: 2
+        visible: g_mainDisplay._showMiniPlayer && MainCtx.hasEmbededVideo
+        enabled: g_mainDisplay._showMiniPlayer && MainCtx.hasEmbededVideo
 
-            width: VLCStyle.dp(320, VLCStyle.scale)
-            height: VLCStyle.dp(180, VLCStyle.scale)
-            z: 2
-            visible: !root._inhibitMiniPlayer && root._showMiniPlayer && MainCtx.hasEmbededVideo
-            enabled: !root._inhibitMiniPlayer && root._showMiniPlayer && MainCtx.hasEmbededVideo
+        dragXMin: 0
+        dragXMax: g_mainDisplay.width - playerPip.width
+        dragYMin: sourcesBanner.y + sourcesBanner.height
+        dragYMax: miniPlayer.y - playerPip.height
 
-            dragXMin: 0
-            dragXMax: root.width - playerPip.width
-            dragYMin: sourcesBanner.y + sourcesBanner.height
-            dragYMax: miniPlayer.y - playerPip.height
-
-            //keep the player visible on resize
-            Connections {
-                target: root
-                onWidthChanged: {
-                    if (playerPip.x > playerPip.dragXMax)
-                        playerPip.x = playerPip.dragXMax
-                }
-                onHeightChanged: {
-                    if (playerPip.y > playerPip.dragYMax)
-                        playerPip.y = playerPip.dragYMax
-                }
-            }
-        }
-
-        DG.Dialogs {
-            z: 10
-            bgContent: root
-
-            anchors {
-                bottom: miniPlayer.visible ? miniPlayer.top : parent.bottom
-                left: parent.left
-                right: parent.right
-            }
-        }
-
-        P.MiniPlayer {
-            id: miniPlayer
-
-            BindingCompat on state {
-                when: root._inhibitMiniPlayer && !miniPlayer.visible
-                value: ""
-            }
-
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-
-            z: 3
-
-            rightPadding: VLCStyle.applicationHorizontalMargin
-            leftPadding: VLCStyle.applicationHorizontalMargin
-            bottomPadding: VLCStyle.applicationVerticalMargin
-
-            background.visible: !parentRectangle.layer.enabled
-
-            Navigation.parentItem: medialibId
-            Navigation.upItem: stackView
-            Navigation.cancelItem:sourcesBanner
-            onVisibleChanged: {
-                if (!visible && miniPlayer.activeFocus)
-                    stackView.forceActiveFocus()
-            }
-        }
-
+        //keep the player visible on resize
         Connections {
-            target: Player
-            onHasVideoOutputChanged: {
-                if (Player.hasVideoOutput && MainCtx.hasEmbededVideo) {
-                    if (History.current.view !== "player")
-                        g_mainDisplay.showPlayer()
-                } else {
-                    _showMiniPlayer = false;
-                }
+            target: g_mainDisplay
+            function onWidthChanged() {
+                if (playerPip.x > playerPip.dragXMax)
+                    playerPip.x = playerPip.dragXMax
+            }
+            function onHeightChanged() {
+                if (playerPip.y > playerPip.dragYMax)
+                    playerPip.y = playerPip.dragYMax
+            }
+        }
+    }
+
+    DG.Dialogs {
+        z: 10
+        bgContent: g_mainDisplay
+
+        anchors {
+            bottom: miniPlayer.visible ? miniPlayer.top : parent.bottom
+            left: parent.left
+            right: parent.right
+        }
+    }
+
+    P.MiniPlayer {
+        id: miniPlayer
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+
+        z: 3
+
+        horizontalPadding: VLCStyle.applicationHorizontalMargin
+        bottomPadding: VLCStyle.applicationVerticalMargin + VLCStyle.margin_xsmall
+
+        background.visible: !stackViewParent.layer.enabled
+
+        Navigation.parentItem: mainColumn
+        Navigation.upItem: stackView
+        Navigation.cancelItem:sourcesBanner
+        onVisibleChanged: {
+            if (!visible && miniPlayer.activeFocus)
+                stackView.forceActiveFocus()
+        }
+    }
+
+    Connections {
+        target: Player
+        function onHasVideoOutputChanged() {
+            if (Player.hasVideoOutput && MainCtx.hasEmbededVideo) {
+                if (!History.match(History.viewPath, ["player"]))
+                    History.push(["player"])
+            } else {
+                _showMiniPlayer = false;
             }
         }
     }

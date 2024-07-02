@@ -15,9 +15,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQml.Models 2.2
+import QtQuick
+import QtQuick.Controls
+import QtQml.Models
 
 import org.videolan.vlc 0.1
 
@@ -30,7 +30,13 @@ FocusScope {
 
     // Properties
 
-    readonly property bool isViewMultiView: false
+    //behave like a Page
+    property var pagePrefix: []
+
+    readonly property bool hasGridListMode: false
+    readonly property bool isSearchable: urlListDisplay.active
+                                    && urlListDisplay.item.isSearchable !== undefined
+                                    && urlListDisplay.item.isSearchable
 
     property int leftPadding: 0
     property int rightPadding: 0
@@ -58,7 +64,7 @@ FocusScope {
             focus: true
 
             Navigation.parentItem:  root
-            Navigation.downItem: (!!urlListDisplay.item) ? urlListDisplay.item : null
+            Navigation.downItem: urlListDisplay.item ?? null
 
             Widgets.TextFieldExt {
                 id: searchField
@@ -67,18 +73,18 @@ FocusScope {
                 anchors.centerIn: parent
                 height: VLCStyle.dp(32, VLCStyle.scale)
                 width: VLCStyle.colWidth(Math.max(VLCStyle.gridColumnsForWidth(root.width * .6), 2))
-                placeholderText: I18n.qtr("Paste or write the URL here")
+                placeholderText: qsTr("Paste or write the URL here")
                 selectByMouse: true
 
                 onAccepted: {
                     if (urlListDisplay.status == Loader.Ready)
                         urlListDisplay.item.model.addAndPlay(text)
                     else
-                        mainPlaylistController.append([text], true)
+                        MainPlaylistController.append([text], true)
                 }
 
                 Keys.priority: Keys.AfterItem
-                Keys.onPressed: searchFieldContainer.Navigation.defaultKeyAction(event)
+                Keys.onPressed: (event) => searchFieldContainer.Navigation.defaultKeyAction(event)
 
                 //ideally we should use Keys.onShortcutOverride but it doesn't
                 //work with TextField before 5.13 see QTBUG-68711
@@ -111,6 +117,8 @@ FocusScope {
 
                 item.Navigation.upItem = searchField
                 item.Navigation.parentItem =  root
+
+                item.searchPattern = Qt.binding(() => MainCtx.search.pattern)
             }
         }
     }

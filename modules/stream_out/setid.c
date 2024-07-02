@@ -32,6 +32,7 @@
 #include <string.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 
@@ -52,7 +53,7 @@
 
 static int  OpenId    ( vlc_object_t * );
 static int  OpenLang  ( vlc_object_t * );
-static void Close     ( vlc_object_t * );
+static void Close     ( sout_stream_t * );
 
 #define SOUT_CFG_PREFIX_ID   "sout-setid-"
 #define SOUT_CFG_PREFIX_LANG "sout-setlang-"
@@ -64,7 +65,7 @@ vlc_module_begin()
     set_capability( "sout filter", 50 )
     add_shortcut( "setid" )
     set_subcategory( SUBCAT_SOUT_STREAM )
-    set_callbacks( OpenId, Close )
+    set_callback( OpenId )
     add_integer( SOUT_CFG_PREFIX_ID "id", 0, ID_TEXT, ID_LONGTEXT )
     add_integer( SOUT_CFG_PREFIX_ID "new-id", 0, NEWID_TEXT, NEWID_LONGTEXT )
 
@@ -73,10 +74,10 @@ vlc_module_begin()
     set_shortname( N_("Set Lang"))
     set_description( N_("Change the language of an elementary stream"))
     set_capability( "sout filter", 50 )
-    add_shortcut( "setlang" );
-    set_callbacks( OpenLang, Close )
+    add_shortcut( "setlang" )
+    set_callback( OpenLang )
     add_integer( SOUT_CFG_PREFIX_LANG "id", 0, ID_TEXT, ID_LONGTEXT )
-    add_string( SOUT_CFG_PREFIX_LANG "lang", "eng", LANG_TEXT, LANG_LONGTEXT );
+    add_string( SOUT_CFG_PREFIX_LANG "lang", "eng", LANG_TEXT, LANG_LONGTEXT )
 
 vlc_module_end()
 
@@ -92,8 +93,8 @@ static const char *ppsz_sout_options_lang[] = {
     "id", "lang", NULL
 };
 
-static void *AddId  ( sout_stream_t *, const es_format_t * );
-static void *AddLang( sout_stream_t *, const es_format_t * );
+static void *AddId  ( sout_stream_t *, const es_format_t *, const char * );
+static void *AddLang( sout_stream_t *, const es_format_t *, const char * );
 static void  Del    ( sout_stream_t *, void * );
 static int   Send   ( sout_stream_t *, void *, block_t * );
 static void  SetPCR ( sout_stream_t *, vlc_tick_t );
@@ -123,7 +124,10 @@ static int OpenCommon( vlc_object_t *p_this )
 }
 
 static const struct sout_stream_operations id_ops = {
-    AddId, Del, Send, NULL, NULL, SetPCR,
+    .add = AddId,
+    .del = Del,
+    .send = Send,
+    .set_pcr = SetPCR,
 };
 
 static int OpenId( vlc_object_t *p_this )
@@ -148,7 +152,11 @@ static int OpenId( vlc_object_t *p_this )
 }
 
 static const struct sout_stream_operations lang_ops = {
-    AddLang, Del, Send, NULL, NULL, SetPCR,
+    .add = AddLang,
+    .del = Del,
+    .send = Send,
+    .set_pcr = SetPCR,
+    .close = Close,
 };
 
 static int OpenLang( vlc_object_t *p_this )
@@ -175,16 +183,16 @@ static int OpenLang( vlc_object_t *p_this )
 /*****************************************************************************
  * Close:
  *****************************************************************************/
-static void Close( vlc_object_t * p_this )
+static void Close( sout_stream_t *p_stream )
 {
-    sout_stream_t     *p_stream = (sout_stream_t*)p_this;
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
 
     free( p_sys->psz_language );
     free( p_sys );
 }
 
-static void *AddId( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *
+AddId( sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
     es_format_t fmt;
@@ -199,10 +207,11 @@ static void *AddId( sout_stream_t *p_stream, const es_format_t *p_fmt )
         p_fmt = &fmt;
     }
 
-    return sout_StreamIdAdd( p_stream->p_next, p_fmt );
+    return sout_StreamIdAdd( p_stream->p_next, p_fmt, es_id );
 }
 
-static void *AddLang( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *
+AddLang( sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
     es_format_t fmt;
@@ -218,7 +227,7 @@ static void *AddLang( sout_stream_t *p_stream, const es_format_t *p_fmt )
         p_fmt = &fmt;
     }
 
-    return sout_StreamIdAdd( p_stream->p_next, p_fmt );
+    return sout_StreamIdAdd( p_stream->p_next, p_fmt, es_id );
 }
 
 static void Del( sout_stream_t *p_stream, void *id )

@@ -15,8 +15,12 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-#include <QX11Info>
 #include <QScreen>
+
+#ifdef HAVE_CONFIG_H
+# include "config.h"
+#endif
+#include <vlc_window.h>
 
 #include "compositor_x11.hpp"
 #include "compositor_x11_renderwindow.hpp"
@@ -26,6 +30,11 @@
 #include "video_window_handler.hpp"
 #include "mainui.hpp"
 #include "compositor_accessibility.hpp"
+
+#ifdef QT_DECLARATIVE_PRIVATE
+#include <private/qquickitem_p.h>
+#include <private/qquickwindow_p.h>
+#endif
 
 using namespace vlc;
 
@@ -53,11 +62,6 @@ CompositorX11::~CompositorX11()
         xcb_disconnect(m_conn);
 }
 
-bool CompositorX11::preInit(qt_intf_t*)
-{
-    return true;
-}
-
 static bool checkExtensionPresent(qt_intf_t* intf, xcb_connection_t *conn, const char* extension)
 {
     bool ret = queryExtension(conn, extension, nullptr, nullptr);
@@ -81,9 +85,17 @@ static bool checkExtensionPresent(qt_intf_t* intf, xcb_connection_t *conn, const
 
 bool CompositorX11::init()
 {
-    if (!QX11Info::isPlatformX11())
+    if (!qGuiApp->nativeInterface<QNativeInterface::QX11Application>())
     {
         msg_Info(m_intf, "not running an X11 platform");
+        return false;
+    }
+
+    if (QQuickWindow::graphicsApi() != QSGRendererInterface::OpenGL)
+    {
+        msg_Warn(m_intf, "Running on X11, but graphics api is not OpenGL." \
+                         "CompositorX11 only supports OpenGL for now.\n" \
+                         "FIXME: Support vulkan as well.");
         return false;
     }
 
@@ -146,8 +158,8 @@ bool CompositorX11::init()
         }
     }
 
-#if !defined(QT_NO_ACCESSIBILITY) && defined(QT5_DECLARATIVE_PRIVATE)
-    QAccessible::installFactory(&compositionAccessibleFactory);
+#if !defined(QT_NO_ACCESSIBILITY) && defined(QT_DECLARATIVE_PRIVATE)
+   QAccessible::installFactory(&compositionAccessibleFactory);
 #endif
 
     return true;
@@ -176,20 +188,28 @@ bool CompositorX11::makeMainInterface(MainCtx* mainCtx)
     const uint32_t mask = XCB_CW_EVENT_MASK;
     const uint32_t values = XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY
         | XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_FOCUS_CHANGE;
-    xcb_change_window_attributes(QX11Info::connection(), m_videoWidget->winId(), mask, &values);
-    setTransparentForMouseEvent(QX11Info::connection(), m_videoWidget->winId());
+
+    const auto connection =  qGuiApp->nativeInterface<QNativeInterface::QX11Application>()->connection();
+
+    xcb_change_window_attributes(connection, m_videoWidget->winId(), mask, &values);
+    setTransparentForMouseEvent(connection, m_videoWidget->winId());
     m_videoWidget->show();
 
     m_qmlView = std::make_unique<CompositorX11UISurface>(m_renderWindow.get());
+
     m_qmlView->setFlag(Qt::WindowType::WindowTransparentForInput);
     m_qmlView->setParent(m_renderWindow.get());
-    m_qmlView->winId();
+    m_qmlView->create();
+    CompositorVideo::Flags flags = CompositorVideo::CAN_SHOW_PIP | HAS_ACRYLIC;
+    if (m_renderWindow->supportExtendedFrame())
+        flags |= CompositorVideo::HAS_EXTENDED_FRAME;
+    if (!commonGUICreate(m_renderWindow.get(), m_qmlView.get(), flags))
+        return false;
+
     m_qmlView->show();
 
-    CompositorVideo::Flags flags = CompositorVideo::CAN_SHOW_PIP;
-    if (m_renderWindow->hasAcrylic())
-        flags |= CompositorVideo::HAS_ACRYLIC;
-    commonGUICreate(m_renderWindow.get(), nullptr, m_qmlView.get(), flags);
+    if (m_blurBehind)
+        m_renderWindow->m_hasAcrylic = true;
 
     m_renderWindow->setInterfaceWindow(m_qmlView.get());
     m_renderWindow->setVideoWindow(m_videoWidget->windowHandle());

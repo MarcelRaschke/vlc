@@ -30,6 +30,7 @@
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_vout_display.h>
+#include <vlc_actions.h>
 
 #include <ctype.h>
 #include <float.h>
@@ -140,7 +141,8 @@ struct open_init
     video_format_t *fmtp;
 };
 
-static void Prepare(vout_display_t *vd, picture_t *pic, subpicture_t *subpic, vlc_tick_t date)
+static void Prepare(vout_display_t *vd, picture_t *pic,
+                    const vlc_render_subpicture *subpic, vlc_tick_t date)
 {
     VLC_UNUSED(subpic);
     VLC_UNUSED(date);
@@ -404,9 +406,8 @@ static int Control( vout_display_t *vd, int query )
         return VLC_SUCCESS;
     }
 
-    case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
-    case VOUT_DISPLAY_CHANGE_ZOOM:
     case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
+    case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
     {
         vout_display_place_t place;
         vout_display_PlacePicture(&place, vd->source, &vd->cfg->display);
@@ -451,7 +452,7 @@ static int OpenDisplay( vout_display_t *vd, video_format_t *fmt )
     const vlc_fourcc_t *fallback;
     bool b_hw_accel = 0;
     FOURCC i_kva_fourcc;
-    int i_chroma_shift;
+    int i_chroma_shift = 0;
     int w, h;
 
     msg_Dbg( vd, "render chroma = %4.4s", ( const char * )&fmt->i_chroma );
@@ -474,37 +475,38 @@ static int OpenDisplay( vout_display_t *vd, video_format_t *fmt )
                 case VLC_CODEC_YUYV:
                     b_hw_accel = sys->kvac.ulInputFormatFlags & KVAF_YUY2;
                     i_kva_fourcc = FOURCC_Y422;
-                    i_chroma_shift = 0;
                     break;
 
-                case VLC_CODEC_YV9:
-                    b_hw_accel = sys->kvac.ulInputFormatFlags & KVAF_YVU9;
-                    i_kva_fourcc = FOURCC_YVU9;
-                    i_chroma_shift = 2;
+                case VLC_CODEC_RGB565:
+                    if (sys->kvac.ulInputFormatFlags & KVAF_BGR16)
+                    {
+                        b_hw_accel = true;
+                        i_kva_fourcc = FOURCC_R565;
+                    }
                     break;
 
-                case VLC_CODEC_RGB32:
-                    b_hw_accel = sys->kvac.ulInputFormatFlags & KVAF_BGR32;
-                    i_kva_fourcc = FOURCC_BGR4;
-                    i_chroma_shift = 0;
+                case VLC_CODEC_RGB555:
+                    if (sys->kvac.ulInputFormatFlags & KVAF_BGR15)
+                    {
+                        b_hw_accel = true;
+                        i_kva_fourcc = FOURCC_R555;
+                    }
                     break;
 
-                case VLC_CODEC_RGB24:
-                    b_hw_accel = sys->kvac.ulInputFormatFlags & KVAF_BGR24;
-                    i_kva_fourcc = FOURCC_BGR3;
-                    i_chroma_shift = 0;
+                case VLC_CODEC_BGRX:
+                    if (sys->kvac.ulInputFormatFlags & KVAF_BGR32)
+                    {
+                        b_hw_accel = true;
+                        i_kva_fourcc = FOURCC_BGR4;
+                    }
                     break;
 
-                case VLC_CODEC_RGB16:
-                    b_hw_accel = sys->kvac.ulInputFormatFlags & KVAF_BGR16;
-                    i_kva_fourcc = FOURCC_R565;
-                    i_chroma_shift = 0;
-                    break;
-
-                case VLC_CODEC_RGB15:
-                    b_hw_accel = sys->kvac.ulInputFormatFlags & KVAF_BGR15;
-                    i_kva_fourcc = FOURCC_R555;
-                    i_chroma_shift = 0;
+                case VLC_CODEC_BGR24:
+                    if (sys->kvac.ulInputFormatFlags & KVAF_BGR24)
+                    {
+                        b_hw_accel = true;
+                        i_kva_fourcc = FOURCC_BGR3;
+                    }
                     break;
             }
 
@@ -522,11 +524,6 @@ static int OpenDisplay( vout_display_t *vd, video_format_t *fmt )
 
         return VLC_EGENERIC;
     }
-
-    /* Set the RGB masks */
-    fmt->i_rmask = sys->kvac.ulRMask;
-    fmt->i_gmask = sys->kvac.ulGMask;
-    fmt->i_bmask = sys->kvac.ulBMask;
 
     msg_Dbg( vd, "output chroma = %4.4s", ( const char * )&fmt->i_chroma );
     msg_Dbg( vd, "KVA chroma = %4.4s", ( const char * )&i_kva_fourcc );
@@ -884,24 +881,12 @@ static MRESULT EXPENTRY WndProc( HWND hwnd, ULONG msg, MPARAM mp1, MPARAM mp2 )
         {
             SHORT i_mouse_x = SHORT1FROMMP( mp1 );
             SHORT i_mouse_y = SHORT2FROMMP( mp1 );
-            RECTL movie_rect;
-            int   i_movie_width, i_movie_height;
 
-            /* Get a current movie area */
-            kvaAdjustDstRect( &sys->kvas.rclSrcRect, &movie_rect );
-            i_movie_width = movie_rect.xRight - movie_rect.xLeft;
-            i_movie_height = movie_rect.yTop - movie_rect.yBottom;
+            int x = i_mouse_x;
+            int y = i_mouse_y;
 
-            vout_display_place_t place;
-            vout_display_PlacePicture(&place, vd->source, &vd->cfg->display);
-
-            int x = ( i_mouse_x - movie_rect.xLeft ) *
-                    place.width / i_movie_width + place.x;
-            int y = ( i_mouse_y - movie_rect.yBottom ) *
-                    place.height / i_movie_height;
-
-            /* Invert Y coordinate and add y offset */
-            y = ( place.height - y ) + place.y;
+            /* Invert Y coordinate */
+            y = vd->cfg.display.height - y;
 
             vlc_window_ReportMouseMoved( vd->cfg->window, x, y );
 

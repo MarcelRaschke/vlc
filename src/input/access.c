@@ -32,10 +32,9 @@
 #include <vlc_url.h>
 #include <vlc_modules.h>
 #include <vlc_interrupt.h>
+#include <vlc_access.h>
 
-#include <libvlc.h>
 #include "stream.h"
-#include "input_internal.h"
 
 struct vlc_access_private
 {
@@ -290,7 +289,10 @@ stream_t *stream_AccessNew(vlc_object_t *parent, input_thread_t *input,
 
     stream_t *s;
 
-    if (access->pf_block != NULL || access->pf_read != NULL)
+    // TODO: handle access->ops != NULL
+    // if ((access->ops != NULL && (access->ops->stream.block != NULL || access->ops->stream.read != NULL))
+    //     || (access->ops == NULL && (access->pf_block != NULL || access->pf_read != NULL)))
+    if (access->ops == NULL && (access->pf_block != NULL || access->pf_read != NULL))
     {
         struct vlc_access_stream_private *priv;
         s = vlc_stream_CustomNew(VLC_OBJECT(access), AStreamDestroy,

@@ -32,6 +32,8 @@
 #include <vlc_window.h>
 #include "../wasync_resize_compressor.h"
 
+#include <windows.h>
+
 #define HWND_TEXT N_("Window handle (HWND)")
 #define HWND_LONGTEXT N_( \
     "Video will be embedded in this pre-existing window. " \
@@ -148,7 +150,7 @@ static int Open(vlc_window_t *wnd)
         for (/*n = 0*/; used[n]; n++)
             if (used[n] == val)
             {
-                msg_Warn (wnd, "HWND 0x%p is busy", val);
+                msg_Warn (wnd, "HWND 0x%p is busy", (void*)val);
                 vlc_mutex_unlock (&serializer);
                 return VLC_EGENERIC;
             }

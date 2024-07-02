@@ -33,6 +33,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_tick.h>
 #include <assert.h>
 
 #include <time.h>
@@ -127,7 +128,7 @@ vlc_tick_t date_Decrement( date_t *p_date, uint32_t i_nb_samples )
     return p_date->date;
 }
 
-uint64_t NTPtime64(void)
+uint64_t vlc_ntp_time(void)
 {
     struct timespec ts;
 
@@ -150,6 +151,6 @@ struct timespec *vlc_tick_to_timespec(struct timespec *restrict ts,
     lldiv_t d = lldiv(tick, CLOCK_FREQ);
 
     ts->tv_sec = d.quot;
-    ts->tv_nsec = NS_FROM_VLC_TICK(d.rem);;
+    ts->tv_nsec = NS_FROM_VLC_TICK(d.rem);
     return ts;
 }

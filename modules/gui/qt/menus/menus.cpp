@@ -33,7 +33,7 @@
 #include <vlc_common.h>
 #include <vlc_intf_strings.h>
 #include <vlc_aout.h>                             /* audio_output_t */
-#include <vlc_player.h>
+#include <vlc_interface.h>
 
 #include "menus.hpp"
 
@@ -197,7 +197,7 @@ void VLCMenuBar::FileMenu(qt_intf_t *p_intf, QMenu *menu)
     {
         MLRecentsModel* recentModel = new MLRecentsModel(nullptr);
         recentModel->setMl(mi->getMediaLibrary());
-        recentModel->setNumberOfItemsToShow(10);
+        recentModel->setLimit(10);
         QMenu* recentsMenu = new RecentMenu(recentModel, mi->getMediaLibrary(), menu);
         recentsMenu->setTitle(qtr( "Open &Recent Media" ) );
         recentModel->setParent(recentsMenu);
@@ -209,18 +209,20 @@ void VLCMenuBar::FileMenu(qt_intf_t *p_intf, QMenu *menu)
     addDPStaticEntry( menu, qfut( I_PL_SAVE ), "", &DialogsProvider::savePlayingToPlaylist,
         "Ctrl+Y" );
 
-#ifdef ENABLE_SOUT
     addDPStaticEntry( menu, qtr( "Conve&rt / Save..." ), "",
         &DialogsProvider::openAndTranscodingDialogs, "Ctrl+R" );
     addDPStaticEntry( menu, qtr( "&Stream..." ),
         ":/menu/stream.svg", &DialogsProvider::openAndStreamingDialogs, "Ctrl+S" );
     menu->addSeparator();
-#endif
 
-    action = addMPLStaticEntry( p_intf, menu, qtr( "Quit at the end of playlist" ), "",
-                               &PlaylistControllerModel::playAndExitChanged );
+    action = menu->addAction( qtr( "Quit at the end of playlist" ), [playlist = THEMPL](bool checked){
+        if (checked)
+            playlist->setMediaStopAction(PlaylistController::MEDIA_STOPPED_EXIT);
+        else
+            playlist->setMediaStopAction(PlaylistController::MEDIA_STOPPED_CONTINUE);
+    });
     action->setCheckable( true );
-    action->setChecked( THEMPL->isPlayAndExit() );
+    action->setChecked( THEMPL->getMediaStopAction() ==  PlaylistController::MEDIA_STOPPED_EXIT);
 
     if( mi && mi->getSysTray() )
     {
@@ -237,10 +239,10 @@ void VLCMenuBar::FileMenu(qt_intf_t *p_intf, QMenu *menu)
  **/
 void VLCMenuBar::ToolsMenu( qt_intf_t *p_intf, QMenu *menu )
 {
-    addDPStaticEntry( menu, qtr( "&Effects and Filters"), ":/menu/settings.svg",
+    addDPStaticEntry( menu, qtr( "&Effects and Filters"), ":/menu/ic_fluent_options.svg",
             &DialogsProvider::extendedDialog, "Ctrl+E" );
 
-    addDPStaticEntry( menu, qtr( "&Track Synchronization"), ":/menu/setting.svgs",
+    addDPStaticEntry( menu, qtr( "&Track Synchronization"), ":/menu/ic_fluent_options.svg",
             &DialogsProvider::synchroDialog, "" );
 
     addDPStaticEntry( menu, qfut( I_MENU_INFO ) , ":/menu/info.svg",
@@ -296,9 +298,25 @@ void VLCMenuBar::ViewMenu( qt_intf_t *p_intf, QMenu *menu )
         if( m && m->parent() == menu ) delete m;
     }
 
+    QString title;
+
+    if (mi->hasMediaLibrary())
+        title = qtr("Media Library");
+    else
+        title = qtr("Browse and Discover");
+
     action = menu->addAction(
 #ifndef __APPLE__
-            QIcon( ":/menu/playlist.svg" ),
+            QIcon( ":/menu/media_library.svg" ),
+#endif
+            title);
+    action->setCheckable( true );
+    connect( action, &QAction::triggered, mi, &MainCtx::setMediaLibraryVisible );
+    action->setChecked( mi->isMediaLibraryVisible() );
+
+    action = menu->addAction(
+#ifndef __APPLE__
+            QIcon( ":/menu/ic_playlist.svg" ),
 #endif
             qtr( "Play&list" ));
     action->setShortcut(QString( "Ctrl+L" ));
@@ -565,32 +583,32 @@ void VLCMenuBar::PopupMenuPlaylistEntries( QMenu *menu, qt_intf_t *p_intf )
                 THEMPL->togglePlayPause();
         });
 #ifndef __APPLE__ /* No icons in menus in Mac */
-        action->setIcon( QIcon( ":/menu/play.svg" ) );
+        action->setIcon( QIcon( ":/menu/ic_fluent_play_filled.svg" ) );
 #endif
     }
     else
     {
         action = addMPLStaticEntry( p_intf, menu, qtr( "Pause" ),
-                ":/menu/pause.svg", &PlaylistControllerModel::togglePlayPause );
+                ":/menu/ic_pause_filled.svg", &PlaylistController::togglePlayPause );
     }
 
     /* Stop */
     action = addMPLStaticEntry( p_intf, menu, qtr( "&Stop" ),
-            ":/menu/stop.svg", &PlaylistControllerModel::stop );
+            ":/menu/ic_fluent_stop.svg", &PlaylistController::stop );
     if( !hasInput )
         action->setEnabled( false );
 
     /* Next / Previous */
     bool bPlaylistEmpty = THEMPL->isEmpty();
     QAction* previousAction = addMPLStaticEntry( p_intf, menu, qtr( "Pre&vious" ),
-            ":/menu/previous.svg", &PlaylistControllerModel::prev );
+            ":/menu/ic_fluent_previous.svg", &PlaylistController::prev );
     previousAction->setEnabled( !bPlaylistEmpty );
-    connect( THEMPL, &PlaylistControllerModel::isEmptyChanged, previousAction, &QAction::setDisabled);
+    connect( THEMPL, &PlaylistController::isEmptyChanged, previousAction, &QAction::setDisabled);
 
     QAction* nextAction = addMPLStaticEntry( p_intf, menu, qtr( "Ne&xt" ),
-            ":/menu/next.svg", &PlaylistControllerModel::next );
+            ":/menu/ic_fluent_next.svg", &PlaylistController::next );
     nextAction->setEnabled( !bPlaylistEmpty );
-    connect( THEMPL, &PlaylistControllerModel::isEmptyChanged, nextAction, &QAction::setDisabled);
+    connect( THEMPL, &PlaylistController::isEmptyChanged, nextAction, &QAction::setDisabled);
 
     action = menu->addAction( qtr( "Record" ), THEMIM, &PlayerController::toggleRecord );
     action->setIcon( QIcon( ":/menu/record.svg" ) );
@@ -612,17 +630,17 @@ void VLCMenuBar::PopupMenuControlEntries( QMenu *menu, qt_intf_t *p_intf,
         action = rateMenu->addAction( qtr( "&Faster" ), THEMIM,
                                   &PlayerController::faster );
 #ifndef __APPLE__ /* No icons in menus in Mac */
-        action->setIcon( QIcon( ":/menu/faster.svg") );
+        action->setIcon( QIcon( ":/menu/ic_fluent_fast_forward.svg") );
 #endif
     }
 
-    action = rateMenu->addAction( QIcon( ":/menu/faster.svg" ), qtr( "Faster (fine)" ), THEMIM,
+    action = rateMenu->addAction( QIcon( ":/menu/ic_fluent_fast_forward.svg" ), qtr( "Faster (fine)" ), THEMIM,
                               &PlayerController::littlefaster );
 
     action = rateMenu->addAction( qtr( "N&ormal Speed" ), THEMIM,
                               &PlayerController::normalRate );
 
-    action = rateMenu->addAction( QIcon( ":/menu/slower.svg" ), qtr( "Slower (fine)" ), THEMIM,
+    action = rateMenu->addAction( QIcon( ":/menu/ic_fluent_rewind.svg" ), qtr( "Slower (fine)" ), THEMIM,
                               &PlayerController::littleslower );
 
     if( b_normal )
@@ -630,7 +648,7 @@ void VLCMenuBar::PopupMenuControlEntries( QMenu *menu, qt_intf_t *p_intf,
         action = rateMenu->addAction( qtr( "Slo&wer" ), THEMIM,
                                   &PlayerController::slower );
 #ifndef __APPLE__ /* No icons in menus in Mac */
-        action->setIcon( QIcon( ":/menu/slower.svg") );
+        action->setIcon( QIcon( ":/menu/ic_fluent_rewind.svg") );
 #endif
     }
 
@@ -643,13 +661,13 @@ void VLCMenuBar::PopupMenuControlEntries( QMenu *menu, qt_intf_t *p_intf,
     action = menu->addAction( qtr( "&Jump Forward" ), THEMIM,
              &PlayerController::jumpFwd );
 #ifndef __APPLE__ /* No icons in menus in Mac */
-    action->setIcon( QIcon( ":/menu/skip_fw.svg") );
+    action->setIcon( QIcon( ":/menu/ic_fluent_skip_forward_10.svg") );
 #endif
 
     action = menu->addAction( qtr( "Jump Bac&kward" ), THEMIM,
              &PlayerController::jumpBwd );
 #ifndef __APPLE__ /* No icons in menus in Mac */
-    action->setIcon( QIcon( ":/menu/skip_back.svg") );
+    action->setIcon( QIcon( ":/menu/ic_fluent_skip_back_10.svg") );
 #endif
 
     action = menu->addAction( qfut( I_MENU_GOTOTIME ), THEDP, &DialogsProvider::gotoTimeDialog, qtr( "Ctrl+T" ) );
@@ -732,7 +750,7 @@ QMenu* VLCMenuBar::PopupMenu( qt_intf_t *p_intf, bool show )
     if( p_input )
     {
         QMenu *submenu;
-        PlayerController::VoutPtr p_vout = THEMIM->getVout();
+        SharedVOutThread p_vout = THEMIM->getVout();
 
         /* Add a fullscreen switch button, since it is the most used function */
         if( p_vout )
@@ -916,7 +934,7 @@ void VLCMenuBar::updateAudioDevice( qt_intf_t * p_intf, QMenu *current )
         return;
 
     current->clear();
-    PlayerController::AoutPtr aout = THEMIM->getAout();
+    SharedAOut aout = THEMIM->getAout();
     if (!aout)
         return;
 
@@ -932,7 +950,7 @@ void VLCMenuBar::updateAudioDevice( qt_intf_t * p_intf, QMenu *current )
     for( int i = 0; i < i_result; i++ )
     {
         action = new QAction( qfue( names[i] ), actionGroup );
-        action->setData( ids[i] );
+        action->setData( qfu(ids[i]) );
         action->setCheckable( true );
         if( (selected && !strcmp( ids[i], selected ) ) ||
             (selected == NULL && ids[i] && ids[i][0] == '\0' ) )

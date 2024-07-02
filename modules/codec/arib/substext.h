@@ -43,64 +43,47 @@ typedef struct arib_text_region_s
 typedef struct
 {
     arib_text_region_t *p_region;
+    bool               first;
 } arib_spu_updater_sys_t;
 
-static int SubpictureTextValidate(subpicture_t *subpic,
-                                  bool has_src_changed, const video_format_t *fmt_src,
-                                  bool has_dst_changed, const video_format_t *fmt_dst,
-                                  vlc_tick_t ts)
-{
-    arib_spu_updater_sys_t *sys = subpic->updater.p_sys;
-    VLC_UNUSED(fmt_src); VLC_UNUSED(fmt_dst); VLC_UNUSED(ts);
-    VLC_UNUSED(sys);
-
-    if (!has_src_changed && !has_dst_changed)
-    {
-        return VLC_SUCCESS;
-    }
-    return VLC_EGENERIC;
-}
 static void SubpictureTextUpdate(subpicture_t *subpic,
-                                 const video_format_t *fmt_src,
-                                 const video_format_t *fmt_dst,
+                                 const video_format_t *prev_src, const video_format_t *fmt_src,
+                                 const video_format_t *prev_dst, const video_format_t *fmt_dst,
                                  vlc_tick_t ts)
 {
-    arib_spu_updater_sys_t *sys = subpic->updater.p_sys;
+    arib_spu_updater_sys_t *sys = subpic->updater.sys;
     VLC_UNUSED(fmt_src); VLC_UNUSED(ts);
+    VLC_UNUSED(prev_src); VLC_UNUSED(prev_dst);
 
-    if (fmt_dst->i_sar_num <= 0 || fmt_dst->i_sar_den <= 0)
-    {
+    if ( !sys->first )
         return;
-    }
 
-    video_format_t fmt;
-    video_format_Init(&fmt, VLC_CODEC_TEXT);
-    fmt.i_sar_num = 1;
-    fmt.i_sar_den = 1;
+    assert( vlc_spu_regions_is_empty( &subpic->regions ) );
 
-    subpicture_region_t *r = NULL;
+    assert(fmt_dst->i_sar_num && fmt_dst->i_sar_den);
+
+    subpicture_region_t *r;
     arib_text_region_t *p_region;
     for( p_region = sys->p_region; p_region; p_region = p_region->p_next )
     {
-        if( !r )
-        {
-            subpic->p_region = r = subpicture_region_New(&fmt);
-        }
-        else
-        {
-            r->p_next = subpicture_region_New(&fmt);
-            r = r->p_next;
-        }
+        r = subpicture_region_NewText();
         if( r == NULL )
         {
             return;
         }
+        vlc_spu_regions_push(&subpic->regions, r);
+        r->fmt.i_sar_num = 1;
+        r->fmt.i_sar_den = 1;
 
         r->p_text = text_segment_New( p_region->psz_text );
+        r->b_absolute = true;
         r->i_align  = SUBPICTURE_ALIGN_LEFT | SUBPICTURE_ALIGN_TOP;
 
-        subpic->i_original_picture_width  = p_region->i_planewidth;
-        subpic->i_original_picture_height  = p_region->i_planeheight;
+        if (p_region->i_planewidth > 0 && p_region->i_planeheight > 0)
+        {
+            subpic->i_original_picture_width  = p_region->i_planewidth;
+            subpic->i_original_picture_height  = p_region->i_planeheight;
+        }
 
         r->i_x = p_region->i_charleft - (p_region->i_fontwidth + p_region->i_horint / 2) + p_region->i_charleft_adj;
         r->i_y = p_region->i_charbottom - (p_region->i_fontheight + p_region->i_verint / 2) + p_region->i_charbottom_adj;
@@ -116,10 +99,11 @@ static void SubpictureTextUpdate(subpicture_t *subpic,
         }
         r->p_text->style->i_spacing = p_region->i_horint;
     }
+    sys->first = false;
 }
 static void SubpictureTextDestroy(subpicture_t *subpic)
 {
-    arib_spu_updater_sys_t *sys = subpic->updater.p_sys;
+    arib_spu_updater_sys_t *sys = subpic->updater.sys;
 
     arib_text_region_t *p_region, *p_region_next;
     for( p_region = sys->p_region; p_region; p_region = p_region_next )
@@ -137,11 +121,18 @@ static inline subpicture_t *decoder_NewSubpictureText(decoder_t *decoder)
 {
     arib_spu_updater_sys_t *sys = (arib_spu_updater_sys_t*)
         calloc( 1, sizeof(arib_spu_updater_sys_t) );
+
+    static const struct vlc_spu_updater_ops spu_ops =
+    {
+        .update   = SubpictureTextUpdate,
+        .destroy  = SubpictureTextDestroy,
+    };
+
+    sys->first = true;
+
     subpicture_updater_t updater = {
-        .pf_validate = SubpictureTextValidate,
-        .pf_update   = SubpictureTextUpdate,
-        .pf_destroy  = SubpictureTextDestroy,
-        .p_sys       = sys,
+        .sys = sys,
+        .ops = &spu_ops,
     };
     subpicture_t *subpic = decoder_NewSubpicture(decoder, &updater);
     if( subpic == NULL )

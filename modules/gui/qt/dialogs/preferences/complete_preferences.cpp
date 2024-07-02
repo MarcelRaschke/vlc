@@ -37,7 +37,7 @@
 #include "dialogs/preferences/preferences_widgets.hpp"
 
 #include <vlc_modules.h>
-#include <assert.h>
+#include <cassert>
 
 #define ITEM_HEIGHT 25
 
@@ -160,9 +160,10 @@ PrefsTree::PrefsTree( qt_intf_t *_p_intf, QWidget *_parent,
     // the top-level cat nodes into a preferred order.
     sortItems( 0, Qt::AscendingOrder );
     unsigned index = 0;
-    for (unsigned i = 0; i < ARRAY_SIZE(categories_array); i++)
+    for (unsigned i = 0; i < vlc_config_cat_Count(); i++)
     {
-        cat_item = findCatItem( categories_array[i].id );
+        const config_category_t *cat = vlc_config_cat_GetAt(i);
+        cat_item = findCatItem(cat->id);
         if ( cat_item == NULL )
             continue;
         unsigned cur_index = (unsigned)indexOfTopLevelItem( cat_item );
@@ -209,10 +210,8 @@ QTreeWidgetItem *PrefsTree::createCatNode( enum vlc_config_cat cat )
     item->setIcon( 0, icon );
     //current_item->setSizeHint( 0, QSize( -1, ITEM_HEIGHT ) );
 
-    int cat_index = (int) vlc_config_cat_IndexOf( cat );
-    int general_subcat_index = (int) vlc_config_subcat_IndexOf( general_subcat );
-    this->catMap[cat_index] = item;
-    this->subcatMap[general_subcat_index] = item;
+    this->catMap[cat] = item;
+    this->subcatMap[general_subcat] = item;
 
     addTopLevelItem( item );
     expandItem( item );
@@ -235,8 +234,7 @@ QTreeWidgetItem *PrefsTree::createSubcatNode( QTreeWidgetItem * cat, enum vlc_co
     item->setText( 0, item->name );
     //item->setSizeHint( 0, QSize( -1, ITEM_HEIGHT ) );
 
-    int subcat_index = (int) vlc_config_subcat_IndexOf( subcat );
-    this->subcatMap[subcat_index] = item;
+    this->subcatMap[subcat] = item;
 
     cat->addChild( item );
 
@@ -257,8 +255,9 @@ void PrefsTree::createPluginNode( QTreeWidgetItem * parent, module_t *mod )
     const char *help = module_get_help( mod );
     if( help )
         item->help = qfut( help );
-    else
-        item->help.clear();
+    const char *help_html = module_get_help_html( mod );
+    if( help_html )
+        item->help_html = qfut( help_html );
 
     item->setText( 0, item->name );
     //item->setSizeHint( 0, QSize( -1, ITEM_HEIGHT ) );
@@ -268,14 +267,18 @@ void PrefsTree::createPluginNode( QTreeWidgetItem * parent, module_t *mod )
 
 QTreeWidgetItem *PrefsTree::findCatItem( enum vlc_config_cat cat )
 {
-    int cat_index = vlc_config_cat_IndexOf( cat );
-    return this->catMap[cat_index];
+    auto it = this->catMap.find(cat);
+    if (it == std::end(this->catMap))
+        return NULL;
+    return it->second;
 }
 
 QTreeWidgetItem *PrefsTree::findSubcatItem( enum vlc_config_subcat subcat )
 {
-    int subcat_index = vlc_config_subcat_IndexOf( subcat );
-    return this->subcatMap[subcat_index];
+    auto it = this->subcatMap.find(subcat);
+    if (it == std::end(this->subcatMap))
+        return NULL;
+    return it->second;
 }
 
 void PrefsTree::applyAll()
@@ -446,14 +449,12 @@ bool PrefsTreeItem::contains( const QString &text, Qt::CaseSensitivity cs )
     /* check the node itself (its name/longname/helptext) */
 
     QString head;
-    if( is_core )
-        head.clear();
-    else
+    if( !is_core )
         head = QString( qfut( module_GetLongName( p_module ) ) );
 
     if ( name.contains( text, cs )
          || (!is_core && head.contains( text, cs ))
-         || help.contains( text, cs )
+         || (!help_html.isEmpty() ? help_html.contains( text, cs ) : help.contains( text, cs ))
        )
     {
         return true;
@@ -566,8 +567,19 @@ AdvPrefsPanel::AdvPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
     title_line->setFrameShape(QFrame::HLine);
     title_line->setFrameShadow(QFrame::Sunken);
 
-    QLabel *helpLabel = new QLabel( node->help, this );
+    QLabel *helpLabel = new QLabel( this );
     helpLabel->setWordWrap( true );
+    if( node->help_html.isEmpty() )
+    {
+        helpLabel->setText( node->help );
+        helpLabel->setTextFormat( Qt::PlainText );
+    }
+    else
+    {
+        helpLabel->setText( node->help_html );
+        helpLabel->setTextFormat( Qt::RichText );
+        helpLabel->setOpenExternalLinks( true );
+    }
 
     global_layout->addWidget( titleLabel );
     global_layout->addWidget( title_line );

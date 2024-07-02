@@ -161,12 +161,9 @@ if [ "$I18N" != "yes" ]; then
      CONFIGFLAGS="$CONFIGFLAGS --disable-nls"
 fi
 if [ ! -z "$EXTRA_CHECKS" ]; then
-    CFLAGS="$CFLAGS -Werror=incompatible-pointer-types -Werror=missing-field-initializers"
+    CONFIGFLAGS="$CONFIGFLAGS --enable-extra-checks"
 fi
 
-ac_cv_path_MOC="qtchooser -qt=qt5-$TRIPLET -run-tool=moc" \
-ac_cv_path_RCC="qtchooser -qt=qt5-$TRIPLET -run-tool=rcc" \
-ac_cv_path_UIC="qtchooser -qt=qt5-$TRIPLET -run-tool=uic" \
 ${SCRIPT_PATH}/configure.sh --host=$TRIPLET $CONFIGFLAGS
 
 info "Compiling"

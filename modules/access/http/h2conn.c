@@ -33,6 +33,8 @@
 # include <sys/uio.h>
 #endif
 #include <vlc_common.h>
+#include <vlc_threads.h>
+#include <vlc_poll.h>
 #include <vlc_block.h>
 #include <vlc_interrupt.h>
 #include <vlc_tls.h>
@@ -499,7 +501,9 @@ static const struct vlc_http_stream_cbs vlc_h2_stream_callbacks =
  * Headers are sent asynchronously. To obtain the result and answer from the
  * other end, use vlc_http_stream_recv_headers().
  *
+ * \param c the HTTP connection to initialize the stream from
  * \param msg HTTP message headers (including response status or request)
+ * \param has_data whether the HTTP request will have a request payload
  * \return an HTTP stream, or NULL on error
  */
 static struct vlc_http_stream *vlc_h2_stream_open(struct vlc_http_conn *c,

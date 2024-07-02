@@ -28,14 +28,7 @@
 #include <vlc_clock.h>
 
 typedef struct input_thread_t input_thread_t;
-
-/* It should be high enough to absorbe jitter due to difficult picture(s)
- * to decode but not too high as memory is not that cheap.
- *
- * It can be made lower at compilation time if needed, but performance
- * may be degraded.
- */
-#define VOUT_MAX_PICTURES (20)
+typedef struct vlc_spu_highlight_t vlc_spu_highlight_t;
 
 /**
  * Vout configuration

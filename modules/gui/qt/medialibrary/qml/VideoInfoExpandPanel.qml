@@ -15,10 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQml.Models 2.11
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Controls
+import QtQml.Models
+import QtQuick.Layouts
 
 import org.videolan.medialib 0.1
 import org.videolan.controls 0.1
@@ -116,10 +116,14 @@ FocusScope {
                             anchors.fill: parent
                             source: model.thumbnail || VLCStyle.noArtVideoCover
                             radius: VLCStyle.gridCover_radius
-                        }
 
-                        Widgets.ListCoverShadow {
-                            anchors.fill: expand_cover_id
+                            Widgets.DefaultShadow {
+                                anchors.centerIn: parent
+
+                                sourceItem: parent
+
+                                visible: (parent.status === RoundImage.Ready)
+                            }
                         }
                     }
 
@@ -133,8 +137,8 @@ FocusScope {
                             Widgets.ActionButtonPrimary {
                                 id: playActionBtn
 
-                                iconTxt: VLCIcons.play_outline
-                                text: I18n.qtr("Play")
+                                iconTxt: VLCIcons.play
+                                text: qsTr("Play")
                                 onClicked: MediaLib.addAndPlay( model.id )
                             }
 
@@ -142,7 +146,7 @@ FocusScope {
                                 id: enqueueActionBtn
 
                                 iconTxt: VLCIcons.enqueue
-                                text: I18n.qtr("Enqueue")
+                                text: qsTr("Enqueue")
                                 onClicked: MediaLib.addToPlaylist( model.id )
                             }
                         }
@@ -165,7 +169,7 @@ FocusScope {
                     width: parent.width
 
                     Widgets.SubtitleLabel {
-                        text: model.title || I18n.qtr("Unknown title")
+                        text: model.title || qsTr("Unknown title")
                         color: theme.fg.primary
 
                         Layout.fillWidth: true
@@ -174,7 +178,9 @@ FocusScope {
                     Widgets.IconToolButton {
                         id: closeButton
 
-                        iconText: VLCIcons.close
+                        text: VLCIcons.close
+
+                        description: qsTr("Close")
 
                         onClicked: root.retract()
 
@@ -191,27 +197,46 @@ FocusScope {
 
                 Widgets.MenuCaption {
                     topPadding: VLCStyle.margin_normal
-                    text: "<b>" + I18n.qtr("File Name:") + "</b> " + root.model.fileName
+                    text: "<b>" + qsTr("File Name:") + "</b> " + root.model.fileName
                     width: parent.width
                     color: theme.fg.secondary
                     textFormat: Text.StyledText
                 }
 
                 Widgets.MenuCaption {
-                    text: "<b>" + I18n.qtr("Path:") + "</b> " + root.model.display_mrl
+
+                    readonly property string folderMRL: MainCtx.folderMRL(root.model?.mrl ?? "")
+
+                    text: {
+                        if (!!folderMRL)
+                            return "<b>%1</b> <a href='%2'>%3</a>"
+                                        .arg(qsTr("Folder:"))
+                                        .arg(folderMRL)
+                                        .arg(MainCtx.displayMRL(folderMRL))
+
+                        return "<b>" + qsTr("Path:") + "</b> " + root.model.display_mrl
+                    }
+
+                    linkColor: theme.fg.link
                     color: theme.fg.secondary
                     topPadding: VLCStyle.margin_xsmall
                     bottomPadding: VLCStyle.margin_large
                     width: parent.width
                     textFormat: Text.StyledText
+
+                    onLinkActivated: function (link) {
+                        Qt.openUrlExternally(link)
+                    }
                 }
 
                 Widgets.ButtonExt {
                     id: showMoreButton
 
-                    text: root._showMoreInfo ? I18n.qtr("View Less") : I18n.qtr("View More")
+                    text: root._showMoreInfo ? qsTr("View Less") : qsTr("View More")
                     iconTxt: VLCIcons.expand
                     iconRotation: root._showMoreInfo ? -180 : 0
+                    visible: (root.model.audioDesc?.length > 0)
+                             || (root.model.videoDesc?.length > 0)
 
                     Behavior on iconRotation {
                         NumberAnimation {
@@ -243,91 +268,86 @@ FocusScope {
                         }
                     }
 
-                    Repeater {
-                        model: [
-                            {
-                                "title": I18n.qtr("Video track"),
-                                "model": videoDescModel
-                            },
-                            {
-                                "title": I18n.qtr("Audio track"),
-                                "model": audioDescModel
-                            }
+                    DescriptionList {
+                        title: qsTr("Video track")
+
+                        sourceModel: root.model.videoDesc
+
+                        delegateModel:  [
+                            {text: qsTr("Codec:"), role: "codec" },
+                            {text: qsTr("Language:"), role: "language" },
+                            {text: qsTr("FPS:"), role: "fps" }
                         ]
+                    }
 
-                        delegate: Column {
-                            visible: delgateRepeater.count > 0
+                    DescriptionList {
+                        title: qsTr("Audio track")
 
-                            Widgets.MenuCaption {
-                                text: modelData.title
-                                color: theme.fg.secondary
-                                font.bold: true
-                                bottomPadding: VLCStyle.margin_small
-                            }
+                        sourceModel: root.model.videoDesc
 
-                            Repeater {
-                                id: delgateRepeater
+                        delegateModel:  [
+                            {text: qsTr("Codec:"), role: "codec" },
+                            {text: qsTr("Language:"), role: "language" },
+                            {text: qsTr("Channel:"), role: "nbchannels" }
+                        ]
+                    }
 
-                                model: modelData.model
-                            }
-                        }
+                    DescriptionList {
+                        title: qsTr("Subtitle track")
+
+                        sourceModel: [{"text": root.model.subtitleDesc?.map(desc => desc.language)
+                                                    .filter(l => !!l).join(", ")}]
+
+                        delegateModel:  [
+                            {text: qsTr("Language:"), role: "text" }
+                        ]
                     }
                 }
             }
         }
     }
 
-    ObjectModel {
-        id: videoDescModel
+    component DescriptionList : Column {
+        id: column
 
-        Repeater {
-            model: root.model.videoDesc
+        property alias title: titleTxt.text
 
-            // TODO: use inline Component for Qt > 5.14
-            delegate: Repeater {
-                id: videoDescRepeaterDelegate
+        property alias sourceModel: sourceRepeater.model
 
-                readonly property bool isFirst: (index === 0)
+        // [["caption": <str>, "role": <str>].,.]
+        property var delegateModel
 
-                model: [
-                    {text: I18n.qtr("Codec:"), data: modelData.codec },
-                    {text: I18n.qtr("Language:"), data: modelData.language },
-                    {text: I18n.qtr("FPS:"), data: modelData.fps }
-                ]
+        Widgets.MenuCaption {
+            id: titleTxt
 
-                delegate: Widgets.MenuCaption {
-                    topPadding: (!videoDescRepeaterDelegate.isFirst) && (index === 0) ? VLCStyle.margin_small : 0
-                    text: modelData.text + " " + modelData.data
-                    color: theme.fg.secondary
-                    bottomPadding: VLCStyle.margin_xsmall
-                }
-            }
+            color: theme.fg.secondary
+            font.bold: true
+            bottomPadding: VLCStyle.margin_small
         }
-    }
 
-    ObjectModel {
-        id: audioDescModel
-
-        // TODO: use inline Component for Qt > 5.14
         Repeater {
-            model: root.model.audioDesc
+            id: sourceRepeater
 
-            delegate: Repeater {
-                id: audioDescRepeaterDelegate
+            Repeater {
+                id: delegateRepeater
 
+                model: column.delegateModel
+
+                required property var modelData
+                required property int index
                 readonly property bool isFirst: (index === 0)
 
-                model: [
-                    {text: I18n.qtr("Codec:"), data: modelData.codec },
-                    {text: I18n.qtr("Language:"), data: modelData.language },
-                    {text: I18n.qtr("Channel:"), data: modelData.nbchannels }
-                ]
+                Widgets.MenuCaption {
+                    required property var modelData
+                    required property int index
 
-                delegate: Widgets.MenuCaption {
-                    topPadding: (!audioDescRepeaterDelegate.isFirst) && (index === 0) ? VLCStyle.margin_small : 0
-                    text: modelData.text + " " + modelData.data
-                    bottomPadding: VLCStyle.margin_xsmall
+                    property string description: delegateRepeater.modelData[modelData.role] ?? ""
+
+                    visible: !!description
+                    text: modelData.text + " " + description
+                    topPadding: (!delegateRepeater.isFirst) && (index === 0) ? VLCStyle.margin_small : 0
                     color: theme.fg.secondary
+                    bottomPadding: VLCStyle.margin_xsmall
                 }
             }
         }

@@ -39,7 +39,7 @@
 {
     self = [super initWithFrame:frameRect];
     if (self) {
-        [self setupLayer];
+        [self setup];
     }
     return self;
 }
@@ -48,31 +48,48 @@
 {
     self = [super initWithCoder:decoder];
     if (self) {
-        [self setupLayer];
+        [self setup];
     }
     return self;
 }
 
-- (void)setupLayer
+- (void)setup
 {
-    self.layer = [[CALayer alloc] init];
-    self.contentGravity = VLCImageViewContentGravityResizeAspectFill;
     self.wantsLayer = YES;
-    [self setCropsImagesToRoundedCorners:YES];
-    [self setupBorderColor];
+    self.layerContentsRedrawPolicy = NSViewLayerContentsRedrawOnSetNeedsDisplay;
+    self.contentGravity = VLCImageViewContentGravityResizeAspectFill;
+    self.cropsImagesToRoundedCorners = YES;
+    self.needsDisplay = YES;
+}
+
+- (void)updateLayer
+{
+    self.layer.borderColor = self.shouldShowDarkAppearance ? NSColor.VLCDarkSubtleBorderColor.CGColor : NSColor.VLCLightSubtleBorderColor.CGColor;
+    [self updateLayerImageCornerCropping];
+    [self updateLayerContentGravity];
+    [self updateLayerImage];
+}
+
+- (BOOL)wantsUpdateLayer
+{
+    return YES;
+}
+
+- (void)updateLayerImageCornerCropping
+{
+    if (self.cropsImagesToRoundedCorners) {
+        self.layer.cornerRadius = 5.;
+        self.layer.borderWidth = 1.;
+    } else {
+        self.layer.cornerRadius = 0.;
+        self.layer.borderWidth = 0.;
+    }
 }
 
 - (void)setCropsImagesToRoundedCorners:(BOOL)cropsImagesToRoundedCorners
 {
-    if (cropsImagesToRoundedCorners) {
-        self.layer.cornerRadius = 5.;
-        self.layer.masksToBounds = YES;
-        self.layer.borderWidth = 2.;
-    } else {
-        self.layer.cornerRadius = 0.;
-        self.layer.masksToBounds = NO;
-        self.layer.borderWidth = 0.;
-    }
+    self.layer.masksToBounds = cropsImagesToRoundedCorners;
+    [self updateLayerImageCornerCropping];
 }
 
 - (BOOL)cropsImagesToRoundedCorners
@@ -80,31 +97,27 @@
     return self.layer.masksToBounds;
 }
 
-- (void)setupBorderColor
+- (void)updateLayerImage
 {
-    if (self.shouldShowDarkAppearance) {
-        self.layer.borderColor = [NSColor VLClibraryItemBorderDarkColor].CGColor;
-    } else {
-        self.layer.borderColor = [NSColor VLClibraryItemBorderLightColor].CGColor;
-    }
+    const CGFloat desiredScaleFactor = [self.window backingScaleFactor];
+    const CGFloat actualScaleFactor = [_image recommendedLayerContentsScale:desiredScaleFactor];
+
+    const id layerContents = [_image layerContentsForContentsScale:actualScaleFactor];
+
+    [self updateLayerContentGravity];
+    self.layer.contents = layerContents;
+    self.layer.contentsScale = actualScaleFactor;
 }
 
 - (void)setImage:(NSImage *)image
 {
     _image = image;
-    CGFloat desiredScaleFactor = [self.window backingScaleFactor];
-    CGFloat actualScaleFactor = [image recommendedLayerContentsScale:desiredScaleFactor];
-
-    id layerContents = [image layerContentsForContentsScale:actualScaleFactor];
-
-    [self setCAContentGravity:_contentGravity];
-    [self.layer setContents:layerContents];
-    [self.layer setContentsScale:actualScaleFactor];
+    [self updateLayerImage];
 }
 
-- (void)setCAContentGravity:(VLCImageViewContentGravity)contentGravity
+- (void)updateLayerContentGravity
 {
-    switch (contentGravity) {
+    switch (_contentGravity) {
         case VLCImageViewContentGravityCenter:
             self.layer.contentsGravity = kCAGravityCenter;
             break;
@@ -145,9 +158,10 @@
     }
 }
 
-- (void)viewDidChangeEffectiveAppearance
+- (void)setContentGravity:(VLCImageViewContentGravity)contentGravity
 {
-    [self setupBorderColor];
+    _contentGravity = contentGravity;
+    [self updateLayerContentGravity];
 }
 
 - (void)setImageURL:(NSURL * _Nonnull)artworkURL placeholderImage:(NSImage * _Nullable)image
@@ -157,12 +171,12 @@
     }
 
     _currentArtworkURL = artworkURL;
-    [self setImage:image];
+    self.image = image;
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
-        NSImage *downloadedImage = [[NSImage alloc] initWithContentsOfURL:artworkURL];
+        NSImage * const downloadedImage = [[NSImage alloc] initWithContentsOfURL:artworkURL];
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self setImage:downloadedImage];
+            self.image = downloadedImage;
         });
     });
 }

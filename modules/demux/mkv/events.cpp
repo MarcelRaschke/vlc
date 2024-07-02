@@ -27,6 +27,7 @@
 
 #include <vlc_actions.h>
 #include <vlc_threads.h>
+#include <vlc_subpicture.h> // vlc_spu_highlight_t
 
 #include <algorithm>
 
@@ -59,10 +60,10 @@ void event_thread_t::SetPci(const pci_t *data)
         btni_t *button_ptr = &(pci_packet.hli.btnit[button-1]);
         binary *p_data = (binary*) button_ptr;
 
-        uint16 i_x_start = ((p_data[0] & 0x3F) << 4 ) + ( p_data[1] >> 4 );
-        uint16 i_x_end   = ((p_data[1] & 0x03) << 8 ) + p_data[2];
-        uint16 i_y_start = ((p_data[3] & 0x3F) << 4 ) + ( p_data[4] >> 4 );
-        uint16 i_y_end   = ((p_data[4] & 0x03) << 8 ) + p_data[5];
+        uint16_t i_x_start = ((p_data[0] & 0x3F) << 4 ) + ( p_data[1] >> 4 );
+        uint16_t i_x_end   = ((p_data[1] & 0x03) << 8 ) + p_data[2];
+        uint16_t i_y_start = ((p_data[3] & 0x3F) << 4 ) + ( p_data[4] >> 4 );
+        uint16_t i_y_end   = ((p_data[4] & 0x03) << 8 ) + p_data[5];
         button_ptr->x_start = i_x_start;
         button_ptr->x_end   = i_x_end;
         button_ptr->y_start = i_y_start;
@@ -93,6 +94,20 @@ void event_thread_t::ResetPci()
     is_running = false;
 }
 
+int event_thread_t::SendEventNav( int nav_query )
+{
+    if( !is_running )
+        return VLC_EGENERIC;
+
+    vlc_mutex_locker lock_guard( &lock );
+
+    pending_events.push_back( EventInfo( nav_query ) );
+
+    vlc_cond_signal( &wait );
+
+    return VLC_SUCCESS;
+}
+
 void event_thread_t::EventMouse( vlc_mouse_t const* new_state, void* userdata )
 {
     ESInfo* info = static_cast<ESInfo*>( userdata );
@@ -108,30 +123,11 @@ void event_thread_t::EventMouse( vlc_mouse_t const* new_state, void* userdata )
     info->mouse_state = *new_state;
 }
 
-int event_thread_t::EventKey( vlc_object_t *p_this, char const *,
-                              vlc_value_t, vlc_value_t newval, void *p_data )
-{
-    event_thread_t* owner = static_cast<event_thread_t*>( p_data );
-    vlc_mutex_locker lock_guard( &owner->lock );
-
-    owner->pending_events.push_back(
-        EventInfo( static_cast<vlc_action_id_t>( newval.i_int ) ) );
-
-    vlc_cond_signal( &owner->wait );
-    msg_Dbg( p_this, "Event Key");
-
-    return VLC_SUCCESS;
-}
-
 void event_thread_t::EventThread()
 {
     vlc_thread_set_name("vlc-mkv-events");
 
-    vlc_object_t *vlc = VLC_OBJECT(vlc_object_instance(p_demux));
     int canc = vlc_savecancel ();
-
-    /* catch all key event */
-    var_AddCallback( vlc, "key-action", EventKey, this );
 
     for( vlc_mutex_locker guard( &lock );; )
     {
@@ -160,7 +156,6 @@ void event_thread_t::EventThread()
         }
     }
 
-    var_DelCallback( vlc, "key-action", EventKey, this );
     vlc_restorecancel (canc);
 }
 
@@ -170,7 +165,7 @@ void *event_thread_t::EventThread(void *data)
     return NULL;
 }
 
-void event_thread_t::ProcessNavAction( uint16 button, pci_t* pci )
+void event_thread_t::ProcessNavAction( uint16_t button, pci_t* pci )
 {
     demux_sys_t* p_sys = (demux_sys_t*)p_demux->p_sys;
 
@@ -199,20 +194,20 @@ void event_thread_t::HandleKeyEvent( EventInfo const& ev )
     demux_sys_t* p_sys = (demux_sys_t*)p_demux->p_sys;
     pci_t *pci = &pci_packet;
 
-    uint16 i_curr_button = p_sys->dvd_interpretor.GetSPRM( 0x88 );
+    uint16_t i_curr_button = p_sys->dvd_interpretor.GetSPRM( 0x88 );
 
     if( i_curr_button <= 0 || i_curr_button > pci->hli.hl_gi.btn_ns )
         return;
 
     btni_t button_ptr = pci->hli.btnit[i_curr_button-1];
 
-    switch( ev.action.id )
+    switch( ev.nav.query )
     {
-    case ACTIONID_NAV_LEFT: return ProcessNavAction( button_ptr.left, pci );
-    case ACTIONID_NAV_RIGHT: return ProcessNavAction( button_ptr.right, pci );
-    case ACTIONID_NAV_UP: return ProcessNavAction( button_ptr.up, pci );
-    case ACTIONID_NAV_DOWN: return ProcessNavAction( button_ptr.down, pci );
-    case ACTIONID_NAV_ACTIVATE:
+    case DEMUX_NAV_LEFT: return ProcessNavAction( button_ptr.left, pci );
+    case DEMUX_NAV_RIGHT: return ProcessNavAction( button_ptr.right, pci );
+    case DEMUX_NAV_UP: return ProcessNavAction( button_ptr.up, pci );
+    case DEMUX_NAV_DOWN: return ProcessNavAction( button_ptr.down, pci );
+    case DEMUX_NAV_ACTIVATE:
         {
             vlc_mutex_unlock( &lock );
             vlc_mutex_lock( &p_sys->lock_demuxer );
@@ -275,7 +270,7 @@ void event_thread_t::HandleMouseEvent( EventInfo const& event )
         if ( best != 0)
         {
             btni_t button_ptr = pci->hli.btnit[best-1];
-            uint16 i_curr_button = p_sys->dvd_interpretor.GetSPRM( 0x88 );
+            uint16_t i_curr_button = p_sys->dvd_interpretor.GetSPRM( 0x88 );
 
             msg_Dbg( &p_sys->demuxer, "Clicked button %d", best );
             vlc_mutex_unlock( &lock );

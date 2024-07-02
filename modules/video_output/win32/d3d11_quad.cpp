@@ -140,7 +140,7 @@ void d3d11_quad_t::Reset()
 
 #undef D3D11_UpdateQuadPosition
 bool D3D11_UpdateQuadPosition( vlc_object_t *o, d3d11_device_t *d3d_dev, d3d11_quad_t *quad,
-                                const RECT *output, video_transform_t orientation )
+                               video_transform_t orientation )
 {
     bool result = true;
     HRESULT hr;
@@ -166,7 +166,13 @@ bool D3D11_UpdateQuadPosition( vlc_object_t *o, d3d11_device_t *d3d_dev, d3d11_q
         return false;
     }
 
-    result = D3D_SetupQuadData(o, &quad->generic, output, dst_data, mappedResource.pData, orientation);
+    RECT output;
+    output.left   = quad->quad_fmt.i_x_offset;
+    output.right  = quad->quad_fmt.i_x_offset + quad->quad_fmt.i_visible_width;
+    output.top    = quad->quad_fmt.i_y_offset;
+    output.bottom = quad->quad_fmt.i_y_offset + quad->quad_fmt.i_visible_height;
+
+    result = D3D_SetupQuadData(o, &quad->generic, &output, dst_data, mappedResource.pData, orientation);
 
     d3d_dev->d3dcontext->Unmap(quad->indexBuffer.Get(), 0);
     d3d_dev->d3dcontext->Unmap(quad->vertexBuffer.Get(), 0);
@@ -298,26 +304,21 @@ int D3D11_SetupQuad(vlc_object_t *o, d3d11_device_t *d3d_dev, const video_format
     return VLC_SUCCESS;
 }
 
-void d3d11_quad_t::UpdateViewport(const RECT *rect, const d3d_format_t *display)
+void d3d11_quad_t::UpdateViewport(const vout_display_place_t *place, const d3d_format_t *display)
 {
-    LONG srcAreaWidth, srcAreaHeight;
-
-    srcAreaWidth  = RECTWidth(*rect);
-    srcAreaHeight = RECTHeight(*rect);
-
-    cropViewport[0].TopLeftX = rect->left;
-    cropViewport[0].TopLeftY = rect->top;
-    cropViewport[0].Width    = srcAreaWidth;
-    cropViewport[0].Height   = srcAreaHeight;
+    cropViewport[0].TopLeftX = place->x;
+    cropViewport[0].TopLeftY = place->y;
+    cropViewport[0].Width    = place->width;
+    cropViewport[0].Height   = place->height;
 
     switch ( generic.textureFormat->formatTexture )
     {
     case DXGI_FORMAT_NV12:
     case DXGI_FORMAT_P010:
-        cropViewport[1].TopLeftX = rect->left / 2;
-        cropViewport[1].TopLeftY = rect->top / 2;
-        cropViewport[1].Width    = srcAreaWidth / 2;
-        cropViewport[1].Height   = srcAreaHeight / 2;
+        cropViewport[1].TopLeftX = place->x / 2;
+        cropViewport[1].TopLeftY = place->y / 2;
+        cropViewport[1].Width    = place->width  / 2;
+        cropViewport[1].Height   = place->height / 2;
         break;
     case DXGI_FORMAT_R8G8B8A8_UNORM:
     case DXGI_FORMAT_B8G8R8A8_UNORM:
@@ -332,15 +333,18 @@ void d3d11_quad_t::UpdateViewport(const RECT *rect, const d3d_format_t *display)
         if ( display->formatTexture == DXGI_FORMAT_NV12 ||
              display->formatTexture == DXGI_FORMAT_P010 )
         {
-            cropViewport[1].TopLeftX = rect->left / 2;
-            cropViewport[1].TopLeftY = rect->top / 2;
-            cropViewport[1].Width    = srcAreaWidth / 2;
-            cropViewport[1].Height   = srcAreaHeight / 2;
+            cropViewport[1].TopLeftX = place->x / 2;
+            cropViewport[1].TopLeftY = place->y / 2;
+            cropViewport[1].Width    = place->width  / 2;
+            cropViewport[1].Height   = place->height / 2;
         }
         break;
     case DXGI_FORMAT_UNKNOWN:
         switch ( generic.textureFormat->fourcc )
         {
+        case VLC_CODEC_I444_16L:
+        case VLC_CODEC_I444_12L:
+        case VLC_CODEC_I444_10L:
         case VLC_CODEC_I444:
             if ( display->formatTexture != DXGI_FORMAT_NV12 &&
                  display->formatTexture != DXGI_FORMAT_P010 )
@@ -359,10 +363,11 @@ void d3d11_quad_t::UpdateViewport(const RECT *rect, const d3d_format_t *display)
             /* fallthrough */
         case VLC_CODEC_I420_10L:
         case VLC_CODEC_I420:
-            cropViewport[1].TopLeftX = cropViewport[0].TopLeftX / 2;
-            cropViewport[1].TopLeftY = cropViewport[0].TopLeftY / 2;
-            cropViewport[1].Width    = cropViewport[0].Width / 2;
-            cropViewport[1].Height   = cropViewport[0].Height / 2;
+        case VLC_CODEC_YUV420A:
+            cropViewport[1].TopLeftX = place->x / 2;
+            cropViewport[1].TopLeftY = place->y / 2;
+            cropViewport[1].Width    = place->width  / 2;
+            cropViewport[1].Height   = place->height / 2;
             break;
         }
         break;
@@ -370,3 +375,59 @@ void d3d11_quad_t::UpdateViewport(const RECT *rect, const d3d_format_t *display)
         vlc_assert_unreachable();
     }
 }
+
+#ifdef HAVE_D3D11_4_H
+HRESULT D3D11_InitFence(d3d11_device_t & d3d_dev, d3d11_gpu_fence & fence)
+{
+    HRESULT hr;
+    ComPtr<ID3D11Device5> d3ddev5;
+    hr = d3d_dev.d3ddevice->QueryInterface(IID_GRAPHICS_PPV_ARGS(&d3ddev5));
+    if (FAILED(hr))
+        goto error;
+    hr = d3ddev5->CreateFence(fence.renderFence, D3D11_FENCE_FLAG_NONE, IID_GRAPHICS_PPV_ARGS(&fence.d3dRenderFence));
+    if (FAILED(hr))
+        goto error;
+    hr = d3d_dev.d3dcontext->QueryInterface(IID_GRAPHICS_PPV_ARGS(&fence.d3dcontext4));
+    if (FAILED(hr))
+        goto error;
+    fence.renderFinished = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+    if (unlikely(fence.renderFinished == nullptr))
+        goto error;
+    return S_OK;
+error:
+    fence.d3dRenderFence.Reset();
+    fence.d3dcontext4.Reset();
+    CloseHandle(fence.renderFinished);
+    return hr;
+}
+
+void D3D11_ReleaseFence(d3d11_gpu_fence & fence)
+{
+    if (fence.d3dcontext4.Get())
+    {
+        fence.d3dRenderFence.Reset();
+        fence.d3dcontext4.Reset();
+        CloseHandle(fence.renderFinished);
+        fence.renderFinished = nullptr;
+    }
+}
+
+int D3D11_WaitFence(d3d11_gpu_fence & fence)
+{
+    if (fence.d3dcontext4.Get())
+    {
+        if (fence.renderFence == UINT64_MAX)
+            fence.renderFence = 0;
+        else
+            fence.renderFence++;
+
+        ResetEvent(fence.renderFinished);
+        fence.d3dRenderFence->SetEventOnCompletion(fence.renderFence, fence.renderFinished);
+        fence.d3dcontext4->Signal(fence.d3dRenderFence.Get(), fence.renderFence);
+
+        WaitForSingleObject(fence.renderFinished, INFINITE);
+        return VLC_SUCCESS;
+    }
+    return VLC_ENOTSUP;
+}
+#endif // HAVE_D3D11_4_H

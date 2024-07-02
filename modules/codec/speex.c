@@ -28,6 +28,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_input_item.h>
 #include <vlc_codec.h>
@@ -415,7 +416,7 @@ static int ProcessHeaders( decoder_t *p_dec )
                            p_dec->fmt_in->i_extra, p_dec->fmt_in->p_extra) )
         return VLC_EGENERIC;
     if( i_count < 2 )
-        return VLC_EGENERIC;;
+        return VLC_EGENERIC;
 
     oggpacket.granulepos = -1;
     oggpacket.e_o_s = 0;
@@ -428,7 +429,7 @@ static int ProcessHeaders( decoder_t *p_dec )
     if( ProcessInitialHeader( p_dec, &oggpacket ) != VLC_SUCCESS )
     {
         msg_Err( p_dec, "initial Speex header is corrupted" );
-        return VLC_EGENERIC;;
+        return VLC_EGENERIC;
     }
 
     /* The next packet in order is the comments header */
@@ -894,7 +895,7 @@ static void ParseSpeexComments( decoder_t *p_dec, ogg_packet *p_oggpacket )
     char *psz_mode;
     if( asprintf( &psz_mode, "%s%s", p_mode->modeName, p_sys->p_header->vbr ? " VBR" : "" ) >= 0 )
     {
-        vlc_meta_AddExtra( p_dec->p_description, _("Mode"), psz_mode );
+        vlc_meta_SetExtra( p_dec->p_description, _("Mode"), psz_mode );
         free( psz_mode );
     }
 

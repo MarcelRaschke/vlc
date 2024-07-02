@@ -16,13 +16,15 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
+import QtQuick
+import QtQuick.Controls
+
+import org.videolan.vlc 0.1
+import org.videolan.controls 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 
-import org.videolan.controls 0.1
 
 // NOTE: This rectangle is useful to discern the item against a similar background.
 // FIXME: Maybe we could refactor this to draw the background directly in the RoundImage.
@@ -40,7 +42,13 @@ Rectangle {
     // Aliases
 
     property alias source: image.source
+
+    property alias cacheImage: image.cache
+
     property bool isImageReady: image.status == RoundImage.Ready
+
+
+    property string fallbackImageSource
 
     property alias imageOverlay: overlay.sourceComponent
 
@@ -56,6 +64,9 @@ Rectangle {
     height: VLCStyle.listAlbumCover_height
     width: VLCStyle.listAlbumCover_width
 
+    Accessible.role: Accessible.Graphic
+    Accessible.name: qsTr("Media cover")
+
     // Children
 
     RoundImage {
@@ -64,6 +75,24 @@ Rectangle {
         anchors.fill: parent
 
         radius: root.radius
+
+        cache: false
+    }
+
+    RoundImage {
+        id: fallbackImage
+
+        anchors.fill: parent
+
+        radius: root.radius
+
+        visible: !root.isImageReady
+
+        // we only keep this image till there is no main image
+        // try to release the resources otherwise
+        source: !root.isImageReady ? root.fallbackImageSource : ""
+
+        cache: true
     }
 
     Loader {
@@ -84,7 +113,7 @@ Rectangle {
         sourceComponent: Widgets.PlayCover {
             width: playIconSize
 
-            onClicked: playIconClicked(mouse)
+            onClicked: (mouse) => playIconClicked(mouse)
         }
 
         asynchronous: true

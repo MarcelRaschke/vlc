@@ -59,25 +59,15 @@ vlc_module_end ()
  *****************************************************************************/
 typedef struct vout_display_sys_t
 {
-    vout_display_sys_win32_t sys;
     display_win32_area_t     area;
-
-    int  i_depth;
 
     /* Our offscreen bitmap and its framebuffer */
     HDC        off_dc;
     HBITMAP    off_bitmap;
 
-    void    *p_pic_buffer;
-    int     i_pic_pitch;
+    plane_t    pic_buf;
 
-    struct
-    {
-        BITMAPINFO bitmapinfo;
-        RGBQUAD    red;
-        RGBQUAD    green;
-        RGBQUAD    blue;
-    };
+    BITMAPINFO bmiInfo;
 } vout_display_sys_t;
 
 static void           Display(vout_display_t *, picture_t *);
@@ -85,21 +75,78 @@ static void           Display(vout_display_t *, picture_t *);
 static int            Init(vout_display_t *, video_format_t *);
 static void           Clean(vout_display_t *);
 
-static void Prepare(vout_display_t *vd, picture_t *picture, subpicture_t *subpic,
+static int ChangeSize(vout_display_t *vd, HDC hdc)
+{
+    vout_display_sys_t *sys = vd->sys;
+
+    // clear the background, even if creating the writable buffer fails
+    RECT display = {
+        .left   = 0,
+        .right  = vd->cfg->display.width,
+        .top    = 0,
+        .bottom = vd->cfg->display.height,
+    };
+    FillRect(hdc, &display, GetStockObject(BLACK_BRUSH));
+
+    video_format_t fmt_rot;
+    video_format_ApplyRotation(&fmt_rot, vd->source);
+
+    BITMAPINFOHEADER *bih = &sys->bmiInfo.bmiHeader;
+    if (bih->biWidth  != (LONG)fmt_rot.i_visible_width ||
+        bih->biHeight != -(LONG)fmt_rot.i_visible_height)
+    {
+        if (sys->off_bitmap)
+            DeleteObject(sys->off_bitmap);
+
+        bih->biWidth     = fmt_rot.i_visible_width;
+        bih->biHeight    = -(LONG)fmt_rot.i_visible_height;
+        void *p_pic_buffer;
+        sys->off_bitmap = CreateDIBSection(hdc,
+                                           &sys->bmiInfo,
+                                           DIB_RGB_COLORS,
+                                           &p_pic_buffer, NULL, 0);
+        if (unlikely(sys->off_bitmap == NULL))
+            return VLC_EINVAL;
+        sys->pic_buf.p_pixels = p_pic_buffer;
+        sys->pic_buf.i_pixel_pitch = (bih->biBitCount + 7) / 8;
+        sys->pic_buf.i_pitch = sys->pic_buf.i_visible_pitch =
+            fmt_rot.i_visible_width * sys->pic_buf.i_pixel_pitch;
+        sys->pic_buf.i_lines = sys->pic_buf.i_visible_lines =
+            fmt_rot.i_visible_height;
+    }
+    return VLC_SUCCESS;
+}
+
+static void Prepare(vout_display_t *vd, picture_t *picture,
+                    const struct vlc_render_subpicture *subpic,
                     vlc_tick_t date)
 {
     VLC_UNUSED(subpic);
     VLC_UNUSED(date);
     vout_display_sys_t *sys = vd->sys;
-    picture_t fake_pic = *picture;
-    picture_UpdatePlanes(&fake_pic, sys->p_pic_buffer, sys->i_pic_pitch);
-    picture_CopyPixels(&fake_pic, picture);
+
+    if (sys->area.place_changed)
+    {
+        HDC hdc = GetDC(CommonVideoHWND(&sys->area));
+        int err = ChangeSize(vd, hdc);
+        ReleaseDC(CommonVideoHWND(&sys->area), hdc);
+
+        if (unlikely(err != VLC_SUCCESS))
+            return;
+
+        sys->area.place_changed = false;
+    }
+
+    assert((LONG)picture->format.i_visible_width  == sys->bmiInfo.bmiHeader.biWidth &&
+           (LONG)picture->format.i_visible_height == -sys->bmiInfo.bmiHeader.biHeight);
+
+    plane_CopyPixels(&sys->pic_buf, picture->p);
 }
 
 static int Control(vout_display_t *vd, int query)
 {
     vout_display_sys_t *sys = vd->sys;
-    CommonControl(vd, &sys->area, &sys->sys, query);
+    CommonControl(vd, &sys->area, query);
     return VLC_SUCCESS;
 }
 
@@ -124,9 +171,10 @@ static int Open(vout_display_t *vd,
     if (!sys)
         return VLC_ENOMEM;
 
-    CommonInit(&sys->area);
-    if (CommonWindowInit(vd, &sys->area, &sys->sys, false))
+    CommonInit(&sys->area, vd->source);
+    if (CommonWindowInit(vd, &sys->area, false))
         goto error;
+    CommonPlacePicture(vd, &sys->area);
 
     /* */
     if (Init(vd, fmtp))
@@ -150,9 +198,9 @@ static void Close(vout_display_t *vd)
 
     Clean(vd);
 
-    CommonWindowClean(&sys->sys);
+    CommonWindowClean(&sys->area);
 
-    free(vd->sys);
+    free(sys);
 }
 
 static void Display(vout_display_t *vd, picture_t *picture)
@@ -160,43 +208,33 @@ static void Display(vout_display_t *vd, picture_t *picture)
     vout_display_sys_t *sys = vd->sys;
     VLC_UNUSED(picture);
 
-    HDC hdc = GetDC(sys->sys.hvideownd);
-
-    if (sys->area.place_changed)
-    {
-        /* clear the background */
-        RECT display = {
-            .left   = 0,
-            .right  = vd->cfg->display.width,
-            .top    = 0,
-            .bottom = vd->cfg->display.height,
-        };
-        FillRect(hdc, &display, GetStockObject(BLACK_BRUSH));
-        sys->area.place_changed = false;
-    }
+    HDC hdc = GetDC(CommonVideoHWND(&sys->area));
 
     SelectObject(sys->off_dc, sys->off_bitmap);
 
-    if (sys->area.place.width  != vd->source->i_visible_width ||
-        sys->area.place.height != vd->source->i_visible_height) {
+    video_format_t fmt_rot;
+    video_format_ApplyRotation(&fmt_rot, vd->source);
+
+    if (sys->area.place.width  != fmt_rot.i_visible_width ||
+        sys->area.place.height != fmt_rot.i_visible_height) {
         SetStretchBltMode(hdc, COLORONCOLOR);
 
         StretchBlt(hdc, sys->area.place.x, sys->area.place.y,
                    sys->area.place.width, sys->area.place.height,
                    sys->off_dc,
-                   vd->source->i_x_offset, vd->source->i_y_offset,
-                   vd->source->i_x_offset + vd->source->i_visible_width,
-                   vd->source->i_y_offset + vd->source->i_visible_height,
+                   fmt_rot.i_x_offset, fmt_rot.i_y_offset,
+                   fmt_rot.i_x_offset + fmt_rot.i_visible_width,
+                   fmt_rot.i_y_offset + fmt_rot.i_visible_height,
                    SRCCOPY);
     } else {
         BitBlt(hdc, sys->area.place.x, sys->area.place.y,
                sys->area.place.width, sys->area.place.height,
                sys->off_dc,
-               vd->source->i_x_offset, vd->source->i_y_offset,
+               fmt_rot.i_x_offset, fmt_rot.i_y_offset,
                SRCCOPY);
     }
 
-    ReleaseDC(sys->sys.hvideownd, hdc);
+    ReleaseDC(CommonVideoHWND(&sys->area), hdc);
 }
 
 static int Init(vout_display_t *vd, video_format_t *fmt)
@@ -206,82 +244,59 @@ static int Init(vout_display_t *vd, video_format_t *fmt)
     /* Initialize an offscreen bitmap for direct buffer operations. */
 
     /* */
-    HDC window_dc = GetDC(sys->sys.hvideownd);
+    HDC window_dc = GetDC(CommonVideoHWND(&sys->area));
 
     /* */
-    sys->i_depth = GetDeviceCaps(window_dc, PLANES) *
-                   GetDeviceCaps(window_dc, BITSPIXEL);
+    int i_depth = GetDeviceCaps(window_dc, PLANES) *
+                  GetDeviceCaps(window_dc, BITSPIXEL);
+
+    video_format_TransformTo(fmt, ORIENT_NORMAL);
+
+    if (i_depth == 8)
+        /*
+         * We don't handle 256 color palettes, so let BitBlt()/StretchBlt()
+         * perform the conversion to 256 color palettes for us.
+         */
+        i_depth = 24;
 
     /* */
-    msg_Dbg(vd, "GDI depth is %i", sys->i_depth);
-    switch (sys->i_depth) {
-    case 8:
-        fmt->i_chroma = VLC_CODEC_RGB8;
-        break;
-    case 15:
-        fmt->i_chroma = VLC_CODEC_RGB15;
-        fmt->i_rmask  = 0x7c00;
-        fmt->i_gmask  = 0x03e0;
-        fmt->i_bmask  = 0x001f;
-        break;
+    msg_Dbg(vd, "GDI depth is %i", i_depth);
+    switch (i_depth) {
     case 16:
-        fmt->i_chroma = VLC_CODEC_RGB16;
-        fmt->i_rmask  = 0xf800;
-        fmt->i_gmask  = 0x07e0;
-        fmt->i_bmask  = 0x001f;
+        fmt->i_chroma = VLC_CODEC_RGB555LE;
         break;
     case 24:
         fmt->i_chroma = VLC_CODEC_RGB24;
-        fmt->i_rmask  = 0x00ff0000;
-        fmt->i_gmask  = 0x0000ff00;
-        fmt->i_bmask  = 0x000000ff;
         break;
     case 32:
-        fmt->i_chroma = VLC_CODEC_RGB32;
-        fmt->i_rmask  = 0x00ff0000;
-        fmt->i_gmask  = 0x0000ff00;
-        fmt->i_bmask  = 0x000000ff;
+        if (vd->source->i_chroma == VLC_CODEC_BGRA)
+            fmt->i_chroma = VLC_CODEC_BGRA;
+        else
+            fmt->i_chroma = VLC_CODEC_BGRX;
         break;
     default:
-        msg_Err(vd, "screen depth %i not supported", sys->i_depth);
+        msg_Err(vd, "screen depth %i not supported", i_depth);
+        ReleaseDC(CommonVideoHWND(&sys->area), window_dc);
         return VLC_EGENERIC;
     }
 
     /* Initialize offscreen bitmap */
-    BITMAPINFO *bi = &sys->bitmapinfo;
-    memset(bi, 0, sizeof(BITMAPINFO) + 3 * sizeof(RGBQUAD));
-    if (sys->i_depth > 8) {
-        ((DWORD*)bi->bmiColors)[0] = fmt->i_rmask;
-        ((DWORD*)bi->bmiColors)[1] = fmt->i_gmask;
-        ((DWORD*)bi->bmiColors)[2] = fmt->i_bmask;;
-    }
-
-    BITMAPINFOHEADER *bih = &sys->bitmapinfo.bmiHeader;
-    bih->biSize = sizeof(BITMAPINFOHEADER);
-    bih->biSizeImage     = 0;
-    bih->biPlanes        = 1;
-    bih->biCompression   = (sys->i_depth == 15 ||
-                            sys->i_depth == 16) ? BI_BITFIELDS : BI_RGB;
-    bih->biBitCount      = sys->i_depth;
-    bih->biWidth         = fmt->i_width;
-    bih->biHeight        = -fmt->i_height;
-    bih->biClrImportant  = 0;
-    bih->biClrUsed       = 0;
-    bih->biXPelsPerMeter = 0;
-    bih->biYPelsPerMeter = 0;
-
-    sys->i_pic_pitch = bih->biBitCount * bih->biWidth / 8;
-    sys->off_bitmap = CreateDIBSection(window_dc,
-                                       (BITMAPINFO *)bih,
-                                       DIB_RGB_COLORS,
-                                       &sys->p_pic_buffer, NULL, 0);
+    sys->bmiInfo.bmiHeader = (BITMAPINFOHEADER) {
+        .biSize         = sizeof(BITMAPINFOHEADER),
+        .biPlanes       = 1,
+        .biBitCount     = i_depth,
+        .biCompression  = BI_RGB,
+    };
 
     sys->off_dc = CreateCompatibleDC(window_dc);
 
-    SelectObject(sys->off_dc, sys->off_bitmap);
-    ReleaseDC(sys->sys.hvideownd, window_dc);
+    int err = ChangeSize(vd, window_dc);
+    if (err != VLC_SUCCESS)
+        DeleteDC(sys->off_dc);
 
-    return VLC_SUCCESS;
+    ReleaseDC(CommonVideoHWND(&sys->area), window_dc);
+
+    return err;
 }
 
 static void Clean(vout_display_t *vd)

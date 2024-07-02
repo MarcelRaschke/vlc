@@ -31,6 +31,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_codec.h>
 #include <vlc_charset.h>
@@ -657,7 +658,7 @@ static void ParseVorbisComments( decoder_t *p_dec )
                 if( !p_dec->p_description )
                     p_dec->p_description = vlc_meta_New();
                 if( p_dec->p_description )
-                    vlc_meta_AddExtra( p_dec->p_description, psz_name, psz_value );
+                    vlc_meta_SetExtra( p_dec->p_description, psz_name, psz_value );
             }
 
         }

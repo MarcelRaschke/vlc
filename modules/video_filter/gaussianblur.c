@@ -29,6 +29,8 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
@@ -121,11 +123,9 @@ static void gaussianblur_InitDistribution( filter_sys_t *p_sys )
 static int Create( filter_t *p_filter )
 {
     if(   p_filter->fmt_in.video.i_chroma != VLC_CODEC_I420
-       && p_filter->fmt_in.video.i_chroma != VLC_CODEC_J420
        && p_filter->fmt_in.video.i_chroma != VLC_CODEC_YV12
 
        && p_filter->fmt_in.video.i_chroma != VLC_CODEC_I422
-       && p_filter->fmt_in.video.i_chroma != VLC_CODEC_J422
       )
     {
         /* We only want planar YUV 4:2:0 or 4:2:2 */
@@ -134,7 +134,8 @@ static int Create( filter_t *p_filter )
         return VLC_EGENERIC;
     }
 
-    if( p_filter->fmt_in.video.i_chroma != p_filter->fmt_out.video.i_chroma )
+    if( !video_format_IsSameChroma( &p_filter->fmt_in.video,
+                                    &p_filter->fmt_out.video ) )
     {
         msg_Err( p_filter, "Input and output chromas don't match" );
         return VLC_EGENERIC;

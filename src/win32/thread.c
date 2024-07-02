@@ -30,7 +30,9 @@
 #endif
 
 #define _DECL_DLLMAIN
+#include <process.h>
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_charset.h>
 
 #include "libvlc.h"
@@ -46,8 +48,13 @@
 #include <mmsystem.h>
 #endif
 
-#ifndef NTDDI_WIN10_RS3
-#define NTDDI_WIN10_RS3  0x0A000004
+#ifndef NTDDI_WIN10_RS1
+#define NTDDI_WIN10_RS1  0x0A000002
+#endif
+
+#if NTDDI_VERSION >= NTDDI_WIN10_RS1 && defined(__MINGW64_VERSION_MAJOR)
+// SetThreadDescription is not defined yet in mingw64
+WINBASEAPI HRESULT WINAPI SetThreadDescription(HANDLE,PCWSTR);
 #endif
 
 /*** Static mutex and condition variable ***/
@@ -338,11 +345,7 @@ void vlc_atomic_notify_all(void *addr)
 
 /*** Threads ***/
 static
-#ifdef VLC_WINSTORE_APP
-DWORD
-#else // !VLC_WINSTORE_APP
 unsigned
-#endif // !VLC_WINSTORE_APP
 __stdcall vlc_entry (void *p)
 {
     struct vlc_thread *th = p;
@@ -369,15 +372,11 @@ int vlc_clone (vlc_thread_t *p_handle, void *(*entry) (void *),
     th->cleaners = NULL;
 
     HANDLE h;
-#ifdef VLC_WINSTORE_APP
-    h = CreateThread(NULL, 0, vlc_entry, th, 0, NULL);
-#else // !VLC_WINSTORE_APP
     /* When using the MSVCRT C library you have to use the _beginthreadex
      * function instead of CreateThread, otherwise you'll end up with
      * memory leaks and the signal functions not working (see Microsoft
      * Knowledge Base, article 104641) */
     h = (HANDLE)(uintptr_t) _beginthreadex (NULL, 0, vlc_entry, th, 0, NULL);
-#endif // !VLC_WINSTORE_APP
     if (h == 0)
     {
         int err = errno;
@@ -472,11 +471,7 @@ _Noreturn static void vlc_docancel(struct vlc_thread *th)
         p->proc (p->data);
 
     th->data = VLC_THREAD_CANCELED;
-#ifdef VLC_WINSTORE_APP
-    ExitThread(0);
-#else // !VLC_WINSTORE_APP
     _endthreadex(0);
-#endif // !VLC_WINSTORE_APP
 }
 
 void vlc_testcancel (void)
@@ -712,7 +707,7 @@ void vlc_threads_setup(libvlc_int_t *vlc)
 
 #define LOOKUP(s) (((s##_) = (void *)GetProcAddress(h, #s)) != NULL)
 
-BOOL WINAPI DllMain (HANDLE hinstDll, DWORD fdwReason, LPVOID lpvReserved)
+int __stdcall DllMain (void *hinstDll, unsigned long fdwReason, void *lpvReserved)
 {
     (void) hinstDll;
     (void) lpvReserved;
@@ -721,6 +716,9 @@ BOOL WINAPI DllMain (HANDLE hinstDll, DWORD fdwReason, LPVOID lpvReserved)
     {
         case DLL_PROCESS_ATTACH:
         {
+#if NTDDI_VERSION >= NTDDI_WIN10_RS1
+            SetThreadDescription_ = SetThreadDescription;
+#else // !NTDDI_WIN10_RS1
             HMODULE h;
             h = GetModuleHandle(TEXT("kernelbase.dll"));
             if (h == NULL)
@@ -729,6 +727,7 @@ BOOL WINAPI DllMain (HANDLE hinstDll, DWORD fdwReason, LPVOID lpvReserved)
                 LOOKUP(SetThreadDescription);
             else
                 SetThreadDescription_ = NULL;
+#endif // !NTDDI_WIN10_RS1
 
 #if (_WIN32_WINNT < _WIN32_WINNT_WIN8)
             h = GetModuleHandle(TEXT("api-ms-win-core-synch-l1-2-0.dll"));

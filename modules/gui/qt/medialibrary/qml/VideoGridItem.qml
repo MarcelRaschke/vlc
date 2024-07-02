@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
@@ -29,21 +29,20 @@ Widgets.GridItem {
 
     property alias showNewIndicator: image.visible
     
-    property var labels: [
-        model.resolution_name || "",
-        model.channel || ""
-    ].filter(function(a) { return a !== "" })
+    property var labels
 
     function play() {
         if ( model.id !== undefined ) {
             MediaLib.addAndPlay( model.id )
-            g_mainDisplay.showPlayer()
+            History.push(["player"])
         }
     }
 
-    image: model.thumbnail || VLCStyle.noArtVideoCover
-    title: model.title || I18n.qtr("Unknown title")
-    subtitle: model.duration.formatHMS() || ""
+    image: model.thumbnail || ""
+    fallbackImage: VLCStyle.noArtVideoCover
+
+    title: model.title || qsTr("Unknown title")
+    subtitle: model?.duration?.formatHMS() ?? ""
     pictureWidth: VLCStyle.gridCover_video_width
     pictureHeight: VLCStyle.gridCover_video_height
     playCoverBorderWidth: VLCStyle.gridCover_video_border
@@ -83,7 +82,7 @@ Widgets.GridItem {
 
     onPlayClicked: root.play()
 
-    Image {
+    Widgets.ScaledImage {
         id: image
 
         anchors.right: parent.right

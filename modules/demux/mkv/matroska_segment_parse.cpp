@@ -36,7 +36,7 @@ extern "C" {
 #include "../mp4/libmp4.h"
 }
 
-#include "../../packetizer/iso_color_tables.h"
+#include "vlc_colors.h"
 
 #include <vlc_codecs.h>
 #include <stdexcept>
@@ -115,7 +115,7 @@ void matroska_segment_c::ParseSeekHead( KaxSeekHead *seekhead )
                 {
                     if( unlikely( !l->ValidateSize() ) )
                     {
-                        msg_Err( &sys.demuxer,"%s too big... skipping it",  typeid(*l).name() );
+                        msg_Err( &sys.demuxer,"%s too big... skipping it",  EBML_NAME(l) );
                         continue;
                     }
                     if( MKV_IS_ID( l, KaxSeekID ) )
@@ -128,18 +128,18 @@ void matroska_segment_c::ParseSeekHead( KaxSeekHead *seekhead )
                     {
                         KaxSeekPosition &spos = *static_cast<KaxSeekPosition*>( l );
                         spos.ReadData( es.I_O() );
-                        i_pos = (int64_t)segment->GetGlobalPosition( static_cast<uint64>( spos ) );
+                        i_pos = (int64_t)segment->GetGlobalPosition( static_cast<uint64_t>( spos ) );
                     }
                     else if ( !MKV_IS_ID( l, EbmlVoid ) && !MKV_IS_ID( l, EbmlCrc32 ))
                     {
                         /* Many mkvmerge files hit this case. It seems to be a broken SeekHead */
-                        msg_Dbg( &sys.demuxer, "|   |   + Unknown (%s)", typeid(*l).name() );
+                        msg_Dbg( &sys.demuxer, "|   |   + Unknown (%s)", EBML_NAME(l) );
                     }
                 }
             }
             catch(...)
             {
-                msg_Err( &sys.demuxer,"Error while reading %s",  typeid(*l).name() );
+                msg_Err( &sys.demuxer,"Error while reading %s",  EBML_NAME(l) );
             }
             eparser.Up();
 
@@ -192,7 +192,7 @@ void matroska_segment_c::ParseSeekHead( KaxSeekHead *seekhead )
             }
         }
         else if ( !MKV_IS_ID( l, EbmlVoid ) && !MKV_IS_ID( l, EbmlCrc32 ))
-            msg_Dbg( &sys.demuxer, "|   |   + ParseSeekHead Unknown (%s)", typeid(*l).name() );
+            msg_Dbg( &sys.demuxer, "|   |   + ParseSeekHead Unknown (%s)", EBML_NAME(l) );
     }
 }
 
@@ -206,9 +206,9 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
     bool bSupported = true;
 
     EbmlUInteger *pTrackType = static_cast<EbmlUInteger*>(m->FindElt(EBML_INFO(KaxTrackType)));
-    uint8 ttype;
+    uint8_t ttype;
     if (likely(pTrackType != NULL))
-        ttype = (uint8) *pTrackType;
+        ttype = (uint8_t) *pTrackType;
     else
         ttype = 0;
 
@@ -270,18 +270,18 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
         }
         E_CASE( KaxTrackNumber, tnum )
         {
-            vars.tk->i_number = static_cast<uint32>( tnum );
+            vars.tk->i_number = static_cast<uint32_t>( tnum );
             debug( vars, "Track Number=%u", vars.tk->i_number );
         }
         E_CASE( KaxTrackUID, tuid )
         {
-            debug( vars, "Track UID=%x", static_cast<uint32>( tuid ) );
+            debug( vars, "Track UID=%x", static_cast<uint32_t>( tuid ) );
         }
         E_CASE( KaxTrackType, ttype )
         {
             const char *psz_type;
 
-            switch( static_cast<uint8>( ttype ) )
+            switch( static_cast<uint8_t>( ttype ) )
             {
                 case track_audio:
                     psz_type = "audio";
@@ -304,38 +304,38 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
         }
         E_CASE( KaxTrackFlagEnabled, fenb ) // UNUSED
         {
-            vars.tk->b_enabled = static_cast<uint32>( fenb );
+            vars.tk->b_enabled = static_cast<uint32_t>( fenb );
             debug( vars, "Track Enabled=%u", vars.tk->b_enabled );
         }
         E_CASE( KaxTrackFlagDefault, fdef )
         {
-            vars.tk->b_default = static_cast<uint32>( fdef );
+            vars.tk->b_default = static_cast<uint32_t>( fdef );
             debug( vars, "Track Default=%u", vars.tk->b_default );
         }
         E_CASE( KaxTrackFlagForced, ffor ) // UNUSED
         {
-            vars.tk->b_forced = static_cast<uint32>( ffor );
+            vars.tk->b_forced = static_cast<uint32_t>( ffor );
 
             debug( vars, "Track Forced=%u", vars.tk->b_forced );
         }
         E_CASE( KaxTrackFlagLacing, lac ) // UNUSED
         {
-            debug( vars, "Track Lacing=%d", static_cast<uint32>( lac ) ) ;
+            debug( vars, "Track Lacing=%d", static_cast<uint32_t>( lac ) ) ;
         }
         E_CASE( KaxTrackMinCache, cmin ) // UNUSED
         {
-            debug( vars, "Track MinCache=%d", static_cast<uint32>( cmin ) ) ;
+            debug( vars, "Track MinCache=%d", static_cast<uint32_t>( cmin ) ) ;
         }
         E_CASE( KaxTrackMaxCache, cmax ) // UNUSED
         {
-            debug( vars, "Track MaxCache=%d", static_cast<uint32>( cmax ) ) ;
+            debug( vars, "Track MaxCache=%d", static_cast<uint32_t>( cmax ) ) ;
         }
         E_CASE( KaxTrackDefaultDuration, defd )
         {
-            vars.tk->i_default_duration = VLC_TICK_FROM_NS(static_cast<uint64>(defd));
+            vars.tk->i_default_duration = VLC_TICK_FROM_NS(static_cast<uint64_t>(defd));
             debug( vars, "Track Default Duration=%" PRId64, vars.tk->i_default_duration );
         }
-        E_CASE( KaxTrackTimecodeScale, ttcs )
+        E_CASE( KaxTrackTimestampScale, ttcs )
         {
             vars.tk->f_timecodescale = static_cast<float>( ttcs );
             if ( vars.tk->f_timecodescale <= 0 ) vars.tk->f_timecodescale = 1.0;
@@ -343,7 +343,7 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
         }
         E_CASE( KaxMaxBlockAdditionID, mbl ) // UNUSED
         {
-            debug( vars, "Track Max BlockAdditionID=%d", static_cast<uint32>( mbl ) ) ;
+            debug( vars, "Track Max BlockAdditionID=%d", static_cast<uint32_t>( mbl ) ) ;
         }
         E_CASE( KaxTrackName, tname )
         {
@@ -384,11 +384,11 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
         //AttachmentLink
         E_CASE( KaxCodecDecodeAll, cdall ) // UNUSED
         {
-            debug( vars, "Track Codec Decode All=%u", static_cast<uint8>( cdall ) ) ;
+            debug( vars, "Track Codec Decode All=%u", static_cast<uint8_t>( cdall ) ) ;
         }
         E_CASE( KaxTrackOverlay, tovr ) // UNUSED
         {
-            debug( vars, "Track Overlay=%u", static_cast<uint32>( tovr ) ) ;
+            debug( vars, "Track Overlay=%u", static_cast<uint32_t>( tovr ) ) ;
         }
 #if LIBMATROSKA_VERSION >= 0x010401
         E_CASE( KaxCodecDelay, codecdelay )
@@ -427,16 +427,16 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
         }
         E_CASE( KaxContentEncodingOrder, encord )
         {
-            debug( vars, "Order: %i", static_cast<uint32>( encord ) );
+            debug( vars, "Order: %i", static_cast<uint32_t>( encord ) );
         }
         E_CASE( KaxContentEncodingScope, encscope )
         {
-            vars.tk->i_encoding_scope = static_cast<uint32>( encscope );
+            vars.tk->i_encoding_scope = static_cast<uint32_t>( encscope );
             debug( vars, "Scope: %i", vars.tk->i_encoding_scope );
         }
         E_CASE( KaxContentEncodingType, enctype )
         {
-            debug( vars, "Type: %i", static_cast<uint32>( enctype ) );
+            debug( vars, "Type: %i", static_cast<uint32_t>( enctype ) );
         }
         E_CASE( KaxContentCompression, compr )
         {
@@ -450,7 +450,7 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
         }
         E_CASE( KaxContentCompAlgo, compalg )
         {
-            vars.tk->i_compression_type = static_cast<uint32>( compalg );
+            vars.tk->i_compression_type = static_cast<uint32_t>( compalg );
             debug( vars, "Compression Algorithm: %i", vars.tk->i_compression_type );
             if ( ( vars.tk->i_compression_type != MATROSKA_COMPRESSION_ZLIB ) &&
                  ( vars.tk->i_compression_type != MATROSKA_COMPRESSION_HEADER ) )
@@ -580,6 +580,14 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
                 }
             }
         }
+#if LIBMATROSKA_VERSION >= 0x010400
+        E_CASE( KaxVideoAlphaMode, mode )
+        {
+            ONLY_FMT(VIDEO);
+            debug( vars, "Track Video Alpha Mode %u", static_cast<uint8>( mode ) ) ;
+            vars.tk->b_has_alpha = static_cast<uint8>( mode ) == 1;
+        }
+#endif
 #if LIBMATROSKA_VERSION >= 0x010406
         E_CASE( KaxVideoProjection, proj )
         {
@@ -593,7 +601,7 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
         E_CASE( KaxVideoProjectionType, fint )
         {
             ONLY_FMT(VIDEO);
-            switch (static_cast<uint8>( fint ))
+            switch (static_cast<uint8_t>( fint ))
             {
             case 0:
                 vars.tk->fmt.video.projection_mode = PROJECTION_MODE_RECTANGULAR;
@@ -605,7 +613,7 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
                 vars.tk->fmt.video.projection_mode = PROJECTION_MODE_CUBEMAP_LAYOUT_STANDARD;
                 break;
             default:
-                debug( vars, "Track Video Projection %u not supported", static_cast<uint8>( fint ) ) ;
+                debug( vars, "Track Video Projection %u not supported", static_cast<uint8_t>( fint ) ) ;
                 break;
             }
         }
@@ -628,13 +636,13 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
         E_CASE( KaxVideoFlagInterlaced, fint ) // UNUSED
         {
             ONLY_FMT(VIDEO);
-            debug( vars, "Track Video Interlaced=%u", static_cast<uint8>( fint ) ) ;
+            debug( vars, "Track Video Interlaced=%u", static_cast<uint8_t>( fint ) ) ;
         }
         E_CASE( KaxVideoStereoMode, stereo ) // UNUSED
         {
             ONLY_FMT(VIDEO);
             vars.tk->fmt.video.b_multiview_right_eye_first = false;
-            switch (static_cast<uint8>( stereo ))
+            switch (static_cast<uint8_t>( stereo ))
             {
             case 0: vars.tk->fmt.video.multiview_mode = MULTIVIEW_2D;         break;
             case 1: vars.tk->fmt.video.multiview_mode = MULTIVIEW_STEREO_SBS; break;
@@ -657,62 +665,62 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
                     vars.tk->fmt.video.b_multiview_right_eye_first = true;    break;
             default:
             case 10: case 12:
-                debug( vars, " unsupported Stereo Mode=%u", static_cast<uint8>( stereo ) ) ;
+                debug( vars, " unsupported Stereo Mode=%u", static_cast<uint8_t>( stereo ) ) ;
             }
-            debug( vars, "Track Video Stereo Mode=%u", static_cast<uint8>( stereo ) ) ;
+            debug( vars, "Track Video Stereo Mode=%u", static_cast<uint8_t>( stereo ) ) ;
         }
         E_CASE( KaxVideoPixelWidth, vwidth )
         {
             ONLY_FMT(VIDEO);
-            vars.tk->fmt.video.i_width += static_cast<uint32>( vwidth );
+            vars.tk->fmt.video.i_width += static_cast<uint32_t>( vwidth );
             debug( vars, "width=%u", vars.tk->fmt.video.i_width );
         }
         E_CASE( KaxVideoPixelHeight, vheight )
         {
             ONLY_FMT(VIDEO);
-            vars.tk->fmt.video.i_height += static_cast<uint32>( vheight );
+            vars.tk->fmt.video.i_height += static_cast<uint32_t>( vheight );
             debug( vars, "height=%u", vars.tk->fmt.video.i_height );
         }
         E_CASE( KaxVideoDisplayWidth, vwidth )
         {
             ONLY_FMT(VIDEO);
-            vars.track_video_info.i_display_width = static_cast<uint32>( vwidth );
+            vars.track_video_info.i_display_width = static_cast<uint32_t>( vwidth );
             debug( vars, "display width=%u", vars.track_video_info.i_display_width );
         }
         E_CASE( KaxVideoDisplayHeight, vheight )
         {
             ONLY_FMT(VIDEO);
-            vars.track_video_info.i_display_height = static_cast<uint32>( vheight );
+            vars.track_video_info.i_display_height = static_cast<uint32_t>( vheight );
             debug( vars, "display height=%u", vars.track_video_info.i_display_height );
         }
         E_CASE( KaxVideoPixelCropBottom, cropval )
         {
             ONLY_FMT(VIDEO);
-            vars.track_video_info.i_crop_bottom = static_cast<uint32>( cropval );
+            vars.track_video_info.i_crop_bottom = static_cast<uint32_t>( cropval );
             debug( vars, "crop pixel bottom=%u", vars.track_video_info.i_crop_bottom );
         }
         E_CASE( KaxVideoPixelCropTop, cropval )
         {
             ONLY_FMT(VIDEO);
-            vars.track_video_info.i_crop_top = static_cast<uint32>( cropval );
+            vars.track_video_info.i_crop_top = static_cast<uint32_t>( cropval );
             debug( vars, "crop pixel top=%u", vars.track_video_info.i_crop_top );
         }
         E_CASE( KaxVideoPixelCropRight, cropval )
         {
             ONLY_FMT(VIDEO);
-            vars.track_video_info.i_crop_right = static_cast<uint32>( cropval );
+            vars.track_video_info.i_crop_right = static_cast<uint32_t>( cropval );
             debug( vars, "crop pixel right=%u", vars.track_video_info.i_crop_right );
         }
         E_CASE( KaxVideoPixelCropLeft, cropval )
         {
             ONLY_FMT(VIDEO);
-            vars.track_video_info.i_crop_left = static_cast<uint32>( cropval );
+            vars.track_video_info.i_crop_left = static_cast<uint32_t>( cropval );
             debug( vars, "crop pixel left=%u", vars.track_video_info.i_crop_left );
         }
         E_CASE( KaxVideoDisplayUnit, vdmode )
         {
             ONLY_FMT(VIDEO);
-            vars.track_video_info.i_display_unit = static_cast<uint8>( vdmode );
+            vars.track_video_info.i_display_unit = static_cast<uint8_t>( vdmode );
             const char *psz_unit;
             switch (vars.track_video_info.i_display_unit)
             {
@@ -727,7 +735,7 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
         E_CASE( KaxVideoAspectRatio, ratio ) // UNUSED
         {
             ONLY_FMT(VIDEO);
-            debug( vars, "Track Video Aspect Ratio Type=%u", static_cast<uint8>( ratio ) ) ;
+            debug( vars, "Track Video Aspect Ratio Type=%u", static_cast<uint8_t>( ratio ) ) ;
         }
         E_CASE( KaxVideoFrameRate, vfps )
         {
@@ -740,13 +748,8 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
             ONLY_FMT(VIDEO);
             if ( colourspace.ValidateSize() )
             {
-                char clrspc[5];
-
                 vars.tk->fmt.i_codec = GetFOURCC( colourspace.GetBuffer() );
-
-                vlc_fourcc_to_char( vars.tk->fmt.i_codec, clrspc );
-                clrspc[4]  = '\0';
-                debug( vars, "Colour Space=%s", clrspc );
+                debug( vars, "Colour Space=%4.4s", (const char*)&vars.tk->fmt.i_codec );
             }
         }
 #if LIBMATROSKA_VERSION >= 0x010405
@@ -766,7 +769,7 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
         {
             ONLY_FMT(VIDEO);
             const char *name = nullptr;
-            switch( static_cast<uint8>(range) )
+            switch( static_cast<uint8_t>(range) )
             {
             case 1:
                 vars.tk->fmt.video.color_range = COLOR_RANGE_LIMITED;
@@ -778,16 +781,16 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
                 break;
             case 3: // Matrix coefficients + Transfer characteristics
             default:
-                debug( vars, "Unsupported Colour Range=%d", static_cast<uint8>(range) );
+                debug( vars, "Unsupported Colour Range=%d", static_cast<uint8_t>(range) );
             }
             if (name != nullptr) debug( vars, "Range=%s", name );
         }
         E_CASE( KaxVideoColourTransferCharacter, transfer )
         {
             ONLY_FMT(VIDEO);
-            vars.tk->fmt.video.transfer = iso_23001_8_tc_to_vlc_xfer( static_cast<uint8>(transfer) );
+            vars.tk->fmt.video.transfer = iso_23001_transfer_to_vlc( static_cast<uint8_t>(transfer) );
             const char *name = nullptr;
-            switch( static_cast<uint8>(transfer) )
+            switch( static_cast<uint8_t>(transfer) )
             {
             case 1: name = "BT-709";
                 break;
@@ -818,18 +821,18 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
                 break;
             }
             if (vars.tk->fmt.video.transfer == TRANSFER_FUNC_UNDEF)
-                debug( vars, "Unsupported Colour Transfer=%d", static_cast<uint8>(transfer) );
+                debug( vars, "Unsupported Colour Transfer=%d", static_cast<uint8_t>(transfer) );
             else if (name == nullptr)
-                debug( vars, "Colour Transfer=%d", static_cast<uint8>(transfer) );
+                debug( vars, "Colour Transfer=%d", static_cast<uint8_t>(transfer) );
             else
                 debug( vars, "Colour Transfer=%s", name );
         }
         E_CASE( KaxVideoColourPrimaries, primaries )
         {
             ONLY_FMT(VIDEO);
-            vars.tk->fmt.video.primaries = iso_23001_8_cp_to_vlc_primaries( static_cast<uint8>(primaries) );
+            vars.tk->fmt.video.primaries = iso_23001_primaries_to_vlc( static_cast<uint8_t>(primaries) );
             const char *name = nullptr;
-            switch( static_cast<uint8>(primaries) )
+            switch( static_cast<uint8_t>(primaries) )
             {
             case 1: name = "BT-709";
                 break;
@@ -850,18 +853,18 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
                 break;
             }
             if (vars.tk->fmt.video.primaries == COLOR_PRIMARIES_UNDEF)
-                debug( vars, "Unsupported Colour Primaries=%d", static_cast<uint8>(primaries) );
+                debug( vars, "Unsupported Colour Primaries=%d", static_cast<uint8_t>(primaries) );
             else if (name == nullptr)
-                debug( vars, "Colour Primaries=%s", static_cast<uint8>(primaries) );
+                debug( vars, "Colour Primaries=%s", static_cast<uint8_t>(primaries) );
             else
                 debug( vars, "Colour Primaries=%s", name );
         }
         E_CASE( KaxVideoColourMatrix, matrix )
         {
             ONLY_FMT(VIDEO);
-            vars.tk->fmt.video.space = iso_23001_8_mc_to_vlc_coeffs( static_cast<uint8>(matrix) );
+            vars.tk->fmt.video.space = iso_23001_matrix_coeffs_to_vlc( static_cast<uint8_t>(matrix) );
             const char *name = nullptr;
-            switch( static_cast<uint8>(matrix) )
+            switch( static_cast<uint8_t>(matrix) )
             {
             case 1: name = "BT-709";
                 break;
@@ -887,9 +890,9 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
                 break;
             }
             if (vars.tk->fmt.video.space == COLOR_SPACE_UNDEF)
-                debug( vars, "Unsupported Colour Matrix=%d", static_cast<uint8>(matrix) );
+                debug( vars, "Unsupported Colour Matrix=%d", static_cast<uint8_t>(matrix) );
             else if (name == nullptr)
-                debug( vars, "Colour Matrix=%d", static_cast<uint8>(matrix) );
+                debug( vars, "Colour Matrix=%d", static_cast<uint8_t>(matrix) );
             else
                 debug( vars, "Colour Matrix=%s", name );
         }
@@ -897,14 +900,14 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
         {
             ONLY_FMT(VIDEO);
             const char *name = nullptr;
-            vars.track_video_info.chroma_sit_horizontal = static_cast<uint8>(chroma_hor);
-            switch( static_cast<uint8>(chroma_hor) )
+            vars.track_video_info.chroma_sit_horizontal = static_cast<uint8_t>(chroma_hor);
+            switch( static_cast<uint8_t>(chroma_hor) )
             {
             case 0: name = "unspecified"; break;
             case 1: name = "left";        break;
             case 2: name = "center";      break;
             default:
-                debug( vars, "Unsupported Horizontal Chroma Siting=%d", static_cast<uint8>(chroma_hor) );
+                debug( vars, "Unsupported Horizontal Chroma Siting=%d", static_cast<uint8_t>(chroma_hor) );
             }
             if (name != nullptr) debug( vars, "Chroma Siting Horizontal=%s", name);
         }
@@ -912,14 +915,14 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
         {
             ONLY_FMT(VIDEO);
             const char *name = nullptr;
-            vars.track_video_info.chroma_sit_vertical = static_cast<uint8>(chroma_ver);
-            switch( static_cast<uint8>(chroma_ver) )
+            vars.track_video_info.chroma_sit_vertical = static_cast<uint8_t>(chroma_ver);
+            switch( static_cast<uint8_t>(chroma_ver) )
             {
             case 0: name = "unspecified"; break;
             case 1: name = "left";        break;
             case 2: name = "center";      break;
             default:
-                debug( vars, "Unsupported Vertical Chroma Siting=%d", static_cast<uint8>(chroma_ver) );
+                debug( vars, "Unsupported Vertical Chroma Siting=%d", static_cast<uint8_t>(chroma_ver) );
             }
             if (name != nullptr) debug( vars, "Chroma Siting Vertical=%s", name);
         }
@@ -1034,20 +1037,20 @@ void matroska_segment_c::ParseTrackEntry( const KaxTrackEntry *m )
         E_CASE( KaxAudioChannels, achan )
         {
             ONLY_FMT(AUDIO);
-            vars.tk->fmt.audio.i_channels = static_cast<uint8>( achan );
+            vars.tk->fmt.audio.i_channels = static_cast<uint8_t>( achan );
             debug( vars, "achan=%u", vars.tk->fmt.audio.i_channels );
         }
         E_CASE( KaxAudioBitDepth, abits )
         {
             ONLY_FMT(AUDIO);
-            vars.tk->fmt.audio.i_bitspersample = static_cast<uint8>( abits );
+            vars.tk->fmt.audio.i_bitspersample = static_cast<uint8_t>( abits );
             debug( vars, "abits=%u", vars.tk->fmt.audio.i_bitspersample);
         }
         E_CASE ( EbmlVoid, ) {
           VLC_UNUSED( vars );
         }
         E_CASE_DEFAULT(element) {
-            debug( vars, "Unknown (%s)", typeid(element).name() );
+            debug( vars, "Unknown (%s)", EBML_NAME(&element) );
         }
     };
 
@@ -1134,7 +1137,7 @@ void matroska_segment_c::ParseTracks( KaxTracks *tracks )
             VLC_UNUSED( vars );
         }
         E_CASE_DEFAULT(element) {
-            MkvTree( *vars.p_demuxer, 2, "Unknown (%s)", typeid(element).name() );
+            MkvTree( *vars.p_demuxer, 2, "Unknown (%s)", EBML_NAME(&element) );
         }
     };
 
@@ -1198,7 +1201,7 @@ void matroska_segment_c::ParseInfo( KaxInfo *info )
             {
                 vars.obj->p_segment_uid = new KaxSegmentUID( uid );
             }
-            debug( vars, "UID=%" PRIx64, *reinterpret_cast<uint64*>( vars.obj->p_segment_uid->GetBuffer() ) );
+            debug( vars, "UID=%" PRIx64, *reinterpret_cast<uint64_t*>( vars.obj->p_segment_uid->GetBuffer() ) );
         }
         E_CASE( KaxPrevUID, uid )
         {
@@ -1207,7 +1210,7 @@ void matroska_segment_c::ParseInfo( KaxInfo *info )
                 vars.obj->p_prev_segment_uid = new KaxPrevUID( uid );
                 vars.obj->b_ref_external_segments = true;
             }
-            debug( vars, "PrevUID=%" PRIx64, *reinterpret_cast<uint64*>( vars.obj->p_prev_segment_uid->GetBuffer() ) );
+            debug( vars, "PrevUID=%" PRIx64, *reinterpret_cast<uint64_t*>( vars.obj->p_prev_segment_uid->GetBuffer() ) );
         }
         E_CASE( KaxNextUID, uid )
         {
@@ -1216,11 +1219,11 @@ void matroska_segment_c::ParseInfo( KaxInfo *info )
                 vars.obj->p_next_segment_uid = new KaxNextUID( uid );
                 vars.obj->b_ref_external_segments = true;
             }
-            debug( vars, "NextUID=%" PRIx64, *reinterpret_cast<uint64*>( vars.obj->p_next_segment_uid->GetBuffer() ) );
+            debug( vars, "NextUID=%" PRIx64, *reinterpret_cast<uint64_t*>( vars.obj->p_next_segment_uid->GetBuffer() ) );
         }
-        E_CASE( KaxTimecodeScale, tcs )
+        E_CASE( KaxTimestampScale, tcs )
         {
-            vars.obj->i_timescale = static_cast<uint64>( tcs );
+            vars.obj->i_timescale = static_cast<uint64_t>( tcs );
             debug( vars, "TimecodeScale=%" PRId64, vars.obj->i_timescale );
         }
         E_CASE( KaxDuration, dur )
@@ -1251,7 +1254,7 @@ void matroska_segment_c::ParseInfo( KaxInfo *info )
         E_CASE( KaxSegmentFamily, uid )
         {
             vars.obj->families.push_back( new KaxSegmentFamily(uid) );
-            debug( vars, "Family=%" PRIx64, *reinterpret_cast<uint64*>( uid.GetBuffer() ) );
+            debug( vars, "Family=%" PRIx64, *reinterpret_cast<uint64_t*>( uid.GetBuffer() ) );
         }
         E_CASE( KaxDateUTC, date )
         {
@@ -1275,11 +1278,11 @@ void matroska_segment_c::ParseInfo( KaxInfo *info )
 
                 E_CASE( KaxChapterTranslateEditionUID, uid )
                 {
-                    vars->editions.push_back( static_cast<uint64>( uid ) );
+                    vars->editions.push_back( static_cast<uint64_t>( uid ) );
                 }
                 E_CASE( KaxChapterTranslateCodec, codec_id )
                 {
-                    vars->codec_id = static_cast<uint32>( codec_id );
+                    vars->codec_id = static_cast<uint32_t>( codec_id );
                 }
                 E_CASE( KaxChapterTranslateID, translated_id )
                 {
@@ -1315,7 +1318,7 @@ void matroska_segment_c::ParseInfo( KaxInfo *info )
         }
         E_CASE_DEFAULT(element)
         {
-            debug( vars, "Unknown (%s)", typeid(element).name() );
+            debug( vars, "Unknown (%s)", EBML_NAME(&element) );
         }
     };
 
@@ -1363,7 +1366,7 @@ void matroska_segment_c::ParseChapterAtom( int i_level, KaxChapterAtom *ca, chap
         }
         E_CASE( KaxChapterFlagHidden, flag )
         {
-            vars.chapters.b_display_seekpoint = static_cast<uint8>( flag ) == 0;
+            vars.chapters.b_display_seekpoint = static_cast<uint8_t>( flag ) == 0;
             debug( vars, "ChapterFlagHidden=%s", vars.chapters.b_display_seekpoint ? "no" : "yes" );
         }
         E_CASE( KaxChapterSegmentUID, uid )
@@ -1371,7 +1374,7 @@ void matroska_segment_c::ParseChapterAtom( int i_level, KaxChapterAtom *ca, chap
             vars.chapters.p_segment_uid = new KaxChapterSegmentUID( uid );
             vars.obj->b_ref_external_segments = true;
 
-            debug( vars, "ChapterSegmentUID=%" PRIx64, *reinterpret_cast<uint64*>( vars.chapters.p_segment_uid->GetBuffer() ) );
+            debug( vars, "ChapterSegmentUID=%" PRIx64, *reinterpret_cast<uint64_t*>( vars.chapters.p_segment_uid->GetBuffer() ) );
         }
         E_CASE( KaxChapterSegmentEditionUID, euid )
         {
@@ -1379,20 +1382,20 @@ void matroska_segment_c::ParseChapterAtom( int i_level, KaxChapterAtom *ca, chap
 
             debug( vars, "ChapterSegmentEditionUID=%x",
 #if LIBMATROSKA_VERSION < 0x010300
-              *reinterpret_cast<uint32*>( vars.chapters.p_segment_edition_uid->GetBuffer() )
+              *reinterpret_cast<uint32_t*>( vars.chapters.p_segment_edition_uid->GetBuffer() )
 #else
-              static_cast<uint32>( *vars.chapters.p_segment_edition_uid )
+              static_cast<uint32_t>( *vars.chapters.p_segment_edition_uid )
 #endif
             );
         }
         E_CASE( KaxChapterTimeStart, start )
         {
-            vars.chapters.i_start_time = VLC_TICK_FROM_NS(static_cast<uint64>( start ));
+            vars.chapters.i_start_time = VLC_TICK_FROM_NS(static_cast<uint64_t>( start ));
             debug( vars, "ChapterTimeStart=%" PRId64, vars.chapters.i_start_time );
         }
         E_CASE( KaxChapterTimeEnd, end )
         {
-            vars.chapters.i_end_time = VLC_TICK_FROM_NS(static_cast<uint64>( end ));
+            vars.chapters.i_end_time = VLC_TICK_FROM_NS(static_cast<uint64_t>( end ));
             debug( vars, "ChapterTimeEnd=%" PRId64, vars.chapters.i_end_time );
         }
         E_CASE( KaxChapterDisplay, chapter_display )
@@ -1435,9 +1438,9 @@ void matroska_segment_c::ParseChapterAtom( int i_level, KaxChapterAtom *ca, chap
             {
                 if( MKV_CHECKED_PTR_DECL( p_codec_id, KaxChapterProcessCodecID, cp[j] ) )
                 {
-                    if ( static_cast<uint32>(*p_codec_id) == 0 )
+                    if ( static_cast<uint32_t>(*p_codec_id) == 0 )
                         p_ccodec = new matroska_script_codec_c( vars.obj->sys );
-                    else if ( static_cast<uint32>(*p_codec_id) == 1 )
+                    else if ( static_cast<uint32_t>(*p_codec_id) == 1 )
                         p_ccodec = new dvd_chapter_codec_c( vars.obj->sys );
                     break;
                 }
@@ -1575,20 +1578,20 @@ void matroska_segment_c::ParseChapters( KaxChapters *chapters )
                 }
                 E_CASE( KaxEditionUID, euid )
                 {
-                    vars.p_edition->i_uid = static_cast<uint64> ( euid );
+                    vars.p_edition->i_uid = static_cast<uint64_t> ( euid );
                 }
                 E_CASE( KaxEditionFlagOrdered, flag_ordered )
                 {
-                    vars.p_edition->b_ordered = var_InheritBool(vars.p_demuxer, "mkv-use-ordered-chapters") && static_cast<uint8>( flag_ordered );
+                    vars.p_edition->b_ordered = var_InheritBool(vars.p_demuxer, "mkv-use-ordered-chapters") && static_cast<uint8_t>( flag_ordered );
                 }
                 E_CASE( KaxEditionFlagDefault, flag_default )
                 {
-                    if( static_cast<uint8>( flag_default ) )
+                    if( static_cast<uint8_t>( flag_default ) )
                         vars.obj->i_default_edition = vars.obj->stored_editions.size();
                 }
                 E_CASE( KaxEditionFlagHidden, flag_hidden )
                 {
-                    vars.p_edition->b_hidden = static_cast<uint8>( flag_hidden ) != 0;
+                    vars.p_edition->b_hidden = static_cast<uint8_t>( flag_hidden ) != 0;
                 }
                 E_CASE( EbmlVoid, el )
                 {
@@ -1597,7 +1600,7 @@ void matroska_segment_c::ParseChapters( KaxChapters *chapters )
                 }
                 E_CASE_DEFAULT( el )
                 {
-                    msg_Dbg( vars.p_demuxer, "|   |   |   + Unknown (%s)", typeid(el).name() );
+                    msg_Dbg( vars.p_demuxer, "|   |   |   + Unknown (%s)", EBML_NAME(&el) );
                 }
             };
             KaxEditionHandler::Dispatcher().iterate( entry.begin(), entry.end(), &data );
@@ -1610,7 +1613,7 @@ void matroska_segment_c::ParseChapters( KaxChapters *chapters )
         }
         E_CASE_DEFAULT( el )
         {
-            msg_Dbg( &vars.sys.demuxer, "|   |   + Unknown (%s)", typeid(el).name() );
+            msg_Dbg( &vars.sys.demuxer, "|   |   + Unknown (%s)", EBML_NAME(&el) );
         }
     };
 
@@ -1647,9 +1650,9 @@ bool matroska_segment_c::ParseCluster( KaxCluster *cluster, bool b_update_start_
 
     for( unsigned int i = 0; i < cluster->ListSize(); ++i )
     {
-        if( MKV_CHECKED_PTR_DECL( p_ctc, KaxClusterTimecode, (*cluster)[i] ) )
+        if( MKV_CHECKED_PTR_DECL( p_ctc, KaxClusterTimestamp, (*cluster)[i] ) )
         {
-            cluster->InitTimecode( static_cast<uint64>( *p_ctc ), i_timescale );
+            cluster->InitTimestamp( static_cast<uint64_t>( *p_ctc ), i_timescale );
             _seeker.add_cluster( cluster );
             b_has_timecode = true;
             break;
@@ -1663,7 +1666,7 @@ bool matroska_segment_c::ParseCluster( KaxCluster *cluster, bool b_update_start_
     }
 
     if( b_update_start_time )
-        i_mk_start_time = VLC_TICK_FROM_NS( cluster->GlobalTimecode() );
+        i_mk_start_time = VLC_TICK_FROM_NS( cluster->GlobalTimestamp() );
 
     return true;
 }
@@ -1770,10 +1773,14 @@ bool matroska_segment_c::TrackInit( mkv_track_t * p_tk )
         }
         S_CASE("V_VP8") {
             vars.p_fmt->i_codec = VLC_CODEC_VP8;
+            if (vars.p_tk->b_has_alpha)
+                vars.p_fmt->i_level = 0x1000; // mark as containing alpha data
             vars.p_tk->b_pts_only = true;
         }
         S_CASE("V_VP9") {
             vars.p_fmt->i_codec = VLC_CODEC_VP9;
+            if (vars.p_tk->b_has_alpha)
+                vars.p_fmt->i_level = 0x1000; // mark as containing alpha data
             vars.p_fmt->b_packetized = false;
             vars.p_tk->b_pts_only = true;
 
@@ -1895,7 +1902,7 @@ bool matroska_segment_c::TrackInit( mkv_track_t * p_tk )
                 p_tk->fmt.audio.i_channels   = GetWLE( &p_wf->nChannels );
                 p_tk->fmt.audio.i_rate = GetDWLE( &p_wf->nSamplesPerSec );
                 p_tk->fmt.i_bitrate    = GetDWLE( &p_wf->nAvgBytesPerSec ) * 8;
-                p_tk->fmt.audio.i_blockalign = GetWLE( &p_wf->nBlockAlign );;
+                p_tk->fmt.audio.i_blockalign = GetWLE( &p_wf->nBlockAlign );
                 p_tk->fmt.audio.i_bitspersample = GetWLE( &p_wf->wBitsPerSample );
 
                 p_tk->fmt.i_extra            = GetWLE( &p_wf->cbSize );
@@ -2260,46 +2267,10 @@ bool matroska_segment_c::TrackInit( mkv_track_t * p_tk )
 
             p_tk->fmt.i_codec = VLC_CODEC_SPU;
             p_tk->b_no_duration = true;
-            if( p_tk->i_extra_data )
+            if( likely( p_tk->i_extra_data && p_tk->fmt.i_cat == SPU_ES ) )
             {
-                char *psz_start;
-                char *psz_buf = (char *)malloc( p_tk->i_extra_data + 1);
-                if( psz_buf != NULL )
-                {
-                    memcpy( psz_buf, p_tk->p_extra_data , p_tk->i_extra_data );
-                    psz_buf[p_tk->i_extra_data] = '\0';
-
-                    if (p_tk->fmt.i_cat == SPU_ES)
-                    {
-                        psz_start = strstr( psz_buf, "size:" );
-                        if( psz_start &&
-                            vobsub_size_parse( psz_start,
-                                               &p_tk->fmt.subs.spu.i_original_frame_width,
-                                               &p_tk->fmt.subs.spu.i_original_frame_height ) == VLC_SUCCESS )
-                        {
-                            msg_Dbg( vars.p_demuxer, "original frame size vobsubs: %dx%d",
-                                     p_tk->fmt.subs.spu.i_original_frame_width,
-                                     p_tk->fmt.subs.spu.i_original_frame_height );
-                        }
-                        else
-                        {
-                            msg_Warn( vars.p_demuxer, "reading original frame size for vobsub failed" );
-                        }
-
-                        psz_start = strstr( psz_buf, "palette:" );
-                        if( psz_start &&
-                            vobsub_palette_parse( psz_start, &p_tk->fmt.subs.spu.palette[1] ) == VLC_SUCCESS )
-                        {
-                            p_tk->fmt.subs.spu.palette[0] = SPU_PALETTE_DEFINED;
-                            msg_Dbg( vars.p_demuxer, "vobsub palette read" );
-                        }
-                        else
-                        {
-                            msg_Warn( vars.p_demuxer, "reading original palette failed" );
-                        }
-                    }
-                    free( psz_buf );
-                }
+                vobsub_extra_parse( VLC_OBJECT(vars.p_demuxer), &p_tk->fmt.subs,
+                                    p_tk->p_extra_data, p_tk->i_extra_data );
             }
         }
         S_CASE("S_DVBSUB")

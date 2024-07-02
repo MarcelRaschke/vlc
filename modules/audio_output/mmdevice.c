@@ -38,6 +38,7 @@ DEFINE_PROPERTYKEY(PKEY_Device_FriendlyName, 0xa45c254e, 0xdf1c, 0x4efd,
    0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0, 14);
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_plugin.h>
 #include <vlc_aout.h>
 #include <vlc_charset.h>
@@ -49,7 +50,7 @@ DEFINE_GUID (GUID_VLC_AUD_OUT, 0x4533f59d, 0x59ee, 0x00c6,
 
 static int TryEnterMTA(vlc_object_t *obj)
 {
-    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
     if (unlikely(FAILED(hr)))
     {
         msg_Err (obj, "cannot initialize COM (error 0x%lX)", hr);
@@ -61,7 +62,7 @@ static int TryEnterMTA(vlc_object_t *obj)
 
 static void EnterMTA(void)
 {
-    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
     if (unlikely(FAILED(hr)))
         abort();
 }
@@ -73,6 +74,12 @@ static void LeaveMTA(void)
 
 static wchar_t default_device[1] = L"";
 static char default_device_b[1] = "";
+
+enum initialisation_status_t {
+    INITIALISATION_PENDING,
+    INITIALISATION_FAILED,
+    INITIALISATION_SUCCEEDED,
+};
 
 typedef struct
 {
@@ -95,6 +102,7 @@ typedef struct
     wchar_t *acquired_device; /**< Acquired device identifier, NULL if none */
     bool request_device_restart;
     HANDLE work_event;
+    enum initialisation_status_t initialisation_status;
     vlc_mutex_t lock;
     vlc_cond_t ready;
     vlc_thread_t thread; /**< Thread for audio session control */
@@ -575,7 +583,7 @@ vlc_MMNotificationClient_OnDefaultDeviceChange(IMMNotificationClient *this,
     {
         msg_Dbg(aout, "default device changed: %ls", wid);
         sys->request_device_restart = true;
-        aout_RestartRequest(aout, AOUT_RESTART_OUTPUT);
+        aout_RestartRequest(aout, true);
     }
     vlc_mutex_unlock(&sys->lock);
 
@@ -730,7 +738,7 @@ static int DeviceRequestLocked(audio_output_t *aout)
 
     if (sys->stream != NULL && sys->dev != NULL)
         /* Request restart of stream with the new device */
-        aout_RestartRequest(aout, AOUT_RESTART_OUTPUT);
+        aout_RestartRequest(aout, true);
     return (sys->dev != NULL) ? 0 : -1;
 }
 
@@ -923,6 +931,7 @@ static HRESULT MMSession(audio_output_t *aout, IMMDeviceEnumerator *it)
     }
 
     sys->requested_device = NULL;
+    sys->initialisation_status = INITIALISATION_SUCCEEDED;
     vlc_cond_signal(&sys->ready);
 
     if (SUCCEEDED(hr))
@@ -1094,14 +1103,29 @@ static void *MMThread(void *data)
 {
     audio_output_t *aout = data;
     aout_sys_t *sys = aout->sys;
-    IMMDeviceEnumerator *it = sys->it;
 
     vlc_thread_set_name("vlc-mmdevice");
 
-    EnterMTA();
+    /* Initialize MMDevice API */
+    if (TryEnterMTA(aout))
+        goto error;
+
+    void *pv;
+    HRESULT hr = CoCreateInstance(&CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL,
+                                  &IID_IMMDeviceEnumerator, &pv);
+    if (FAILED(hr))
+    {
+        msg_Dbg(aout, "cannot create device enumerator (error 0x%lX)", hr);
+        LeaveMTA();
+        goto error;
+    }
+
+    IMMDeviceEnumerator *it = pv;
+    sys->it = it;
+
     IMMDeviceEnumerator_RegisterEndpointNotificationCallback(it,
                                                           &sys->device_events);
-    HRESULT hr = DevicesEnum(it, MMThread_DevicesEnum_Added, aout);
+    hr = DevicesEnum(it, MMThread_DevicesEnum_Added, aout);
     if (FAILED(hr))
         msg_Warn(aout, "cannot enumerate audio endpoints (error 0x%lX)", hr);
 
@@ -1122,6 +1146,13 @@ static void *MMThread(void *data)
                                                           &sys->device_events);
     IMMDeviceEnumerator_Release(it);
     LeaveMTA();
+    return NULL;
+
+error:
+    vlc_mutex_lock(&sys->lock);
+    sys->initialisation_status = INITIALISATION_FAILED;
+    vlc_cond_signal(&sys->ready);
+    vlc_mutex_unlock(&sys->lock);
     return NULL;
 }
 
@@ -1200,7 +1231,7 @@ static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
         HRESULT hr;
         owner->device = sys->dev;
 
-        module = vlc_module_load(s, "aout stream", modlist,
+        module = vlc_module_load(vlc_object_logger(s), "aout stream", modlist,
                                  false, aout_stream_Start, s, fmt, &hr);
         free(modlist);
 
@@ -1337,33 +1368,20 @@ static int Open(vlc_object_t *obj)
         sys->requested_device = default_device;
     }
 
-    /* Initialize MMDevice API */
-    if (TryEnterMTA(aout))
-        goto error;
-
-    void *pv;
-    HRESULT hr = CoCreateInstance(&CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL,
-                                  &IID_IMMDeviceEnumerator, &pv);
-    if (FAILED(hr))
-    {
-        LeaveMTA();
-        msg_Dbg(aout, "cannot create device enumerator (error 0x%lX)", hr);
-        goto error;
-    }
-    sys->it = pv;
-
+    sys->initialisation_status = INITIALISATION_PENDING;
     if (vlc_clone(&sys->thread, MMThread, aout))
-    {
-        IMMDeviceEnumerator_Release(sys->it);
-        LeaveMTA();
         goto error;
-    }
 
     vlc_mutex_lock(&sys->lock);
-    while (sys->requested_device != NULL)
+    while (sys->initialisation_status == INITIALISATION_PENDING)
         vlc_cond_wait(&sys->ready, &sys->lock);
     vlc_mutex_unlock(&sys->lock);
-    LeaveMTA(); /* Leave MTA after thread has entered MTA */
+
+    if (sys->initialisation_status == INITIALISATION_FAILED)
+    {
+        vlc_join(sys->thread, NULL);
+        goto error;
+    }
 
     aout->start = Start;
     aout->stop = Stop;
@@ -1444,7 +1462,7 @@ static int ReloadAudioDevices(char const *name, char ***values, char ***descs)
 
     (void) name;
 
-    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
     if (FAILED(hr)) {
         if (hr != RPC_E_CHANGED_MODE)
             return -1;

@@ -22,14 +22,8 @@
 
 #import <Cocoa/Cocoa.h>
 
-@interface VLCBottomBarView : NSVisualEffectView
+@interface VLCBottomBarView : NSView
 
-@property NSGradient *lightGradient;
-@property NSGradient *darkGradient;
-
-@property NSColor *lightStroke;
-@property NSColor *darkStroke;
-
-@property (readwrite) BOOL isDark;
+@property (readwrite, assign) BOOL drawBorder;
 
 @end

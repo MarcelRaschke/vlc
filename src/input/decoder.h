@@ -58,6 +58,7 @@ struct vlc_input_decoder_cfg
     input_resource_t *resource;
     sout_stream_t *sout;
     enum input_type input_type;
+    unsigned cc_decoder;
     const struct vlc_input_decoder_callbacks *cbs;
     void *cbs_data;
 };
@@ -103,25 +104,27 @@ void vlc_input_decoder_StopWait( vlc_input_decoder_t * );
 bool vlc_input_decoder_IsEmpty( vlc_input_decoder_t * );
 
 /**
- * This function activates the request closed caption channel.
+ * This function Creates and adds the requested SubDec.
+ *
+ * The sub decoder returned by this function must be deleted with
+ * vlc_input_decoder_Delete() before the parent is deleted.
  */
-int vlc_input_decoder_SetCcState( vlc_input_decoder_t *, vlc_fourcc_t, int i_channel, bool b_decode );
-
-/**
- * This function returns an error if the requested channel does not exist and
- * set pb_decode to the channel status(active or not) otherwise.
- */
-int vlc_input_decoder_GetCcState( vlc_input_decoder_t *, vlc_fourcc_t, int i_channel, bool *pb_decode );
-
-/**
- * This function get cc channels descriptions
- */
-void vlc_input_decoder_GetCcDesc( vlc_input_decoder_t *, decoder_cc_desc_t * );
+vlc_input_decoder_t *
+vlc_input_decoder_CreateSubDec(vlc_input_decoder_t *dec,
+                               const struct vlc_input_decoder_cfg *cfg);
 
 /**
  * This function forces the display of the next picture
  */
 void vlc_input_decoder_FrameNext( vlc_input_decoder_t *p_dec );
+
+struct vlc_subdec_desc
+{
+    es_format_t *fmt_array;
+    size_t fmt_count;
+};
+
+void vlc_subdec_desc_Clean(struct vlc_subdec_desc *desc);
 
 struct vlc_input_decoder_status
 {
@@ -137,16 +140,15 @@ struct vlc_input_decoder_status
         vlc_meta_t *meta;
     } format;
 
-    struct {
-        decoder_cc_desc_t desc;
-    } cc;
+    struct vlc_subdec_desc subdec_desc;
 };
 
 /**
  * Get the last status of the decoder.
  */
-void vlc_input_decoder_GetStatus( vlc_input_decoder_t *p_dec,
-                                  struct vlc_input_decoder_status *status );
+void vlc_input_decoder_DecodeWithStatus(vlc_input_decoder_t *p_dec,
+                                        vlc_frame_t *frame, bool do_pace,
+                                        struct vlc_input_decoder_status *status);
 
 /**
  * This function returns the current size in bytes of the decoder fifo

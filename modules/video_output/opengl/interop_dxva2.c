@@ -53,22 +53,6 @@
 #include <GL/glew.h>
 #include <GL/wglew.h>
 
-/*****************************************************************************
- * Module descriptor
- *****************************************************************************/
-static int  GLConvOpen(vlc_object_t *);
-static void GLConvClose(vlc_object_t *);
-
-vlc_module_begin ()
-    set_shortname("dxva2")
-    set_subcategory(SUBCAT_VIDEO_VOUT)
-    set_description("DXVA2 surface converter")
-    set_capability("glinterop", 1)
-    set_callbacks(GLConvOpen, GLConvClose)
-
-    add_bool("direct3d9-dxvahd", true, DXVAHD_TEXT, NULL)
-vlc_module_end ()
-
 struct wgl_vt {
     PFNWGLGETEXTENSIONSSTRINGEXTPROC     GetExtensionsStringEXT;
     PFNWGLGETEXTENSIONSSTRINGARBPROC     GetExtensionsStringARB;
@@ -197,19 +181,25 @@ GLConvAllocateTextures(const struct vlc_gl_interop *interop, uint32_t textures[]
 }
 
 static void
-GLConvClose(vlc_object_t *obj)
+GLConvDeallocateTextures(const struct vlc_gl_interop *interop, uint32_t textures[])
 {
-    struct vlc_gl_interop *interop = container_of(obj, struct vlc_gl_interop, obj);
+    struct glpriv *priv = interop->priv;
+
+    if (priv->gl_handle_d3d && priv->gl_render)
+    {
+        priv->vt.DXUnlockObjectsNV(priv->gl_handle_d3d, 1, &priv->gl_render);
+        priv->vt.DXUnregisterObjectNV(priv->gl_handle_d3d, priv->gl_render);
+        priv->gl_render = NULL;
+    }
+}
+
+static void
+GLConvClose(struct vlc_gl_interop *interop)
+{
     struct glpriv *priv = interop->priv;
 
     if (priv->gl_handle_d3d)
     {
-        if (priv->gl_render)
-        {
-            priv->vt.DXUnlockObjectsNV(priv->gl_handle_d3d, 1, &priv->gl_render);
-            priv->vt.DXUnregisterObjectNV(priv->gl_handle_d3d, priv->gl_render);
-        }
-
         priv->vt.DXCloseDeviceNV(priv->gl_handle_d3d);
     }
     if (priv->processor.proc)
@@ -248,7 +238,7 @@ static void SetupProcessorInput(struct vlc_gl_interop *interop, const video_form
         .right  = interop->fmt_in.i_x_offset + interop->fmt_in.i_visible_width,
         .top    = interop->fmt_in.i_y_offset,
         .bottom = interop->fmt_in.i_y_offset + interop->fmt_in.i_visible_height,
-    };;
+    };
     IDXVAHD_VideoProcessor_SetVideoProcessStreamState( sys->processor.proc, 0, DXVAHD_STREAM_STATE_SOURCE_RECT, sizeof(srcRect), &srcRect );
 
     DXVAHD_BLT_STATE_TARGET_RECT_DATA dstRect;
@@ -419,10 +409,8 @@ error:
 }
 
 static int
-GLConvOpen(vlc_object_t *obj)
+GLConvOpen(struct vlc_gl_interop *interop)
 {
-    struct vlc_gl_interop *interop = container_of(obj, struct vlc_gl_interop, obj);
-
     if (interop->fmt_in.i_chroma != VLC_CODEC_D3D9_OPAQUE
      && interop->fmt_in.i_chroma != VLC_CODEC_D3D9_OPAQUE_10B)
         return VLC_EGENERIC;
@@ -434,7 +422,7 @@ GLConvOpen(vlc_object_t *obj)
 
     if (!d3d9_decoder->hd3d.use_ex)
     {
-        msg_Warn(obj, "DX/GL interrop only working on d3d9x");
+        msg_Warn(interop, "DX/GL interrop only working on d3d9x");
         return VLC_EGENERIC;
     }
     HGLRC hGLRC = wglGetCurrentContext();
@@ -446,7 +434,7 @@ GLConvOpen(vlc_object_t *obj)
 #define LOAD_EXT(name, type) do { \
     vt.name = (type) vlc_gl_GetProcAddress(interop->gl, "wgl" #name); \
     if (!vt.name) { \
-        msg_Warn(obj, "'wgl " #name "' could not be loaded"); \
+        msg_Warn(interop, "'wgl " #name "' could not be loaded"); \
         return VLC_EGENERIC; \
     } \
 } while(0)
@@ -481,7 +469,7 @@ GLConvOpen(vlc_object_t *obj)
     if (!priv)
         return VLC_ENOMEM;
     interop->priv = priv;
-    priv->OutputFormat = D3DFMT_X8R8G8B8;
+    priv->OutputFormat = D3DFMT_A8R8G8B8;
     priv->vt = vt;
 
     HRESULT hr;
@@ -519,7 +507,7 @@ GLConvOpen(vlc_object_t *obj)
                                                &priv->dx_render, &shared_handle);
     if (FAILED(hr))
     {
-        msg_Warn(obj, "IDirect3DDevice9Ex_CreateRenderTarget failed");
+        msg_Warn(interop, "IDirect3DDevice9Ex_CreateRenderTarget failed");
         goto error;
     }
 
@@ -529,13 +517,15 @@ GLConvOpen(vlc_object_t *obj)
     priv->gl_handle_d3d = priv->vt.DXOpenDeviceNV(d3d9_decoder->d3ddev.devex);
     if (!priv->gl_handle_d3d)
     {
-        msg_Warn(obj, "DXOpenDeviceNV failed: %lu", GetLastError());
+        msg_Warn(interop, "DXOpenDeviceNV failed: %lu", GetLastError());
         goto error;
     }
 
     static const struct vlc_gl_interop_ops ops = {
         .allocate_textures = GLConvAllocateTextures,
+        .deallocate_textures = GLConvDeallocateTextures,
         .update_textures = GLConvUpdate,
+        .close = GLConvClose,
     };
     interop->ops = &ops;
 
@@ -543,7 +533,7 @@ GLConvOpen(vlc_object_t *obj)
     video_format_TransformBy(&interop->fmt_out, TRANSFORM_VFLIP);
 
     interop->tex_target = GL_TEXTURE_2D;
-    interop->fmt_out.i_chroma = VLC_CODEC_RGB32;
+    interop->fmt_out.i_chroma = VLC_CODEC_BGRA;
     interop->fmt_out.space = COLOR_SPACE_UNDEF;
 
     interop->tex_count = 1;
@@ -551,13 +541,23 @@ GLConvOpen(vlc_object_t *obj)
         .w = {1, 1},
         .h = {1, 1},
         .internal = GL_RGBA,
-        .format = GL_RGBA,
+        .format = GL_BGRA,
         .type = GL_UNSIGNED_BYTE,
     };
 
     return VLC_SUCCESS;
 
 error:
-    GLConvClose(obj);
+    GLConvClose(interop);
     return VLC_EGENERIC;
 }
+
+vlc_module_begin ()
+    set_shortname("dxva2")
+    set_subcategory(SUBCAT_VIDEO_VOUT)
+    set_description("DXVA2 surface converter")
+    set_capability("glinterop", 1)
+    set_callback(GLConvOpen)
+
+    add_bool("direct3d9-dxvahd", true, DXVAHD_TEXT, NULL)
+vlc_module_end ()

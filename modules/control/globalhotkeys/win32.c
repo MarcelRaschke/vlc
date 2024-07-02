@@ -32,6 +32,8 @@
 #include <vlc_interface.h>
 #include <vlc_actions.h>
 
+#include <windows.h>
+
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
@@ -39,6 +41,11 @@ static int Open( vlc_object_t *p_this );
 static void Close( vlc_object_t *p_this );
 static void *Thread( void *p_data );
 LRESULT CALLBACK WMHOTKEYPROC( HWND, UINT, WPARAM, LPARAM );
+
+static void AutoRun(libvlc_int_t *libvlc)
+{
+    intf_Create(libvlc, MODULE_STRING);
+}
 
 /*****************************************************************************
  * Module descriptor
@@ -50,6 +57,10 @@ vlc_module_begin()
     set_capability( "interface", 0 )
     set_callbacks( Open, Close )
     add_shortcut( "globalhotkeys" )
+
+    add_submodule()
+    set_capability("autorun", 10)
+    set_callback(AutoRun)
 vlc_module_end()
 
 struct intf_sys_t

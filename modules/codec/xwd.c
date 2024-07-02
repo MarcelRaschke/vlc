@@ -64,20 +64,22 @@ static int Decode (decoder_t *dec, block_t *block)
     {
         case 8:
             if (ntohl(hdr->bits_per_pixel) == 8)
-                chroma = VLC_CODEC_RGB8;
+                chroma = VLC_CODEC_RGB233;
             break;
         case 15:
             if (ntohl(hdr->bits_per_pixel) == 16)
-                chroma = VLC_CODEC_RGB15;
+                chroma = ntohl(hdr->byte_order) == 0 /* LSBFirst */ ?
+                    VLC_CODEC_RGB555LE : VLC_CODEC_RGB555BE;
             break;
         case 16:
             if (ntohl(hdr->bits_per_pixel) == 16)
-                chroma = VLC_CODEC_RGB16;
+                chroma = ntohl(hdr->byte_order) == 0 /* LSBFirst */ ?
+                    VLC_CODEC_RGB565LE : VLC_CODEC_RGB565BE;
             break;
         case 24:
             switch (ntohl(hdr->bits_per_pixel))
             {
-                case 32: chroma = VLC_CODEC_RGB32; break;
+                case 32: chroma = VLC_CODEC_XRGB; break;
                 case 24: chroma = VLC_CODEC_RGB24; break;
             }
             break;
@@ -96,29 +98,18 @@ static int Decode (decoder_t *dec, block_t *block)
                        dec->fmt_in->video.i_sar_num,
                        dec->fmt_in->video.i_sar_den);
 
-    const size_t copy = dec->fmt_out.video.i_width
-                        * (dec->fmt_out.video.i_bits_per_pixel / 8);
-    const uint32_t pitch = ntohl(hdr->bytes_per_line);
-
-    /* Build picture */
-    if (pitch < copy
-     || (block->i_buffer / pitch) < dec->fmt_out.video.i_height)
-        goto drop;
-
     if (decoder_UpdateVideoFormat(dec))
         goto drop;
     pic = decoder_NewPicture(dec);
     if (pic == NULL)
         goto drop;
 
-    const uint8_t *in = block->p_buffer;
-    uint8_t *out = pic->p->p_pixels;
-    for (unsigned i = 0; i < dec->fmt_out.video.i_height; i++)
-    {
-        memcpy(out, in, copy);
-        in += pitch;
-        out += pic->p->i_pitch;
-    }
+    plane_t plane;
+    plane.p_pixels        = block->p_buffer;
+    plane.i_pitch         = plane.i_visible_pitch = ntohl(hdr->bytes_per_line);
+    plane.i_lines         = dec->fmt_out.video.i_height;
+    plane.i_visible_lines = dec->fmt_out.video.i_visible_height;
+    plane_CopyPixels(pic->p, &plane);
     pic->date = block->i_pts;
     pic->b_progressive = true;
 
@@ -137,7 +128,7 @@ static int Open(vlc_object_t *obj)
 
     dec->pf_decode = Decode;
     es_format_Copy(&dec->fmt_out, dec->fmt_in);
-    dec->fmt_out.i_codec = VLC_CODEC_RGB32;
+    dec->fmt_out.i_codec = VLC_CODEC_XRGB;
     return VLC_SUCCESS;
 }
 

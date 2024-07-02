@@ -16,9 +16,11 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQml 2.11
+import QtQml
 
 import org.videolan.vlc 0.1
+import org.videolan.medialib 0.1
+
 
 import "qrc:///util/Helpers.js" as Helpers
 
@@ -28,7 +30,7 @@ NativeMenu {
 
     // Properties
 
-    /* required */ property var model: null
+    required property MLBaseModel model
 
     property string idDataRole: "id"
 
@@ -41,43 +43,61 @@ NativeMenu {
     // Settings
 
     actions: [{
-            "text": I18n.qtr("Play"),
+            "text": qsTr("Play"),
             "action": addAndPlay
         }, {
-            "text": I18n.qtr("Play as audio"),
+            "text": qsTr("Play as audio"),
             "action": playAsAudio,
             "visible": root.showPlayAsAudioAction
         }, {
-            "text": I18n.qtr("Enqueue"),
+            "text": qsTr("Enqueue"),
             "action": enqueue
         }, {
-            "text": I18n.qtr("Add to favorites"),
+            "text": qsTr("Add to favorites"),
             "action": addFavorite,
             "visible": _showAddFavorite
         }, {
-            "text": I18n.qtr("Remove from favorites"),
+            "text": qsTr("Remove from favorites"),
             "action": removeFavorite,
             "visible": _showRemoveFavorite
         }, {
-            "text": I18n.qtr("Add to a playlist"),
+            "text": qsTr("Add to a playlist"),
             "action": addToAPlaylist
         }, {
-            "text": I18n.qtr("Mark as seen"),
+            "text": qsTr("Mark as seen"),
             "action": markSeen,
             "visible": _showSeen
         }, {
-            "text": I18n.qtr("Mark as unseen"),
+            "text": qsTr("Mark as unseen"),
             "action": markUnseen,
             "visible": _showUnseen
         }, {
-            "text": I18n.qtr("Information"),
+            "text": qsTr("Open Containing Folder"),
+            "action": openContainingFolder,
+            "visible": _openContainingFolder
+        }, {
+            "text": qsTr("Delete"),
+            "action": deleteStream,
+            "visible": _deleteStream
+        }, {
+            "text": qsTr("Information"),
             "action": _signalShowInformation,
             "visible": showInformationAvailable
-        }]
+        }, {
+            "text": qsTr("Media Information"),
+            "action": function(dataList, options, indexes) {
+                DialogsProvider.mediaInfoDialog(dataList[0][idDataRole])
+            },
+            "visible": function(dataList, options, indexes) {
+                return (dataList.length === 1)
+                        && !(dataList[0][idDataRole].hasParent())
+            }
+        }
+    ]
 
     // Events
 
-    onRequestData: {
+    onRequestData: (requestID, indexes) => {
         model.getData(indexes, function (data) {
             setData(requestID, data)
         })
@@ -117,67 +137,71 @@ NativeMenu {
         model.setItemPlayed(indexes[0], false)
     }
 
-    function showInformationAvailable(options, indexes) {
+    function openContainingFolder(dataList, options, indexes) {
+        const parentDir = model.getParentURL(indexes[0]);
+
+        Qt.openUrlExternally(parentDir)
+    }
+
+    function deleteStream(dataList, options, indexes) {
+        model.deleteStream(dataList[0][idDataRole])
+    }
+
+    function showInformationAvailable(dataList, options, indexes) {
         return indexes.length === 1
-                && Helpers.isInteger(Helpers.get(options, "information", null))
+                && Helpers.isInteger(options?.["information"] ?? null)
     }
 
     // Private
 
-    function _showAddFavorite(options, indexes) {
-        if (indexes.length !== 1)
+    function _checkRole(dataList, role, expected) {
+        if (dataList.length !== 1)
             return false
 
-        var isFavorite = model.getDataAt(indexes[0]).isFavorite
+        if (!(role in dataList[0]))
+            return false
 
-        // NOTE: Strictly comparing 'isFavorite' given it might be undefined.
-        return (isFavorite === false)
+        return (dataList[0][role] === expected)
     }
 
-    function _showRemoveFavorite(options, indexes) {
-        if (indexes.length !== 1)
-            return false
-
-        var isFavorite = model.getDataAt(indexes[0]).isFavorite
-
-        // NOTE: Strictly comparing 'isFavorite' given it might be undefined.
-        return (isFavorite === true)
+    function _showAddFavorite(dataList, options, indexes) {
+        return _checkRole(dataList, "isFavorite", false)
     }
 
-    function _showSeen(options, indexes) {
-        if (indexes.length !== 1)
-            return false
-
-        var isNew = model.getDataAt(indexes[0]).isNew
-
-        // NOTE: Strictly comparing 'isNew' given it might be undefined.
-        return (isNew === true)
+    function _showRemoveFavorite(dataList, options, indexes) {
+        return _checkRole(dataList, "isFavorite", true)
     }
 
-    function _showUnseen(options, indexes) {
-        if (indexes.length !== 1)
-            return false
+    function _showSeen(dataList, options, indexes) {
+        return _checkRole(dataList, "isNew", true)
+    }
 
-        var isNew = model.getDataAt(indexes[0]).isNew
+    function _showUnseen(dataList, options, indexes) {
+        return _checkRole(dataList, "isNew", false)
+    }
 
-        // NOTE: Strictly comparing 'isNew' given it might be undefined.
-        return (isNew === false)
+    function _openContainingFolder(dataList, options, indexes) {
+        return _checkRole(dataList, "isLocal", true)
+    }
+
+    function _deleteStream(dataList,options, indexes) {
+        return _checkRole(dataList, "isDeletable", true)
     }
 
     function _signalShowInformation(dataList, options) {
-        var index = Helpers.get(options, "information", null)
+        const index = options?.["information"] ?? null
         console.assert(Helpers.isInteger(index))
         showMediaInformation(index)
     }
 
     function _playerOptions(options, extraOptions) {
-        var playerOpts = Helpers.get(options, "player-options", [])
+        const playerOpts = options?.["player-options"] ?? []
         return playerOpts.concat(extraOptions)
     }
 
     function _mlIDList(dataList) {
-        var idList = []
-        for (var i in dataList) {
+        const idList = []
+        for (let i in dataList) {
             idList.push(dataList[i][idDataRole])
         }
 

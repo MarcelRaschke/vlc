@@ -97,7 +97,7 @@ typedef struct vout_display_sys_t {
 typedef unsigned (*vlc_format_cb)(void **, char *, unsigned *, unsigned *,
                                   unsigned *, unsigned *);
 
-static void           Prepare(vout_display_t *, picture_t *, subpicture_t *, vlc_tick_t);
+static void           Prepare(vout_display_t *, picture_t *, const struct vlc_render_subpicture *, vlc_tick_t);
 static void           Display(vout_display_t *, picture_t *);
 static int            Control(vout_display_t *, int);
 
@@ -189,32 +189,6 @@ static int Open(vout_display_t *vd,
         return VLC_EGENERIC;
     }
 
-    /* Define the bitmasks */
-    switch (fmt.i_chroma)
-    {
-    case VLC_CODEC_RGB15:
-        fmt.i_rmask = 0x001f;
-        fmt.i_gmask = 0x03e0;
-        fmt.i_bmask = 0x7c00;
-        break;
-    case VLC_CODEC_RGB16:
-        fmt.i_rmask = 0x001f;
-        fmt.i_gmask = 0x07e0;
-        fmt.i_bmask = 0xf800;
-        break;
-    case VLC_CODEC_RGB24:
-    case VLC_CODEC_RGB32:
-        fmt.i_rmask = 0xff0000;
-        fmt.i_gmask = 0x00ff00;
-        fmt.i_bmask = 0x0000ff;
-        break;
-    default:
-        fmt.i_rmask = 0;
-        fmt.i_gmask = 0;
-        fmt.i_bmask = 0;
-        break;
-    }
-
     /* */
     *fmtp = fmt;
 
@@ -234,7 +208,8 @@ static void Close(vout_display_t *vd)
     free(sys);
 }
 
-static void Prepare(vout_display_t *vd, picture_t *pic, subpicture_t *subpic,
+static void Prepare(vout_display_t *vd, picture_t *pic,
+                    const struct vlc_render_subpicture *subpic,
                     vlc_tick_t date)
 {
     VLC_UNUSED(date);
@@ -277,10 +252,9 @@ static int Control(vout_display_t *vd, int query)
 
     switch (query) {
         case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
-        case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
-        case VOUT_DISPLAY_CHANGE_ZOOM:
         case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
         case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
+        case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
             return VLC_SUCCESS;
     }
     return VLC_EGENERIC;

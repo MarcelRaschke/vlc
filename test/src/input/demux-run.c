@@ -191,9 +191,6 @@ static int EsOutControl(es_out_t *out, input_source_t* in, int query, va_list ar
             break;
         case ES_OUT_SET_META:
             break;
-        case ES_OUT_GET_PCR_SYSTEM:
-        case ES_OUT_MODIFY_PCR_SYSTEM:
-            abort();
         default:
             return VLC_EGENERIC;
     }
@@ -428,6 +425,7 @@ int vlc_demux_process_memory(const struct vlc_run_args *args,
     f(demux_au) \
     f(demux_avi_avi) \
     f(demux_caf) \
+    f(demux_demux_cdg) \
     f(demux_mpeg_es) \
     f(demux_flacsys) \
     f(demux_mpeg_h26x) \

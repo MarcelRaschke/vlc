@@ -1,7 +1,7 @@
 # libmpeg2
 
 LIBMPEG2_VERSION := 0.5.1
-LIBMPEG2_URL := http://libmpeg2.sourceforge.net/files/libmpeg2-$(LIBMPEG2_VERSION).tar.gz
+LIBMPEG2_URL := $(SF)/libmpeg2/libmpeg2-$(LIBMPEG2_VERSION).tar.gz
 
 ifdef GPL
 PKGS += libmpeg2
@@ -17,11 +17,10 @@ $(TARBALLS)/libmpeg2-$(LIBMPEG2_VERSION).tar.gz:
 
 libmpeg2: libmpeg2-$(LIBMPEG2_VERSION).tar.gz .sum-libmpeg2
 	$(UNPACK)
+	# $(call update_autoconfig,.auto)
 	$(APPLY) $(SRC)/libmpeg2/libmpeg2-arm-pld.patch
 	$(APPLY) $(SRC)/libmpeg2/libmpeg2-inline.patch
 	$(APPLY) $(SRC)/libmpeg2/libmpeg2-mc-neon.patch
-	$(UPDATE_AUTOCONFIG)
-	cd $(UNPACK_DIR) && mv config.guess config.sub .auto
 	$(MOVE)
 
 LIBMPEG2_CONF := --without-x --disable-sdl

@@ -16,26 +16,31 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQml.Models 2.11
+import QtQuick
+import QtQuick.Templates as T
+import QtQuick.Layouts
+import QtQml.Models
 
 import org.videolan.vlc 0.1
-import org.videolan.compat 0.1
 
 import "qrc:///player/"
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 
-Control {
+T.Control {
     id: control
 
     padding: background.border.width
 
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            implicitContentWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             implicitContentHeight + topPadding + bottomPadding)
+
     readonly property int controlId: model.id
     property ListView dndView: null
 
-    readonly property bool dragActive: loader.Drag.active
+    readonly property bool dragActive: contentItem.target.Drag.active
     property alias dropArea: dropArea
 
     property alias containsMouse: mouseArea.containsMouse
@@ -58,6 +63,8 @@ Control {
 
         drag.target: loader
 
+        drag.smoothed: false
+
         hoverEnabled: true
 
         drag.onActiveChanged: {
@@ -75,15 +82,10 @@ Control {
             }
         }
 
-        onPositionChanged: {
-            if (drag.active) {
-                // FIXME: There must be a better way of this
-                var pos = mapToItem(loader.parent, mouseX, mouseY)
-                // y should be set first, because the automatic scroll is
-                // triggered by change on X
-                loader.y = pos.y
-                loader.x = pos.x
-            }
+        onPressed: (mouse) => {
+            const pos = mapToItem(control.contentItem.target.parent, mouseX, mouseY)
+            control.contentItem.target.y = pos.y + VLCStyle.dragDelta
+            control.contentItem.target.x = pos.x + VLCStyle.dragDelta
         }
     }
 
@@ -91,7 +93,7 @@ Control {
         id: dropArea
         anchors.fill: parent
 
-        onEntered: {
+        onEntered: (drag) => {
             if ((drag.source === null ||
                  (drag.source.dndView === dndView &&
                   (parent.DelegateModel.itemsIndex === drag.source.DelegateModel.itemsIndex + 1))) ||
@@ -99,8 +101,8 @@ Control {
                 drag.accepted = false
         }
 
-        onDropped: {
-            var destIndex = parent.DelegateModel.itemsIndex
+        onDropped: (drop) => {
+            let destIndex = parent.DelegateModel.itemsIndex
 
             if((drag.source.dndView === dndView)
                     && (drag.source.DelegateModel.itemsIndex < destIndex))
@@ -110,7 +112,7 @@ Control {
         }
     }
 
-    BindingCompat {
+    Binding {
         when: dragActive
         value: true
 
@@ -135,26 +137,24 @@ Control {
     }
 
     background: Rectangle {
-        opacity: Drag.active ? 0.75 : 1.0
-
         color: "transparent"
 
         border.width: VLCStyle.dp(1, VLCStyle.scale)
-        border.color: containsMouse && !pressed ? theme.border
-                                                : "transparent"
+        border.color: theme.border
     }
 
     contentItem: Item {
         implicitHeight: loader.implicitHeight
         implicitWidth: loader.implicitWidth
 
+        readonly property Item target: loader
+
         Loader {
             id: loader
 
             parent: Drag.active ? root : control.contentItem
 
-            anchors.horizontalCenter: Drag.active ? undefined : parent.horizontalCenter
-            anchors.verticalCenter:  Drag.active ? undefined : parent.verticalCenter
+            anchors.fill: (parent === control.contentItem) ? parent : undefined
 
             source: PlayerControlbarControls.control(model.id).source
 
@@ -163,10 +163,6 @@ Control {
             onLoaded: {
                 item.paintOnly = true
                 item.enabled = false
-
-                if (!extraWidthAvailable && item.minimumWidth !== undefined) {
-                    item.width = item.minimumWidth
-                }
             }
         }
     }

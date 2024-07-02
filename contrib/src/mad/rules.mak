@@ -28,6 +28,7 @@ endif
 
 libmad: libmad-$(MAD_VERSION).tar.gz .sum-mad
 	$(UNPACK)
+	# $(call update_autoconfig,.)
 ifdef HAVE_DARWIN_OS
 	sed -e 's%-march=i486%$(EXTRA_CFLAGS) $(EXTRA_LDFLAGS)%' \
 		-e 's%-dynamiclib%-dynamiclib -arch $(ARCH)%' \
@@ -41,7 +42,6 @@ endif
 	$(APPLY) $(SRC)/mad/mad-mips-h-constraint-removal.patch
 	$(APPLY) $(SRC)/mad/mad-foreign.patch
 	$(APPLY) $(SRC)/mad/check-bitstream-length.patch
-	cd $(UNPACK_DIR) && rm -rf aclocal.m4 Makefile.in
 	$(MOVE)
 
 .mad: libmad

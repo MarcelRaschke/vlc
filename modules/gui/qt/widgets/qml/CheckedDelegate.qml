@@ -16,11 +16,12 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
 import org.videolan.vlc 0.1
 
+import "."
 import "qrc:///style/"
 
 T.ItemDelegate {
@@ -48,11 +49,9 @@ T.ItemDelegate {
     }
 
     background: AnimatedBackground {
-        active: visualFocus
-
-        animate: theme.initialized
-        backgroundColor: control.checked ? theme.bg.highlight : theme.bg.primary
-        activeBorderColor: theme.visualFocus
+        enabled: theme.initialized
+        color: control.checked ? theme.bg.highlight : theme.bg.primary
+        border.color: visualFocus ? theme.visualFocus : "transparent"
     }
 
     contentItem: Item { // don't use a row, it will move text when control is unchecked

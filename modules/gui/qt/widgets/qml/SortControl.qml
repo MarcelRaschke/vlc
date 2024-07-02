@@ -16,22 +16,19 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 
 import "qrc:///style/"
 import "qrc:///widgets/" as Widgets
 
-FocusScope {
+Widgets.IconToolButton {
     id: root
 
     // Properties
 
     property var model: []
-
-    property string textRole
-    property string criteriaRole
 
     property bool popupAbove: false
 
@@ -50,13 +47,6 @@ FocusScope {
     property SortMenu _menu: (menu) ? menu
                                     : sortMenu
 
-    // Aliases
-
-    property alias colorContext: button.colorContext
-    property alias checked: button.checked
-    property alias focusPolicy: button.focusPolicy
-    property alias iconSize: button.size
-
     // Signals
 
     // sortSelected is triggered with new sorting key when a different sorting key is selected
@@ -65,18 +55,24 @@ FocusScope {
     signal sortSelected(var key)
     signal sortOrderSelected(int type)
 
-    // Settings
 
-    // when height/width is explicitly set (force size), implicit values will not be used.
-    // when height/width is not explicitly set, IconToolButton will set its ...
-    // height and width to these implicit counterparts because ...
-    // height and width will be set to implicit values when they are not ...
-    // explicitly set.
-    implicitWidth: button.implicitWidth
-    implicitHeight: button.implicitHeight
+    font.pixelSize: VLCStyle.icon_normal
+
+    focus: true
+
+    description: qsTr("Sort")
+
+    text: VLCIcons.topbar_sort
+
+    checked: _menu && _menu.shown
+
+    Keys.priority: Keys.AfterItem
+    Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
+
 
     // Events
 
+    onClicked: root.show()
     onVisibleChanged: if (!visible) _menu.close()
     onEnabledChanged: if (!enabled) _menu.close()
 
@@ -85,8 +81,8 @@ FocusScope {
     Connections {
         target: (_menu) ? _menu : null
 
-        onSelected: {
-            var selectedSortKey = root.model[index][root.criteriaRole]
+        function onSelected(index: int) {
+            const selectedSortKey = root.model[index].criteria
 
             if (root.sortKey !== selectedSortKey) {
                 root.sortSelected(selectedSortKey)
@@ -101,17 +97,17 @@ FocusScope {
     // Functions
 
     function show() {
-        var model = root.model.map(function(modelData) {
-            var checked = modelData[root.criteriaRole] === sortKey
-            var order = checked ? root.sortOrder : undefined
+        const model = root.model.map(function(modelData) {
+            const checked = modelData.criteria === sortKey
+            const order = checked ? root.sortOrder : undefined
             return {
-                "text": modelData[root.textRole],
+                "text": modelData.text,
                 "checked": checked,
                 "order": order
             }
         })
 
-        var point
+        let point
 
         if (root.popupAbove)
             point = root.mapToGlobal(0, - VLCStyle.margin_xxsmall)
@@ -125,27 +121,5 @@ FocusScope {
 
     SortMenu { id: sortMenu }
 
-    Widgets.IconToolButton {
-        id: button
-
-        // set height and width to root height and width so that ...
-        // we can forcefully set SortControl's width and height.
-        height: root.height
-        width: root.width
-
-        size: VLCStyle.icon_normal
-
-        focus: true
-
-        text: I18n.qtr("Sort")
-
-        iconText: VLCIcons.topbar_sort
-
-        Navigation.parentItem: root
-
-        Keys.priority: Keys.AfterItem
-        Keys.onPressed: Navigation.defaultKeyAction(event)
-
-        onClicked: root.show()
-    }
 }
+

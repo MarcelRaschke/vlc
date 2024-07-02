@@ -64,13 +64,6 @@
  * unoptimized fallbacks for other C11/C++11 conforming compilers.
  * @{
  */
-#ifdef __GNUC__
-# define VLC_GCC_VERSION(maj,min) \
-    ((__GNUC__ > (maj)) || (__GNUC__ == (maj) && __GNUC_MINOR__ >= (min)))
-#else
-/** GCC version check */
-# define VLC_GCC_VERSION(maj,min) (0)
-#endif
 
 /* Function attributes for compiler warnings */
 #if defined __has_attribute
@@ -167,11 +160,7 @@
 
 
 #ifdef __GNUC__
-# if VLC_GCC_VERSION(6,0)
-#  define VLC_DEPRECATED_ENUM __attribute__((deprecated))
-# else
-#  define VLC_DEPRECATED_ENUM
-# endif
+# define VLC_DEPRECATED_ENUM __attribute__((deprecated))
 
 # if defined( _WIN32 ) && !defined( __clang__ )
 #  define VLC_FORMAT(x,y) __attribute__ ((format(gnu_printf,x,y)))
@@ -481,20 +470,6 @@ typedef struct addon_entry_t addon_entry_t;
 typedef struct update_t update_t;
 
 /**
- * VLC value structure
- */
-typedef union
-{
-    int64_t         i_int;
-    bool            b_bool;
-    float           f_float;
-    char *          psz_string;
-    void *          p_address;
-    struct { int32_t x; int32_t y; } coords;
-
-} vlc_value_t;
-
-/**
  * \defgroup errors Error codes
  * \ingroup cext
  * @{
@@ -519,29 +494,10 @@ typedef union
 /** @} */
 
 /*****************************************************************************
- * Variable callbacks: called when the value is modified
- *****************************************************************************/
-typedef int ( * vlc_callback_t ) ( vlc_object_t *,      /* variable's object */
-                                   char const *,            /* variable name */
-                                   vlc_value_t,                 /* old value */
-                                   vlc_value_t,                 /* new value */
-                                   void * );                /* callback data */
-
-/*****************************************************************************
- * List callbacks: called when elements are added/removed from the list
- *****************************************************************************/
-typedef int ( * vlc_list_callback_t ) ( vlc_object_t *,      /* variable's object */
-                                        char const *,            /* variable name */
-                                        int,                  /* VLC_VAR_* action */
-                                        vlc_value_t *,      /* new/deleted value  */
-                                        void *);                 /* callback data */
-
-/*****************************************************************************
  * OS-specific headers and thread types
  *****************************************************************************/
 #if defined( _WIN32 )
 #   include <malloc.h>
-#   include <windows.h>
 #endif
 
 #ifdef __APPLE__
@@ -556,9 +512,6 @@ typedef int ( * vlc_list_callback_t ) ( vlc_object_t *,      /* variable's objec
 #   include <os2safe.h>
 #   include <os2.h>
 #endif
-
-#include "vlc_tick.h"
-#include "vlc_threads.h"
 
 /**
  * \defgroup intops Integer operations
@@ -634,31 +587,7 @@ VLC_USED static inline int vlc_##basename##suffix(type x) \
 { \
     return __builtin_##basename##suffix(x); \
 }
-
-VLC_INT_FUNC(clz)
 #else
-VLC_USED static inline int vlc_clzll(unsigned long long x)
-{
-    int i = sizeof (x) * 8;
-
-    while (x)
-    {
-        x >>= 1;
-        i--;
-    }
-    return i;
-}
-
-VLC_USED static inline int vlc_clzl(unsigned long x)
-{
-    return vlc_clzll(x) - ((sizeof (long long) - sizeof (long)) * 8);
-}
-
-VLC_USED static inline int vlc_clz(unsigned x)
-{
-    return vlc_clzll(x) - ((sizeof (long long) - sizeof (int)) * 8);
-}
-
 VLC_USED static inline int vlc_ctz_generic(unsigned long long x)
 {
     unsigned i = sizeof (x) * 8;
@@ -713,26 +642,6 @@ VLC_INT_FUNC(popcount)
           signed long:      func##l(x), \
         unsigned long long: func##ll(x), \
           signed long long: func##ll(x))
-
-/**
- * Count leading zeroes
- *
- * This function counts the number of consecutive zero (clear) bits
- * down from the highest order bit in an unsigned integer.
- *
- * \param x a non-zero integer
- * \note This macro assumes that CHAR_BIT equals 8.
- * \warning By definition, the result depends on the (width of the) type of x.
- * \return The number of leading zero bits in x.
- */
-# define clz(x) \
-    _Generic((x), \
-        unsigned char: (vlc_clz(x) - (sizeof (unsigned) - 1) * 8), \
-        unsigned short: (vlc_clz(x) \
-        - (sizeof (unsigned) - sizeof (unsigned short)) * 8), \
-        unsigned: vlc_clz(x), \
-        unsigned long: vlc_clzl(x), \
-        unsigned long long: vlc_clzll(x))
 
 /**
  * Count trailing zeroes
@@ -844,7 +753,7 @@ static inline uint64_t vlc_bswap64(uint64_t x)
  */
 static inline bool uadd_overflow(unsigned a, unsigned b, unsigned *res)
 {
-#if VLC_GCC_VERSION(5,0) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__)
      return __builtin_uadd_overflow(a, b, res);
 #else
      *res = a + b;
@@ -855,7 +764,7 @@ static inline bool uadd_overflow(unsigned a, unsigned b, unsigned *res)
 static inline bool uaddl_overflow(unsigned long a, unsigned long b,
                                   unsigned long *res)
 {
-#if VLC_GCC_VERSION(5,0) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__)
      return __builtin_uaddl_overflow(a, b, res);
 #else
      *res = a + b;
@@ -866,7 +775,7 @@ static inline bool uaddl_overflow(unsigned long a, unsigned long b,
 static inline bool uaddll_overflow(unsigned long long a, unsigned long long b,
                                    unsigned long long *res)
 {
-#if VLC_GCC_VERSION(5,0) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__)
      return __builtin_uaddll_overflow(a, b, res);
 #else
      *res = a + b;
@@ -912,13 +821,13 @@ static inline bool add_overflow(unsigned long long a, unsigned long long b,
 }
 #endif
 
-#if !(VLC_GCC_VERSION(5,0) || defined(__clang__))
+#if !(defined(__GNUC__) || defined(__clang__))
 # include <limits.h>
 #endif
 
 static inline bool umul_overflow(unsigned a, unsigned b, unsigned *res)
 {
-#if VLC_GCC_VERSION(5,0) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__)
      return __builtin_umul_overflow(a, b, res);
 #else
      *res = a * b;
@@ -929,7 +838,7 @@ static inline bool umul_overflow(unsigned a, unsigned b, unsigned *res)
 static inline bool umull_overflow(unsigned long a, unsigned long b,
                                   unsigned long *res)
 {
-#if VLC_GCC_VERSION(5,0) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__)
      return __builtin_umull_overflow(a, b, res);
 #else
      *res = a * b;
@@ -940,7 +849,7 @@ static inline bool umull_overflow(unsigned long a, unsigned long b,
 static inline bool umulll_overflow(unsigned long long a, unsigned long long b,
                                    unsigned long long *res)
 {
-#if VLC_GCC_VERSION(5,0) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__)
      return __builtin_umulll_overflow(a, b, res);
 #else
      *res = a * b;
@@ -993,7 +902,7 @@ static inline bool mul_overflow(unsigned long long a, unsigned long long b,
 
 #define EMPTY_STR(str) (!str || !*str)
 
-#include <vlc_arrays.h>
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 /* MSB (big endian)/LSB (little endian) conversions - network order is always
  * MSB, and should be used for both network communications and files. */
@@ -1227,7 +1136,6 @@ VLC_API const char * VLC_Compiler( void ) VLC_USED;
 #include "vlc_messages.h"
 #include "vlc_objects.h"
 #include "vlc_variables.h"
-#include "vlc_configuration.h"
 
 #if defined( _WIN32 ) || defined( __OS2__ )
 #   define DIR_SEP_CHAR '\\'

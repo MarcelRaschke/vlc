@@ -41,6 +41,8 @@
 
 #include <limits.h>
 
+#include "../lib/libvlc_internal.h"
+
 const char vlc_module_name[] = MODULE_STRING;
 
 static int OpenIntf(vlc_object_t *root)
@@ -74,13 +76,13 @@ static int OpenIntf(vlc_object_t *root)
     assert(ret == VLC_SUCCESS);
 
     video_format_t fmt_out;
-    video_format_Init(&fmt_out, VLC_CODEC_PNG);
+    video_format_Init(&fmt_out, 0);
     fmt_out.i_width = fmt_out.i_visible_width = 800;
     fmt_out.i_height = fmt_out.i_visible_height = 600;
 
     block_t *block;
 
-    block = image_Write(ih, picture, &fmt_in, &fmt_out);
+    block = image_Write(ih, picture, &fmt_in, VLC_CODEC_PNG, &fmt_out);
     assert(block != NULL);
     block_Release(block);
     image_HandlerDelete(ih);
@@ -113,8 +115,8 @@ int main()
 
     libvlc_instance_t *vlc = libvlc_new(ARRAY_SIZE(args), args);
 
-    libvlc_add_intf(vlc, MODULE_STRING);
-    libvlc_playlist_play(vlc);
+    libvlc_InternalAddIntf(vlc->p_libvlc_int, MODULE_STRING);
+    libvlc_InternalPlay(vlc->p_libvlc_int);
 
     libvlc_release(vlc);
 

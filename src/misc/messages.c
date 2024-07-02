@@ -37,6 +37,7 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_interface.h>
 #include <vlc_charset.h>
 #include <vlc_modules.h>
@@ -407,7 +408,7 @@ static struct vlc_logger *vlc_LogModuleCreate(vlc_object_t *parent)
         return NULL;
 
     /* TODO: module configuration item */
-    if (vlc_module_load(VLC_OBJECT(module), "logger", NULL, false,
+    if (vlc_module_load(vlc_object_logger(module), "logger", NULL, false,
                         vlc_logger_load, module) == NULL) {
         vlc_object_delete(VLC_OBJECT(module));
         return NULL;
@@ -544,8 +545,10 @@ vlc_LogExternalCreate(const struct vlc_logger_operations *ops, void *opaque)
 
 /**
  * Sets the message logging callback.
+ *
+ * \param vlc the libvlc private instance to replace the logger for
  * \param ops message callback, or NULL to clear
- * \param data data pointer for the message callback
+ * \param opaque data pointer for the message callback
  */
 void vlc_LogSet(libvlc_int_t *vlc, const struct vlc_logger_operations *ops,
                 void *opaque)

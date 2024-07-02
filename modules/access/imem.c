@@ -152,10 +152,10 @@ vlc_module_begin()
         change_private()
         change_safe()
 
-    add_integer("imem-width", 0, WIDTH_TEXT, WIDTH_LONGTEXT)
+    add_integer_with_range("imem-width", 0, 0, UINT_MAX, WIDTH_TEXT, WIDTH_LONGTEXT)
         change_private()
         change_safe()
-    add_integer("imem-height", 0, HEIGHT_TEXT, HEIGHT_LONGTEXT)
+    add_integer_with_range("imem-height", 0, 0, UINT_MAX, HEIGHT_TEXT, HEIGHT_LONGTEXT)
         change_private()
         change_safe()
     add_string ("imem-dar", NULL, DAR_TEXT, DAR_LONGTEXT)
@@ -579,7 +579,7 @@ static int Demux(demux_t *demux)
 
         if (sys->source.get(sys->source.data, sys->source.cookie,
                             &dts, &pts, &flags, &buffer_size, &buffer))
-            return 0;
+            return VLC_DEMUXER_EOF;
 
         if (dts < 0)
             dts = pts;
@@ -602,7 +602,7 @@ static int Demux(demux_t *demux)
                             buffer_size, buffer);
     }
     sys->deadline = VLC_TICK_INVALID;
-    return 1;
+    return VLC_DEMUXER_SUCCESS;
 }
 
 /**

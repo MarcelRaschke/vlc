@@ -152,19 +152,19 @@ static int Open (vlc_object_t *obj)
     switch (var_InheritInteger (demux, "shm-depth"))
     {
         case 32:
-            chroma = VLC_CODEC_RGB32; bpp = 32;
+            chroma = VLC_CODEC_XRGB; bpp = 32;
             break;
         case 24:
             chroma = VLC_CODEC_RGB24; bpp = 24;
             break;
         case 16:
-            chroma = VLC_CODEC_RGB16; bpp = 16;
+            chroma = VLC_CODEC_RGB565; bpp = 16;
             break;
         case 15:
-            chroma = VLC_CODEC_RGB15; bpp = 16;
+            chroma = VLC_CODEC_RGB555; bpp = 16;
             break;
         case 8:
-            chroma = VLC_CODEC_RGB8; bpp = 8;
+            chroma = VLC_CODEC_RGB233; bpp = 8;
             break;
         case 0:
             chroma = VLC_CODEC_XWD; bpp = 0;
@@ -231,13 +231,9 @@ static int Open (vlc_object_t *obj)
 
     es_format_t fmt;
     es_format_Init (&fmt, VIDEO_ES, chroma);
-    fmt.video.i_chroma = chroma;
-    fmt.video.i_bits_per_pixel = bpp;
-    fmt.video.i_sar_num = fmt.video.i_sar_den = 1;
+    video_format_Setup(&fmt.video, chroma, width, height, width, height, 1, 1);
     fmt.video.i_frame_rate = 1000 * rate;
     fmt.video.i_frame_rate_base = 1000;
-    fmt.video.i_visible_width = fmt.video.i_width = width;
-    fmt.video.i_visible_height = fmt.video.i_height = height;
 
     sys->es = es_out_Add (demux->out, &fmt);
 

@@ -30,6 +30,8 @@
 #import "library/VLCInputItem.h"
 #import "views/VLCWrappableTextField.h"
 
+#import <vlc_configuration.h>
+
 @interface VLCResumeDialogController()
 {
     int _currentResumeTimeout;
@@ -46,7 +48,7 @@
 {
     self = [super initWithWindowNibName:@"ResumeDialog"];
     if (self) {
-        [[NSNotificationCenter defaultCenter] addObserver:self
+        [NSNotificationCenter.defaultCenter addObserver:self
                                                  selector:@selector(updateCocoaWindowLevel:)
                                                      name:VLCWindowShouldUpdateLevel
                                                    object:nil];
@@ -56,7 +58,7 @@
 
 - (void)dealloc
 {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
 - (void)windowDidLoad
@@ -85,7 +87,7 @@
                                                       repeats:YES];
 
     NSWindow *window = [self window];
-    [window setLevel:[[[VLCMain sharedInstance] voutProvider] currentStatusWindowLevel]];
+    [window setLevel:VLCMain.sharedInstance.voutProvider.currentStatusWindowLevel];
     [window center];
     [window makeKeyAndOrderFront:nil];
 }

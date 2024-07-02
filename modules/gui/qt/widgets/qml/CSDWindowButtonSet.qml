@@ -15,8 +15,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Window 2.11
+import QtQuick
+import QtQuick.Window
 
 import org.videolan.vlc 0.1
 
@@ -31,12 +31,14 @@ Row {
     width: implicitWidth
 
     property color color: theme.fg.primary
-    property color hoverColor: VLCStyle.setColorAlpha(theme.bg.primary, 0.5)
+    property color hoverColor: theme.bg.primary.alpha(0.5)
 
-    readonly property bool hovered: {
-        var h = false
-        for (var i = 0; i < repeater.count; ++i) {
-            var button = repeater.itemAt(i)
+    readonly property bool useWinIcons: ((MainCtx.osName === MainCtx.Windows)&&(MainCtx.osVersion >= 10))
+
+    readonly property bool buttonHovered: {
+        let h = false
+        for (let i = 0; i < repeater.count; ++i) {
+            const button = repeater.itemAt(i)
             h = h || button.hovered || button.showHovered
         }
 
@@ -54,6 +56,8 @@ Row {
         model: MainCtx.csdButtonModel.windowCSDButtons
 
         CSDWindowButton {
+            required property var modelData
+
             height: windowButtonGroup.height
 
             showHovered: modelData.showHovered
@@ -66,20 +70,39 @@ Row {
 
             isThemeDark: theme.palette.isDark
 
-            iconTxt: {
+            iconTxt:{
                 switch (modelData.type) {
                 case CSDButton.Minimize:
-                    return VLCIcons.window_minimize
+                {
+                    if (useWinIcons)
+                        return "\uE921"
 
-                case CSDButton.MaximizeRestore:
-                    return (MainCtx.intfMainWindow.visibility === Window.Maximized)
-                            ? VLCIcons.window_restore
-                            : VLCIcons.window_maximize
-
-                case CSDButton.Close:
-                    return VLCIcons.window_close
+                    else
+                        return VLCIcons.window_minimize
                 }
 
+                case CSDButton.MaximizeRestore:
+                {
+                    if (useWinIcons)
+                        return (MainCtx.intfMainWindow.visibility === Window.Maximized)
+                                ? "\uE923"
+                                : "\uE922"
+
+                    else
+                        return (MainCtx.intfMainWindow.visibility === Window.Maximized)
+                                ? VLCIcons.window_restore
+                                : VLCIcons.window_maximize
+                }
+
+                case CSDButton.Close:
+                {
+                    if (useWinIcons)
+                        return "\uE8BB"
+
+                    else
+                        return VLCIcons.window_close
+                }
+                }
                 console.assert(false, "unreachable")
             }
 
@@ -90,16 +113,16 @@ Row {
             onHeightChanged: Qt.callLater(updateRect)
 
             Connections {
-                target: VLCStyle.self
+                target: VLCStyle
 
                 // handle window resize
-                onAppWidthChanged: Qt.callLater(updateRect)
-                onAppHeightChanged: Qt.callLater(updateRect)
+                function onAppWidthChanged() { Qt.callLater(updateRect) }
+                function onAppHeightChanged() { Qt.callLater(updateRect) }
             }
 
             function updateRect() {
-                var point = mapToItem(null, 0, 0)
-                var rect = Qt.rect(point.x, point.y, width, height)
+                const point = mapToItem(null, 0, 0)
+                const rect = Qt.rect(point.x, point.y, width, height)
 
                 modelData.rect = rect
             }

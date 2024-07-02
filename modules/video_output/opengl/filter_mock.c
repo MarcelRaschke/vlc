@@ -62,17 +62,19 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_modules.h>
 #include <vlc_opengl.h>
+#include <vlc_opengl_filter.h>
 
 #include <math.h>
 
-#include "filter.h"
 #include "gl_api.h"
 #include "gl_common.h"
 #include "gl_util.h"
 #include "sampler.h"
+#include "picture.h"
 
 #define MOCK_CFG_PREFIX "mock-"
 
@@ -168,6 +170,7 @@ DrawBlend(struct vlc_gl_filter *filter, const struct vlc_gl_picture *pic,
     vt->DrawArrays(GL_TRIANGLES, 0, 3);
 
     vt->Disable(GL_BLEND);
+    GL_ASSERT_NOERROR(vt);
 
     return VLC_SUCCESS;
 }
@@ -206,6 +209,7 @@ DrawMask(struct vlc_gl_filter *filter, const struct vlc_gl_picture *pic,
 
     vt->Clear(GL_COLOR_BUFFER_BIT);
     vt->DrawArrays(GL_TRIANGLES, 0, 3);
+    GL_ASSERT_NOERROR(vt);
 
     return VLC_SUCCESS;
 }
@@ -265,6 +269,7 @@ DrawPlane(struct vlc_gl_filter *filter, const struct vlc_gl_picture *pic,
 
     vt->Clear(GL_COLOR_BUFFER_BIT);
     vt->DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    GL_ASSERT_NOERROR(vt);
 
     return VLC_SUCCESS;
 }
@@ -407,27 +412,14 @@ InitMask(struct vlc_gl_filter *filter, const struct vlc_gl_format *glfmt)
     const char *extensions = sampler->shader.extensions
                            ? sampler->shader.extensions : "";
 
-    const char *shader_version;
-    const char *shader_precision;
-    if (filter->api->is_gles)
-    {
-        shader_version = "#version 100\n";
-        shader_precision = "precision highp float;\n";
-    }
-    else
-    {
-        shader_version = "#version 120\n";
-        shader_precision = "";
-    }
-
     const char *vertex_shader[] = {
-        shader_version,
+        sampler->shader.version,
         VERTEX_SHADER_BODY,
     };
     const char *fragment_shader[] = {
-        shader_version,
+        sampler->shader.version,
         extensions,
-        shader_precision,
+        sampler->shader.precision,
         sampler->shader.body,
         FRAGMENT_SHADER_BODY,
     };
@@ -511,27 +503,14 @@ InitPlane(struct vlc_gl_filter *filter, const struct vlc_gl_format *glfmt)
     const char *extensions = sampler->shader.extensions
                            ? sampler->shader.extensions : "";
 
-    const char *shader_version;
-    const char *shader_precision;
-    if (filter->api->is_gles)
-    {
-        shader_version = "#version 100\n";
-        shader_precision = "precision highp float;\n";
-    }
-    else
-    {
-        shader_version = "#version 120\n";
-        shader_precision = "";
-    }
-
     const char *vertex_shader[] = {
-        shader_version,
+        sampler->shader.version,
         VERTEX_SHADER_BODY,
     };
     const char *fragment_shader[] = {
-        shader_version,
+        sampler->shader.version,
         extensions,
-        shader_precision,
+        sampler->shader.precision,
         sampler->shader.body,
         FRAGMENT_SHADER_BODY,
     };
@@ -617,7 +596,7 @@ vlc_module_begin()
     set_subcategory(SUBCAT_VIDEO_VFILTER)
     set_capability("opengl filter", 0)
     set_callback_opengl_filter(Open)
-    add_shortcut("mock");
+    add_shortcut("mock")
     add_float(MOCK_CFG_PREFIX "angle", 0.f, NULL, NULL) /* in degrees */
         change_volatile()
     add_float(MOCK_CFG_PREFIX "speed", 0.f, NULL, NULL) /* in rotations per minute */

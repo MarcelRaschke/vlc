@@ -1,0 +1,12 @@
+[workspace]
+members = [
+    "vlcrs-macros",
+    "vlcrs-messages",
+    "vlcrs-plugin",
+    "vlcrs-sys-generator"
+]
+resolver = "2"
+
+[workspace.package]
+version = "4.0.0"
+license = "LGPL-2.1-or-later"

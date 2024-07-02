@@ -169,7 +169,7 @@ static const struct {
 
 #define EIA608_COLOR_DEFAULT EIA608_COLOR_WHITE
 
-static const int rgi_eia608_colors[] = {
+static const uint32_t rgi_eia608_colors[] = {
     0xffffff,  // white
     0x00ff00,  // green
     0x0000ff,  // blue
@@ -504,14 +504,14 @@ static subpicture_t *Subtitle( decoder_t *p_dec, eia608_t *h, vlc_tick_t i_pts )
     p_spu->i_start    = i_pts;
     p_spu->i_stop     = i_pts + VLC_TICK_FROM_SEC(10);   /* 10s max */
     p_spu->b_ephemer  = true;
-    p_spu->b_absolute = false;
 
-    subtext_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
+    subtext_updater_sys_t *p_spu_sys = p_spu->updater.sys;
     decoder_sys_t *p_dec_sys = p_dec->p_sys;
 
     /* Set first region defaults */
     /* The "leavetext" alignment is a special mode where the subpicture
        region itself gets aligned, but the text inside it does not */
+    p_spu_sys->region.b_absolute = false;
     p_spu_sys->region.align = SUBPICTURE_ALIGN_TOP|SUBPICTURE_ALIGN_LEFT;
     p_spu_sys->region.inner_align = SUBPICTURE_ALIGN_BOTTOM|SUBPICTURE_ALIGN_LEFT;
     p_spu_sys->region.flags = UPDT_REGION_IGNORE_BACKGROUND | UPDT_REGION_USES_GRID_COORDINATES;

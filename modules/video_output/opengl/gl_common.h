@@ -41,6 +41,7 @@
 #  include <GLES2/gl2ext.h>
 # else
 #  ifdef HAVE_GL_WGLEW_H
+#   include <windows.h>
 #   include <GL/glew.h>
 #  endif
 #  include <GL/gl.h>
@@ -260,11 +261,14 @@ typedef void (APIENTRY *PFNGLBLITFRAMEBUFFERPROC) (GLint srcX0, GLint srcY0, GLi
                                                    GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1,
                                                    GLbitfield mask, GLenum filter);
 typedef void (APIENTRY *PFNGLREADPIXELSPROC) (GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void *);
+typedef void (APIENTRY *PFNGLGETATTACHEDSHADERPROC)(GLuint, GLsizei, GLsizei*, GLuint*);
 
 /* The following are defined in glext.h but not for GLES2 or on Apple systems */
 #if defined(USE_OPENGL_ES2) || defined(__APPLE__)
 #   define PFNGLGETPROGRAMIVPROC             typeof(glGetProgramiv)*
 #   define PFNGLGETPROGRAMINFOLOGPROC        typeof(glGetProgramInfoLog)*
+#   define PFNGLGETATTACHEDSHADERPROC        typeof(glGetAttachedShaders)*
+#   define PFNGLGETSHADERSOURCEPROC          typeof(glGetShaderSource)*
 #   define PFNGLGETSHADERIVPROC              typeof(glGetShaderiv)*
 #   define PFNGLGETSHADERINFOLOGPROC         typeof(glGetShaderInfoLog)*
 #   define PFNGLGETUNIFORMLOCATIONPROC       typeof(glGetUniformLocation)*
@@ -372,6 +376,7 @@ typedef struct {
     PFNGLGETSHADERIVPROC        GetShaderiv;
     PFNGLGETPROGRAMINFOLOGPROC  GetProgramInfoLog;
     PFNGLGETSHADERINFOLOGPROC   GetShaderInfoLog;
+    PFNGLGETSHADERSOURCEPROC    GetShaderSource;
 
     /* Shader variables commands */
     PFNGLGETUNIFORMLOCATIONPROC      GetUniformLocation;
@@ -396,6 +401,7 @@ typedef struct {
     PFNGLLINKPROGRAMPROC   LinkProgram;
     PFNGLUSEPROGRAMPROC    UseProgram;
     PFNGLDELETEPROGRAMPROC DeleteProgram;
+    PFNGLGETATTACHEDSHADERPROC GetAttachedShaders;
 
     /* Texture commands */
     PFNGLACTIVETEXTUREPROC ActiveTexture;

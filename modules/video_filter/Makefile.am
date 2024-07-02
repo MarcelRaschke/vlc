@@ -57,7 +57,9 @@ librotate_plugin_la_LIBADD = libvlc_motion.la $(LIBM)
 librotate_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(video_filterdir)'
 if HAVE_DARWIN
 if !HAVE_TVOS
+if !HAVE_WATCHOS
 librotate_plugin_la_LDFLAGS += -Wl,-framework,IOKit,-framework,CoreFoundation
+endif
 endif
 endif
 libscale_plugin_la_SOURCES = video_filter/scale.c
@@ -121,7 +123,7 @@ libci_filters_plugin_la_LDFLAGS += -Wl,-framework,OpenGL
 video_filter_LTLIBRARIES += libci_filters_plugin.la
 endif
 
-if HAVE_IOS
+if HAVE_IOS_OR_TVOS
 libci_filters_plugin_la_LDFLAGS += -Wl,-framework,OpenGLES
 video_filter_LTLIBRARIES += libci_filters_plugin.la
 endif
@@ -141,13 +143,7 @@ endif
 endif
 endif
 
-if HAVE_IOS
-libopengl_filter_plugin_la_LIBADD = libvlc_opengles.la
-libopengl_filter_plugin_la_CFLAGS = -DUSE_OPENGL_ES2=1
-video_filter_LTLIBRARIES += libopengl_filter_plugin.la
-endif
-
-if HAVE_TVOS
+if HAVE_IOS_OR_TVOS
 libopengl_filter_plugin_la_LIBADD = libvlc_opengles.la
 libopengl_filter_plugin_la_CFLAGS = -DUSE_OPENGL_ES2=1
 video_filter_LTLIBRARIES += libopengl_filter_plugin.la
@@ -192,20 +188,22 @@ libglblend_plugin_la_LIBADD = libvlc_opengl.la
 video_filter_LTLIBRARIES += libglblend_plugin.la
 endif
 
-if HAVE_DARWIN
-video_filter_LTLIBRARIES += libglblend_plugin.la
 if HAVE_OSX
+video_filter_LTLIBRARIES += libglblend_plugin.la
 libglblend_plugin_la_LIBADD = libvlc_opengl.la
-else
+endif
+if HAVE_IOS_OR_TVOS
+video_filter_LTLIBRARIES += libglblend_plugin.la
 libglblend_plugin_la_LIBADD = libvlc_opengles.la
 libglblend_plugin_la_CFLAGS += -DUSE_OPENGL_ES2=1
-endif
 endif
 
-if HAVE_ANDROID
+if !HAVE_GL
+if HAVE_GLES2
 libglblend_plugin_la_LIBADD = libvlc_opengles.la
 libglblend_plugin_la_CFLAGS += -DUSE_OPENGL_ES2=1
 video_filter_LTLIBRARIES += libglblend_plugin.la
+endif
 endif
 
 libopencv_wrapper_plugin_la_SOURCES = video_filter/opencv_wrapper.c
@@ -221,6 +219,18 @@ libpostproc_plugin_la_LIBADD = $(LIBM) $(POSTPROC_LIBS) $(AVUTIL_LIBS)
 libpostproc_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(video_filterdir)'
 video_filter_LTLIBRARIES += $(LTLIBpostproc)
 EXTRA_LTLIBRARIES += libpostproc_plugin.la
+
+if HAVE_AMF_ENHANCER
+libamf_vqenhancer_plugin_la_SOURCES = video_filter/amf_vqenhancer.c \
+    hw/amf/amf_helper.c hw/amf/amf_helper.h
+if HAVE_WIN32
+libamf_vqenhancer_plugin_la_LIBADD = $(LIBCOM) libd3d11_common.la
+if HAVE_WINSTORE
+libamf_vqenhancer_plugin_la_LIBADD += -ld3d11
+endif
+video_filter_LTLIBRARIES += libamf_vqenhancer_plugin.la
+endif
+endif
 
 # misc
 libblend_plugin_la_SOURCES = video_filter/blend.cpp

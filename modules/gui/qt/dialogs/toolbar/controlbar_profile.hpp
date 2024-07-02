@@ -23,6 +23,8 @@
 #include <QVector>
 #include <array>
 
+Q_MOC_INCLUDE( "player/player_controlbar_model.hpp" )
+
 class PlayerControlbarModel;
 
 class ControlbarProfile : public QObject

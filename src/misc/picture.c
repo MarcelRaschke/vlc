@@ -32,6 +32,7 @@
 #endif
 #include <assert.h>
 #include <limits.h>
+#include <stdckdint.h>
 
 #include <vlc_common.h>
 #include "picture.h"
@@ -161,8 +162,8 @@ int picture_Setup( picture_t *p_picture, const video_format_t *restrict fmt )
 
     unsigned width, height;
 
-    if (unlikely(add_overflow(fmt->i_width, i_modulo_w - 1, &width))
-     || unlikely(add_overflow(fmt->i_height, i_modulo_h - 1, &height)))
+    if (unlikely(ckd_add(&width, fmt->i_width, i_modulo_w - 1))
+     || unlikely(ckd_add(&height, fmt->i_height, i_modulo_h - 1)))
         return VLC_EGENERIC;
 
     width = width / i_modulo_w * i_modulo_w;
@@ -210,10 +211,13 @@ static bool picture_InitPrivate(const video_format_t *restrict p_fmt,
     memset( p_picture, 0, sizeof( *p_picture ) );
     p_picture->date = VLC_TICK_INVALID;
 
-    p_picture->format = *p_fmt;
+    video_format_Copy(&p_picture->format, p_fmt);
     /* Make sure the real dimensions are a multiple of 16 */
     if( picture_Setup( p_picture, p_fmt ) )
+    {
+        video_format_Clean(&p_picture->format);
         return false;
+    }
 
     vlc_atomic_rc_init(&p_picture->refs);
     priv->gc.opaque = NULL;
@@ -298,8 +302,8 @@ picture_t *picture_NewFromFormat(const video_format_t *restrict fmt)
     {
         const plane_t *p = &pic->p[i];
 
-        if (unlikely(mul_overflow(p->i_pitch, p->i_lines, &plane_sizes[i]))
-         || unlikely(add_overflow(pic_size, plane_sizes[i], &pic_size)))
+        if (unlikely(ckd_mul(&plane_sizes[i], p->i_pitch, p->i_lines))
+         || unlikely(ckd_add(&pic_size, pic_size, plane_sizes[i])))
             goto error;
     }
 
@@ -323,6 +327,7 @@ picture_t *picture_NewFromFormat(const video_format_t *restrict fmt)
 
     return pic;
 error:
+    video_format_Clean(&priv->picture.format);
     free(privbuf);
     return NULL;
 }
@@ -352,6 +357,7 @@ void picture_Destroy(picture_t *picture)
     assert(priv->gc.destroy != NULL);
     priv->gc.destroy(picture);
     vlc_ancillary_array_Clear(&priv->ancillaries);
+    video_format_Clean(&picture->format);
     free(priv);
 }
 
@@ -428,7 +434,8 @@ void picture_Copy( picture_t *p_dst, const picture_t *p_src )
 
 static void picture_DestroyClone(picture_t *clone)
 {
-    picture_t *picture = ((picture_priv_t *)clone)->gc.opaque;
+    picture_priv_t *clone_priv = container_of(clone, picture_priv_t, picture);
+    picture_t *picture = clone_priv->gc.opaque;
 
     picture_Release(picture);
 }
@@ -449,7 +456,8 @@ picture_t *picture_InternalClone(picture_t *picture,
 
     picture_t *clone = picture_NewFromResource(&picture->format, &res);
     if (likely(clone != NULL)) {
-        ((picture_priv_t *)clone)->gc.opaque = opaque;
+        picture_priv_t *clone_priv = container_of(clone, picture_priv_t, picture);
+        clone_priv->gc.opaque = opaque;
 
         /* The picture context is responsible for potentially holding the
          * video context attached to the picture if needed. */
@@ -518,7 +526,7 @@ int picture_Export( vlc_object_t *p_obj,
                     block_t **pp_image,
                     video_format_t *p_fmt,
                     picture_t *p_picture,
-                    vlc_fourcc_t i_format,
+                    vlc_fourcc_t i_codec,
                     int i_override_width, int i_override_height,
                     bool b_crop )
 {
@@ -535,7 +543,6 @@ int picture_Export( vlc_object_t *p_obj,
     memset( &fmt_out, 0, sizeof(fmt_out) );
     fmt_out.i_sar_num =
     fmt_out.i_sar_den = 1;
-    fmt_out.i_chroma  = i_format;
 
     /* compute original width/height */
     unsigned int i_width, i_height, i_original_width, i_original_height;
@@ -590,8 +597,6 @@ int picture_Export( vlc_object_t *p_obj,
         fmt_out.i_height = ( i_override_height < 0 ) ?
                            i_original_height : (unsigned)i_override_height;
     }
-    fmt_out.i_visible_width = fmt_out.i_width;
-    fmt_out.i_visible_height = fmt_out.i_height;
 
     /* scale if only one direction is provided */
     if( fmt_out.i_height == 0 && fmt_out.i_width > 0 )
@@ -604,13 +609,15 @@ int picture_Export( vlc_object_t *p_obj,
         fmt_out.i_width  = i_width * fmt_out.i_height
                          * fmt_in.i_sar_num / fmt_in.i_height / fmt_in.i_sar_den;
     }
+    fmt_out.i_visible_width = fmt_out.i_width;
+    fmt_out.i_visible_height = fmt_out.i_height;
 
     image_handler_t *p_image = image_HandlerCreate( p_obj );
     if( !p_image )
         return VLC_ENOMEM;
 
     vlc_tick_t date = p_picture->date;
-    block_t *p_block = image_Write( p_image, p_picture, &fmt_in, &fmt_out );
+    block_t *p_block = image_Write( p_image, p_picture, &fmt_in, i_codec, &fmt_out );
 
     image_HandlerDelete( p_image );
 

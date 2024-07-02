@@ -26,7 +26,11 @@
 # include "config.h"
 #endif
 
+#include <stdckdint.h>
+
 #include <vlc_common.h>
+#include <vlc_threads.h>
+#include <vlc_poll.h>
 #include <vlc_plugin.h>
 #include <vlc_demux.h>
 #include <vlc_url.h>
@@ -139,35 +143,69 @@ static BOOL desktopResizeHandler( rdpContext *p_context )
         p_sys->es = NULL;
     }
 
-    vlc_fourcc_t i_chroma;
+    vlc_fourcc_t i_chroma = 0;
     /* Now init and fill es format */
-    switch ( i_colordepth )
+    switch ( p_gdi->dstFormat )
     {
         default:
             msg_Dbg( p_vlccontext->p_demux, "invalid color depth %d", i_colordepth);
             /* fallthrough */
-        case 16:
-            i_chroma = VLC_CODEC_RGB16;
+        case PIXEL_FORMAT_RGB16:
+            i_chroma = VLC_CODEC_RGB565LE;
             break;
-        case 24:
+        case PIXEL_FORMAT_BGR16:
+            i_chroma = VLC_CODEC_BGR565LE;
+            break;
+        case PIXEL_FORMAT_RGB15:
+            i_chroma = VLC_CODEC_RGB555LE;
+            break;
+        case PIXEL_FORMAT_BGR15:
+            i_chroma = VLC_CODEC_BGR555LE;
+            break;
+        case PIXEL_FORMAT_RGB24:
             i_chroma = VLC_CODEC_RGB24;
             break;
-        case 32:
+        case PIXEL_FORMAT_BGR24:
+            i_chroma = VLC_CODEC_BGR24;
+            break;
+        case PIXEL_FORMAT_ARGB32:
             i_chroma = VLC_CODEC_ARGB;
             break;
+        case PIXEL_FORMAT_XRGB32:
+            i_chroma = VLC_CODEC_XRGB;
+            break;
+        case PIXEL_FORMAT_ABGR32:
+            i_chroma = VLC_CODEC_ABGR;
+            break;
+        case PIXEL_FORMAT_XBGR32:
+            i_chroma = VLC_CODEC_XBGR;
+            break;
+        case PIXEL_FORMAT_BGRA32:
+            i_chroma = VLC_CODEC_BGRA;
+            break;
+        case PIXEL_FORMAT_BGRX32:
+            i_chroma = VLC_CODEC_BGRX;
+            break;
+        case PIXEL_FORMAT_RGBA32:
+            i_chroma = VLC_CODEC_RGBA;
+            break;
+        case PIXEL_FORMAT_RGBX32:
+            i_chroma = VLC_CODEC_RGBX;
+            break;
     }
+
+    if (unlikely(i_chroma == 0))
+        return FALSE;
+
     es_format_t fmt;
     es_format_Init( &fmt, VIDEO_ES, i_chroma );
+    video_format_Setup( &fmt.video, i_chroma, p_gdi->width, p_gdi->height,
+                        p_gdi->width, p_gdi->height, 1, 1);
 
-    fmt.video.i_chroma = i_chroma;
-    fmt.video.i_visible_width =
-    fmt.video.i_width = p_gdi->width;
-    fmt.video.i_visible_height =
-    fmt.video.i_height = p_gdi->height;
     fmt.video.i_frame_rate_base = 1000;
     fmt.video.i_frame_rate = 1000 * p_sys->f_fps;
-    if ( umul_overflow( p_gdi->width, p_gdi->height, &p_sys->i_framebuffersize ) &&
-         umul_overflow( p_sys->i_framebuffersize, i_colordepth >> 3, &p_sys->i_framebuffersize) )
+    if (ckd_mul(&p_sys->i_framebuffersize, p_gdi->width, p_gdi->height) &&
+        ckd_mul(&p_sys->i_framebuffersize, p_sys->i_framebuffersize, i_colordepth >> 3) )
     {
         msg_Err( p_vlccontext->p_demux, "framebuffer size overflow");
         return FALSE;
@@ -259,8 +297,8 @@ static BOOL postConnectHandler( freerdp *p_instance )
             break;
     }
 
-    gdi_init( p_instance,
-                format );
+    if ( gdi_init( p_instance, format ) != TRUE )
+        return FALSE;
 
     desktopResizeHandler( p_instance->context );
     return TRUE;

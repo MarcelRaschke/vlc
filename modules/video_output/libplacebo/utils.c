@@ -27,7 +27,6 @@
 #include <stdlib.h>
 
 #include <vlc_common.h>
-#include <vlc_ancillary.h>
 #include "utils.h"
 
 static void Log(void *priv, enum pl_log_level level, const char *msg)
@@ -38,7 +37,7 @@ static void Log(void *priv, enum pl_log_level level, const char *msg)
     case PL_LOG_FATAL: // fall through
     case PL_LOG_ERR:   msg_Err(obj,  "%s", msg); break;
     case PL_LOG_WARN:  msg_Warn(obj, "%s", msg); break;
-    case PL_LOG_INFO:  msg_Info(obj, "%s", msg); break;
+    case PL_LOG_INFO: // fall through
     case PL_LOG_DEBUG: msg_Dbg(obj,  "%s", msg); break;
     default: break;
     }
@@ -47,7 +46,10 @@ static void Log(void *priv, enum pl_log_level level, const char *msg)
 pl_log vlc_placebo_CreateLog(vlc_object_t *obj)
 {
     return pl_log_create(PL_API_VER, &(struct pl_log_params) {
-        .log_level = PL_LOG_DEBUG,
+        // Print placebo DEBUG logs with "-vvv"
+        // Print placebo INFO logs with "-vv"
+        .log_level = var_InheritInteger(obj, "verbose") >= 3 ? PL_LOG_DEBUG
+                                                             : PL_LOG_INFO,
         .log_cb    = Log,
         .log_priv  = obj,
     });
@@ -126,17 +128,14 @@ struct fmt_desc {
 
 // NOTE: This list contains some special formats that don't follow the normal
 // rules, but which are included regardless. The corrections for these
-// exceptions happen below, in the function vlc_placebo_PlaneFormat!
+// exceptions happen below, in the function vlc_placebo_PlaneData!
 static const struct { vlc_fourcc_t fcc; struct fmt_desc desc; } formats[] = {
-    { VLC_CODEC_YV9,            {PLANAR(3,  8, _410)} },
     { VLC_CODEC_I410,           {PLANAR(3,  8, _410)} },
     { VLC_CODEC_I411,           {PLANAR(3,  8, _411)} },
     { VLC_CODEC_I440,           {PLANAR(3,  8, _440)} },
-    { VLC_CODEC_J440,           {PLANAR(3,  8, _440)} },
     { VLC_CODEC_GREY,           {PLANAR(1,  8, _444)} },
 
     { VLC_CODEC_I420,           {PLANAR(3,  8, _420)} },
-    { VLC_CODEC_J420,           {PLANAR(3,  8, _420)} },
 #ifdef WORDS_BIGENDIAN
     { VLC_CODEC_I420_9B,        {PLANAR(3, 16, _420), .color_bits = 9} },
     { VLC_CODEC_I420_10B,       {PLANAR(3, 16, _420), .color_bits = 10} },
@@ -150,7 +149,6 @@ static const struct { vlc_fourcc_t fcc; struct fmt_desc desc; } formats[] = {
 #endif
 
     { VLC_CODEC_I422,           {PLANAR(3,  8, _422)} },
-    { VLC_CODEC_J422,           {PLANAR(3,  8, _422)} },
 #ifdef WORDS_BIGENDIAN
     { VLC_CODEC_I422_9B,        {PLANAR(3, 16, _422), .color_bits = 9} },
     { VLC_CODEC_I422_10B,       {PLANAR(3, 16, _422), .color_bits = 10} },
@@ -162,7 +160,6 @@ static const struct { vlc_fourcc_t fcc; struct fmt_desc desc; } formats[] = {
 #endif
 
     { VLC_CODEC_I444,           {PLANAR(3,  8, _444)} },
-    { VLC_CODEC_J444,           {PLANAR(3,  8, _444)} },
 #ifdef WORDS_BIGENDIAN
     { VLC_CODEC_I444_9B,        {PLANAR(3, 16, _444), .color_bits = 9} },
     { VLC_CODEC_I444_10B,       {PLANAR(3, 16, _444), .color_bits = 10} },
@@ -192,13 +189,15 @@ static const struct { vlc_fourcc_t fcc; struct fmt_desc desc; } formats[] = {
     { VLC_CODEC_NV24,           {SEMIPLANAR(2,  8, _444)} },
     { VLC_CODEC_NV42,           {SEMIPLANAR(2,  8, _444)} },
 
-    { VLC_CODEC_RGB8,           {PACKED(3, 2, 2)} },
-    { VLC_CODEC_RGB12,          {PACKED(3, 4, 4)} },
-    { VLC_CODEC_RGB15,          {PACKED(3, 5, 1)} },
-    { VLC_CODEC_RGB16,          {PACKED(3, 5, 1)} },
+    { VLC_CODEC_RGB233,         {PACKED(3, 2, 2)} },
+    { VLC_CODEC_BGR233,         {PACKED(3, 2, 2)} },
+    { VLC_CODEC_RGB332,         {PACKED(3, 2, 2)} },
+    { VLC_CODEC_RGB565LE,       {PACKED(3, 5, 1)} },
+    { VLC_CODEC_RGB555LE,       {PACKED(3, 5, 1)} },
     { VLC_CODEC_RGB24,          {PACKED(3, 8, 0)} },
-    { VLC_CODEC_RGB32,          {PACKED(3, 8, 8)} },
+    { VLC_CODEC_BGR24,          {PACKED(3, 8, 0)} },
     { VLC_CODEC_RGBA,           {PACKED(4, 8, 0)} },
+    { VLC_CODEC_BGRX,           {PACKED(3, 8, 8)} },
     { VLC_CODEC_BGRA,           {PACKED(4, 8, 0)} },
 
     { VLC_CODEC_GBR_PLANAR,     {PLANAR(3,  8, _444)} },
@@ -260,21 +259,13 @@ static void FillDesc(vlc_fourcc_t fcc, const struct fmt_desc *desc,
 
     // Exceptions to the rule
     switch (fcc) {
-    case VLC_CODEC_YV9:
     case VLC_CODEC_YV12:
         // Planar Y:V:U
         data[1].component_map[0] = 2;
         data[2].component_map[0] = 1;
         break;
 
-    case VLC_CODEC_RGB32:
-        // XRGB instead of RGBX
-        data[0].component_map[0] = -1;
-        data[1].component_map[0] = 0;
-        data[2].component_map[0] = 1;
-        data[3].component_map[0] = 2;
-        break;
-
+    case VLC_CODEC_BGRX:
     case VLC_CODEC_BGRA:
         // Packed BGR
         data[0].component_map[0] = 2;
@@ -295,12 +286,28 @@ static void FillDesc(vlc_fourcc_t fcc, const struct fmt_desc *desc,
         data[2].component_map[0] = 0;
         break;
 
-    case VLC_CODEC_RGB16:
+    case VLC_CODEC_RGB565LE:
         // 5:6:5 instead of 5:5:5
         data[0].component_size[1] += 1;
         break;
 
-    case VLC_CODEC_RGB8:
+    case VLC_CODEC_RGB233:
+        // 2:3:3 instead of 2:2:2
+        data[0].component_size[1] += 1;
+        data[0].component_size[2] += 1;
+        break;
+
+    case VLC_CODEC_BGR233:
+        // 2:3:3 instead of 2:2:2
+        data[0].component_size[1] += 1;
+        data[0].component_size[2] += 1;
+        // Packed BGR
+        data[0].component_map[0] = 2;
+        data[0].component_map[1] = 1;
+        data[0].component_map[2] = 0;
+        break;
+
+    case VLC_CODEC_RGB332:
         // 3:3:2 instead of 2:2:2
         data[0].component_size[0] += 1;
         data[0].component_size[1] += 1;
@@ -310,44 +317,30 @@ static void FillDesc(vlc_fourcc_t fcc, const struct fmt_desc *desc,
     }
 }
 
-int vlc_placebo_PlaneFormat(const video_format_t *fmt, struct pl_plane_data data[4])
+int vlc_placebo_PlaneData(const picture_t *pic, struct pl_plane_data data[4])
 {
-    const struct fmt_desc *desc = FindDesc(fmt->i_chroma);
-    if (!desc)
+    const struct fmt_desc *desc = FindDesc(pic->format.i_chroma);
+    if (!desc || desc->num_planes == 0)
         return 0;
+    assert(desc->num_planes == pic->i_planes);
 
-    FillDesc(fmt->i_chroma, desc, data);
+    FillDesc(pic->format.i_chroma, desc, data);
     for (int i = 0; i < desc->num_planes; i++) {
         const struct plane_desc *p = &desc->planes[i];
-        data[i].width  = (fmt->i_visible_width  + p->w_denom - 1) / p->w_denom;
-        data[i].height = (fmt->i_visible_height + p->h_denom - 1) / p->h_denom;
+        data[i].width  = (pic->format.i_visible_width  + p->w_denom - 1) / p->w_denom;
+        data[i].height = (pic->format.i_visible_height + p->h_denom - 1) / p->h_denom;
+
+        // assert(data[i].height == pic->p[i].i_visible_lines);
+        data[i].row_stride = pic->p[i].i_pitch;
+
+        const size_t pixels_offset =
+                ((pic->format.i_y_offset + p->w_denom - 1) / p->w_denom) * pic->p[i].i_pitch +
+                ((pic->format.i_x_offset + p->h_denom - 1) / p->h_denom) * pic->p[i].i_pixel_pitch;
+
+        data[i].pixels = pic->p[i].p_pixels + pixels_offset;
     }
 
     return desc->num_planes;
-}
-
-int vlc_placebo_PlaneData(const picture_t *pic, struct pl_plane_data data[4],
-                          pl_buf buf)
-{
-    int planes = vlc_placebo_PlaneFormat(&pic->format, data);
-    if (!planes)
-        return 0;
-
-    assert(planes == pic->i_planes);
-    for (int i = 0; i < planes; i++) {
-        assert(data[i].height == pic->p[i].i_visible_lines);
-        data[i].row_stride = pic->p[i].i_pitch;
-        if (buf) {
-            assert(buf->data);
-            assert(pic->p[i].p_pixels <= buf->data + buf->params.size);
-            data[i].buf = buf;
-            data[i].buf_offset = (uintptr_t) pic->p[i].p_pixels - (ptrdiff_t) buf->data;
-        } else {
-            data[i].pixels = pic->p[i].p_pixels;
-        }
-    }
-
-    return planes;
 }
 
 bool vlc_placebo_FormatSupported(pl_gpu gpu, vlc_fourcc_t fcc)
@@ -392,26 +385,25 @@ struct pl_color_space vlc_placebo_ColorSpace(const video_format_t *fmt)
         [TRANSFER_FUNC_SMPTE_240]   = PL_COLOR_TRC_BT_1886,
     };
 
-    // Derive the signal peak/avg from the color light level metadata
-    float sig_peak = fmt->lighting.MaxCLL / PL_COLOR_REF_WHITE;
-    float sig_avg = fmt->lighting.MaxFALL / PL_COLOR_REF_WHITE;
-
-    // As a fallback value for the signal peak, we can also use the mastering
-    // metadata's luminance information
-    if (!sig_peak)
-        sig_peak = fmt->mastering.max_luminance / (10000.0 * PL_COLOR_REF_WHITE);
-
-    // Sanitize the sig_peak/sig_avg, because of buggy or low quality tagging
-    // that's sadly common in lots of typical sources
-    sig_peak = (sig_peak > 1.0 && sig_peak <= 100.0) ? sig_peak : 0.0;
-    sig_avg  = (sig_avg >= 0.0 && sig_avg <= 1.0) ? sig_avg : 0.0;
-
     return (struct pl_color_space) {
         .primaries = primaries[fmt->primaries],
         .transfer  = transfers[fmt->transfer],
-        .light     = PL_COLOR_LIGHT_UNKNOWN,
-        .sig_peak  = sig_peak,
-        .sig_avg   = sig_avg,
+        .hdr = {
+            .prim = {
+                .green.x = fmt->mastering.primaries[0],
+                .green.y = fmt->mastering.primaries[1],
+                .blue.x  = fmt->mastering.primaries[2],
+                .blue.y  = fmt->mastering.primaries[3],
+                .red.x   = fmt->mastering.primaries[4],
+                .red.y   = fmt->mastering.primaries[5],
+                .white.x = fmt->mastering.white_point[0],
+                .white.y = fmt->mastering.white_point[1],
+            },
+            .min_luma = fmt->mastering.min_luminance,
+            .max_luma = fmt->mastering.max_luminance,
+            .max_cll = fmt->lighting.MaxCLL,
+            .max_fall = fmt->lighting.MaxFALL,
+        },
     };
 }
 
@@ -429,7 +421,8 @@ struct pl_color_repr vlc_placebo_ColorRepr(const video_format_t *fmt)
     enum pl_color_system sys;
     if (likely(vlc_fourcc_IsYUV(fmt->i_chroma))) {
         sys = yuv_systems[fmt->space];
-    } else if (unlikely(fmt->i_chroma == VLC_CODEC_XYZ12)) {
+    } else if (unlikely(fmt->i_chroma == VLC_CODEC_XYZ_12L||
+                        fmt->i_chroma == VLC_CODEC_XYZ_12B)) {
         sys = PL_COLOR_SYSTEM_XYZ;
     } else {
         sys = PL_COLOR_SYSTEM_RGB;
@@ -474,7 +467,6 @@ void vlc_placebo_HdrMetadata(const vlc_video_hdr_dynamic_metadata_t *src,
 #endif
 }
 
-#if PL_API_VER >= 185
 void vlc_placebo_DoviMetadata(const vlc_video_dovi_metadata_t *src,
                               struct pl_dovi_metadata *dst)
 {
@@ -543,7 +535,6 @@ void vlc_placebo_frame_DoviMetadata(struct pl_frame *frame, const picture_t *pic
     frame->color.hdr.max_luma = pl_hdr_rescale(PL_HDR_PQ, PL_HDR_NITS,
                                                scale * src->source_max_pq);
 }
-#endif
 
 enum pl_chroma_location vlc_placebo_ChromaLoc(const video_format_t *fmt)
 {
@@ -584,12 +575,34 @@ void vlc_placebo_ColorMapParams(vlc_object_t *obj, const char *prefix,
     char opt[64];
 
     *params = pl_color_map_default_params;
-    params->intent = var_InheritInteger(obj, PREFIX("rendering-intent"));
-    params->tone_mapping_param = var_InheritFloat(obj, PREFIX("tone-mapping-param"));
+
+    switch (var_InheritInteger(obj, PREFIX("gamut-mapping"))) {
+    case GAMUT_AUTO:        break;
+#if PL_API_VER >= 269
+    case GAMUT_CLIP:        params->gamut_mapping = &pl_gamut_map_clip; break;
+    case GAMUT_PERCEPTUAL:  params->gamut_mapping = &pl_gamut_map_perceptual; break;
+    case GAMUT_RELATIVE:    params->gamut_mapping = &pl_gamut_map_relative; break;
+    case GAMUT_SATURATION:  params->gamut_mapping = &pl_gamut_map_saturation; break;
+    case GAMUT_ABSOLUTE:    params->gamut_mapping = &pl_gamut_map_absolute; break;
+    case GAMUT_DESATURATE:  params->gamut_mapping = &pl_gamut_map_desaturate; break;
+    case GAMUT_DARKEN:      params->gamut_mapping = &pl_gamut_map_darken; break;
+    case GAMUT_WARN:        params->gamut_mapping = &pl_gamut_map_highlight; break;
+    case GAMUT_LINEAR:      params->gamut_mapping = &pl_gamut_map_linear; break;
+#else
+    case GAMUT_CLIP:        params->gamut_mode = PL_GAMUT_CLIP; break;
+    case GAMUT_PERCEPTUAL:  break; // unsupported
+    case GAMUT_RELATIVE:    params->intent = PL_INTENT_RELATIVE_COLORIMETRIC; break;
+    case GAMUT_SATURATION:  params->intent = PL_INTENT_SATURATION; break;
+    case GAMUT_ABSOLUTE:    params->intent = PL_INTENT_ABSOLUTE_COLORIMETRIC; break;
+    case GAMUT_DESATURATE:  params->gamut_mode = PL_GAMUT_DESATURATE; break;
+    case GAMUT_DARKEN:      params->gamut_mode = PL_GAMUT_DARKEN; break;
+    case GAMUT_WARN:        params->gamut_mode = PL_GAMUT_WARN; break;
+    case GAMUT_LINEAR:      break; // unsupported
+#endif
+    }
 
     switch (var_InheritInteger(obj, PREFIX("tone-mapping-function"))) {
     case TONEMAP_AUTO:      break;
-#if PL_API_VER >= 188
     case TONEMAP_CLIP:      params->tone_mapping_function = &pl_tone_map_clip; break;
     case TONEMAP_BT2390:    params->tone_mapping_function = &pl_tone_map_bt2390; break;
     case TONEMAP_REINHARD:  params->tone_mapping_function = &pl_tone_map_reinhard; break;
@@ -599,53 +612,8 @@ void vlc_placebo_ColorMapParams(vlc_object_t *obj, const char *prefix,
     case TONEMAP_LINEAR:    params->tone_mapping_function = &pl_tone_map_linear; break;
     case TONEMAP_BT2446A:   params->tone_mapping_function = &pl_tone_map_bt2446a; break;
     case TONEMAP_SPLINE:    params->tone_mapping_function = &pl_tone_map_spline; break;
-#else
-    case TONEMAP_CLIP:      params->tone_mapping_algo = PL_TONE_MAPPING_CLIP; break;
-    case TONEMAP_BT2390:    params->tone_mapping_algo = PL_TONE_MAPPING_BT_2390; break;
-    case TONEMAP_REINHARD:  params->tone_mapping_algo = PL_TONE_MAPPING_REINHARD; break;
-    case TONEMAP_MOBIUS:    params->tone_mapping_algo = PL_TONE_MAPPING_MOBIUS; break;
-    case TONEMAP_HABLE:     params->tone_mapping_algo = PL_TONE_MAPPING_HABLE; break;
-    case TONEMAP_GAMMA:     params->tone_mapping_algo = PL_TONE_MAPPING_GAMMA; break;
-    case TONEMAP_LINEAR:    params->tone_mapping_algo = PL_TONE_MAPPING_LINEAR; break;
-#endif
     }
 
-    switch (var_InheritInteger(obj, PREFIX("tone-mapping-mode"))) {
-    case TONEMAP_MODE_AUTO: break;
-#if PL_API_VER >= 188
-    case TONEMAP_MODE_RGB:      params->tone_mapping_mode = PL_TONE_MAP_RGB; break;
-    case TONEMAP_MODE_MAX:      params->tone_mapping_mode = PL_TONE_MAP_MAX; break;
-    case TONEMAP_MODE_HYBRID:   params->tone_mapping_mode = PL_TONE_MAP_HYBRID; break;
-    case TONEMAP_MODE_LUMA:     params->tone_mapping_mode = PL_TONE_MAP_LUMA; break;
-#else
-    case TONEMAP_MODE_RGB:
-        params->desaturation_strength = 1.0f;
-        params->desaturation_exponent = 0.0f;
-        break;
-    case TONEMAP_MODE_HYBRID:
-        // Use default values
-        break;
-    case TONEMAP_MODE_MAX:
-        params->desaturation_strength = 0.0f;
-        break;
-#endif
-    }
-
-    switch (var_InheritInteger(obj, PREFIX("gamut-mode"))) {
-#if PL_API_VER >= 190
-    case GAMUT_MODE_CLIP:   params->gamut_mode = PL_GAMUT_CLIP; break;
-    case GAMUT_MODE_WARN:   params->gamut_mode = PL_GAMUT_WARN; break;
-    case GAMUT_MODE_DESAT:  params->gamut_mode = PL_GAMUT_DESATURATE; break;
-    case GAMUT_MODE_DARKEN: params->gamut_mode = PL_GAMUT_DARKEN; break;
-#else
-    case GAMUT_MODE_CLIP:   break;
-    case GAMUT_MODE_WARN:   params->gamut_warning = true; break;
-    case GAMUT_MODE_DESAT:  params->gamut_clipping = true; break;
-#endif
-    }
-
-#if PL_API_VER >= 188
+    params->tone_mapping_param = var_InheritFloat(obj, PREFIX("tone-mapping-param"));
     params->inverse_tone_mapping = var_InheritBool(obj, PREFIX("inverse-tone-mapping"));
-    params->tone_mapping_crosstalk = var_InheritFloat(obj, PREFIX("crosstalk"));
-#endif
 }

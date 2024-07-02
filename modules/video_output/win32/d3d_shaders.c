@@ -419,7 +419,7 @@ void D3D_SetupQuad(vlc_object_t *o, const video_format_t *fmt, d3d_quad_t *quad,
 
     FLOAT itu_black_level = 0.f;
     FLOAT itu_achromacy   = 0.f;
-    if (!RGB_src_shader)
+    if (!RGB_src_shader || fmt->color_range == COLOR_RANGE_LIMITED)
     {
         switch (quad->textureFormat->bitsPerChannel)
         {
@@ -486,6 +486,9 @@ void D3D_SetupQuad(vlc_object_t *o, const video_format_t *fmt, d3d_quad_t *quad,
     if (RGB_src_shader == DxgiIsRGBFormat(displayFormat->pixelFormat))
     {
         ppColorspace = IDENTITY_4X3;
+        WhitePoint[0*4 + 3] = -itu_black_level;
+        WhitePoint[1*4 + 3] = -itu_black_level;
+        WhitePoint[2*4 + 3] = -itu_black_level;
     }
     else if (RGB_src_shader)
     {
@@ -570,6 +573,10 @@ void D3D_SetupQuad(vlc_object_t *o, const video_format_t *fmt, d3d_quad_t *quad,
         WhitePoint[1*4 + 3] = -itu_achromacy;
         WhitePoint[2*4 + 3] = -itu_achromacy;
     }
+
+    WhitePoint[0*4 + 0] *= quad->textureFormat->resourceFactor;
+    WhitePoint[1*4 + 1] *= quad->textureFormat->resourceFactor;
+    WhitePoint[2*4 + 2] *= quad->textureFormat->resourceFactor;
 
     MultMat43(quad->shaderConstants->Colorspace, ppColorspace, WhitePoint);
 
@@ -689,7 +696,7 @@ static void SetupQuadFlat(d3d_vertex_t *dst_data, const RECT *output,
         top    =  (src_width  - MidX) / (output->right - MidX);
         bottom = -MidY / (MidY - output->top);
         left   = -MidX / (MidX - output->left);
-        right  =  (src_height - MidY) / (output->bottom - MidY);
+        right  =  (src_height - MidX) / (output->bottom - MidX);
         break;
     case TRANSFORM_ANTI_TRANSPOSE:
         MidY = (output->left + output->right) / 2.f;

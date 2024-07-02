@@ -35,33 +35,47 @@ NS_ASSUME_NONNULL_BEGIN
 
 // Note that these values are not necessarily linked to the layout defined in the .xib files.
 // If the spacing in the layout is changed you will want to change these values too.
-+ (const CGFloat)largeSpacing;
-+ (const CGFloat)mediumSpacing;
-+ (const CGFloat)smallSpacing;
+@property (class, readonly) const CGFloat largeSpacing;
+@property (class, readonly) const CGFloat mediumSpacing;
+@property (class, readonly) const CGFloat smallSpacing;
 
-+ (const CGFloat)scrollBarSmallSideSize;
+@property (class, readonly) const CGFloat scrollBarSmallSideSize;
 
-+ (const CGFloat)largeTableViewRowHeight;
-+ (const CGFloat)mediumTableViewRowHeight;
-+ (const CGFloat)smallTableViewRowHeight;
+@property (class, readonly) const CGFloat largeTableViewRowHeight;
+@property (class, readonly) const CGFloat mediumTableViewRowHeight;
+@property (class, readonly) const CGFloat smallTableViewRowHeight;
 
-+ (const CGFloat)mediumDetailSupplementaryViewCollectionViewHeight;
-+ (const CGFloat)largeDetailSupplementaryViewCollectionViewHeight;
+@property (class, readonly) const CGFloat mediumDetailSupplementaryViewCollectionViewWidth;
+@property (class, readonly) const CGFloat mediumDetailSupplementaryViewCollectionViewHeight;
+@property (class, readonly) const CGFloat largeDetailSupplementaryViewCollectionViewWidth;
+@property (class, readonly) const CGFloat largeDetailSupplementaryViewCollectionViewHeight;
 
-+ (const CGFloat)dynamicCollectionViewItemMinimumWidth;
-+ (const CGFloat)dynamicCollectionViewItemMaximumWidth;
+@property (class, readonly) const CGFloat dynamicCollectionViewItemMinimumWidth;
+@property (class, readonly) const CGFloat dynamicCollectionViewItemMaximumWidth;
 
-+ (const CGFloat)collectionViewItemSpacing;
-+ (const NSEdgeInsets)collectionViewSectionInsets;
+@property (class, readonly) const CGFloat collectionViewItemSpacing;
+@property (class, readonly) const NSEdgeInsets collectionViewSectionInsets;
+
+@property (class, readonly) const CGFloat carouselViewVideoItemViewWidth;
+@property (class, readonly) const CGFloat carouselViewItemViewHeight;
+
+@property (class, readonly) const NSEdgeInsets libraryViewScrollViewContentInsets;
+@property (class, readonly) const NSEdgeInsets libraryViewScrollViewScrollerInsets;
+
+@property (class, readonly) const CGFloat controlsFadeAnimationDuration;
+
+@property (class, readonly) const CGFloat libraryWindowControlsBarHeight;
+
+@property (class, readonly) const CGFloat librarySplitViewSelectionViewDefaultWidth;
+@property (class, readonly) const CGFloat librarySplitViewMainViewMinimumWidth;
+@property (class, readonly) const CGFloat libraryWindowNavSidebarMaxWidth;
+@property (class, readonly) const CGFloat libraryWindowPlaylistSidebarMaxWidth;
+
+@property (class, readonly) const CGFloat sliderTickThickness;
 
 + (const NSSize)adjustedCollectionViewItemSizeForCollectionView:(NSCollectionView *)collectionView
                                                      withLayout:(VLCLibraryCollectionViewFlowLayout *)collectionViewLayout
                                            withItemsAspectRatio:(VLCLibraryCollectionViewItemAspectRatio)itemsAspectRatio;
-
-+ (const NSEdgeInsets)libraryViewScrollViewContentInsets;
-+ (const NSEdgeInsets)libraryViewScrollViewScrollerInsets;
-
-+ (const CGFloat)controlsFadeAnimationDuration;
 
 @end
 

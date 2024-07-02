@@ -16,17 +16,22 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Layouts 1.11
-import QtQuick.Controls 2.4
-import QtQuick.Window 2.11
+// NOTE: All imports used throughout the interface
+//       must be imported here as well:
+import QtQml
+import QtQml.Models
+import QtQuick
+import QtQuick.Layouts
+import QtQuick.Templates
+import QtQuick.Controls
+import QtQuick.Window
+import Qt5Compat.GraphicalEffects
 
 import org.videolan.vlc 0.1
-import org.videolan.compat 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
-
+import "qrc:///util/" as Util
 import "qrc:///playlist/" as PL
 
 Item {
@@ -34,188 +39,303 @@ Item {
 
     property bool _interfaceReady: false
     property bool _playlistReady: false
+    property bool _extendedFrameVisible: MainCtx.windowSuportExtendedFrame
+                                      && MainCtx.clientSideDecoration
+                                      && (MainCtx.intfMainWindow.visibility === Window.Windowed)
 
-    property alias g_root: root
-
-    BindingCompat {
-        target: VLCStyle.self
-        property: "appWidth"
-        value: root.width
-    }
-
-    BindingCompat {
-        target: VLCStyle.self
-        property: "appHeight"
-        value: root.height
-    }
-
-    Window.onWindowChanged: {
-        if (Window.window && !Qt.colorEqual(Window.window.color, "transparent")) {
-            Window.window.color = Qt.binding(function() { return theme.bg.primary })
-        }
-    }
-
-    ColorContext {
-        id: theme
-        palette: VLCStyle.palette
-        colorSet: ColorContext.View
-    }
-
-    Widgets.ToolTipExt {
-        id: attachedToolTip
-
-        parent: null
-        z: 99
-        colorContext.palette: parent && parent.colorContext ? parent.colorContext.palette
-                                                            : VLCStyle.palette
-
-        Component.onCompleted: {
-            MainCtx.setAttachedToolTip(this)
-        }
-    }
-
-    Loader {
-        id: playlistWindowLoader
-        asynchronous: true
-        active: !MainCtx.playlistDocked && MainCtx.playlistVisible
-        source: "qrc:///playlist/PlaylistDetachedWindow.qml"
-    }
-    Connections {
-        target: playlistWindowLoader.item
-        onClosing: MainCtx.playlistVisible = false
-    }
-
-
-    PlaylistControllerModel {
-        id: mainPlaylistController
-        playlistPtr: MainCtx.mainPlaylist
-
-        onPlaylistInitialized: {
-            root._playlistReady = true
-            if (root._interfaceReady)
-                setInitialView()
-        }
-    }
-
-    readonly property var pageModel: [
+    readonly property var _pageModel: [
         { name: "mc", url: "qrc:///main/MainDisplay.qml" },
         { name: "player", url:"qrc:///player/Player.qml" },
     ]
 
-    function loadCurrentHistoryView() {
-        var current = History.current
-        if ( !current || !current.name  || !current.properties ) {
-            console.warn("unable to load requested view, undefined")
-            return
-        }
-        stackView.loadView(root.pageModel, current.name, current.properties)
-    }
-
-    Connections {
-        target: History
-        onCurrentChanged: loadCurrentHistoryView()
-    }
+    property var _oldHistoryPath: ([])
 
     function setInitialView() {
         //set the initial view
-        var loadPlayer = !mainPlaylistController.empty;
-
-        if (MainCtx.mediaLibraryAvailable)
-            History.push(["mc", "video"], loadPlayer ? History.Stay : History.Go)
-        else
-            History.push(["mc", "home"], loadPlayer ? History.Stay : History.Go)
+        const loadPlayer = !MainPlaylistController.empty;
 
         if (loadPlayer)
+        {
+            if (MainCtx.mediaLibraryAvailable)
+                History.update(["mc", "video"])
+            else
+                History.update(["mc", "home"])
             History.push(["player"])
+        }
+        else
+            _pushHome()
     }
 
-
-    Component.onCompleted: {
-        root._interfaceReady = true;
-        if (root._playlistReady)
-            setInitialView()
+    function _pushHome() {
+        if (MainCtx.mediaLibraryAvailable)
+            History.push(["mc", "video"])
+        else
+            History.push(["mc", "home"])
     }
 
+    function loadCurrentHistoryView(focusReason) {
+        contextSaver.save(_oldHistoryPath)
 
-    DropArea {
+        stackView.loadView(History.viewPath, History.viewProp, focusReason)
+
+        contextSaver.restore(History.viewPath)
+        _oldHistoryPath = History.viewPath
+    }
+
+    Util.ModelSortSettingHandler {
+        id: contextSaver
+    }
+
+    Item {
+        id: g_mainInterface
+
         anchors.fill: parent
-        onDropped: {
-            var urls = []
-            if (drop.hasUrls) {
+        anchors.topMargin: MainCtx.windowExtendedMargin
+        anchors.leftMargin: MainCtx.windowExtendedMargin
+        anchors.rightMargin: MainCtx.windowExtendedMargin
+        anchors.bottomMargin: MainCtx.windowExtendedMargin
 
-                for (var i = 0; i < drop.urls.length; i++)
-                    urls.push(drop.urls[i])
+        Binding {
+            target: VLCStyle
+            property: "appWidth"
+            value: g_mainInterface.width
+        }
 
-            } else if (drop.hasText) {
-                /* Browsers give content as text if you dnd the addressbar,
-                   so check if mimedata has valid url in text and use it
-                   if we didn't get any normal Urls()*/
+        Binding {
+            target: VLCStyle
+            property: "appHeight"
+            value: g_mainInterface.height
+        }
 
-                urls.push(drop.text)
+        Binding {
+            target: MainCtx
+            property: "windowExtendedMargin"
+            value: _extendedFrameVisible ? VLCStyle.dp(20, VLCStyle.scale) : 0
+        }
+
+        Window.onWindowChanged: {
+            if (Window.window && !Qt.colorEqual(Window.window.color, "transparent")) {
+                Window.window.color = Qt.binding(function() { return theme.bg.primary })
             }
+        }
 
-            if (urls.length > 0) {
-                /* D&D of a subtitles file, add it on the fly */
-                if (Player.isPlaying && urls.length == 1) {
-                    if (Player.associateSubtitleFile(urls[0])) {
-                        drop.accept()
+        ColorContext {
+            id: theme
+            palette: VLCStyle.palette
+            colorSet: ColorContext.View
+        }
+
+        Widgets.ToolTipExt {
+            id: attachedToolTip
+
+            parent: null
+            z: 99
+            colorContext.palette: parent && parent.colorContext ? parent.colorContext.palette
+                                                                : VLCStyle.palette
+
+            Component.onCompleted: {
+                MainCtx.setAttachedToolTip(this)
+            }
+        }
+
+        Loader {
+            id: playlistWindowLoader
+            asynchronous: true
+            active: !MainCtx.playlistDocked
+            source: "qrc:///playlist/PlaylistDetachedWindow.qml"
+        }
+
+        Connections {
+            target: MainPlaylistController
+
+            function onPlaylistInitialized() {
+                _playlistReady = true
+                if (_interfaceReady)
+                    setInitialView()
+            }
+        }
+
+        Connections {
+            target: History
+            function onNavigate(focusReason) {
+                loadCurrentHistoryView(focusReason)
+                MainCtx.mediaLibraryVisible = !History.match(History.viewPath, ["player"])
+            }
+        }
+
+        Connections {
+            target: MainCtx
+
+            function onMediaLibraryVisibleChanged() {
+                if (MainCtx.mediaLibraryVisible) {
+                    if (History.match(History.viewPath, ["mc"]))
+                        return
+
+                    // NOTE: Useful when we started the application on the 'player' view.
+                    if (History.previousEmpty) {
+                        if (MainCtx.hasEmbededVideo && MainCtx.canShowVideoPIP === false)
+                            MainPlaylistController.stop()
+
+                        _pushHome()
+
+                        return
+                    }
+
+                    if (MainCtx.hasEmbededVideo && MainCtx.canShowVideoPIP === false)
+                        MainPlaylistController.stop()
+
+                    History.previous()
+                } else {
+                    if (History.match(History.viewPath, ["player"]))
+                        return
+
+                    History.push(["player"])
+                }
+            }
+        }
+
+        Component.onCompleted: {
+            _interfaceReady = true;
+            if (_playlistReady)
+                setInitialView()
+        }
+
+
+        DropArea {
+            anchors.fill: parent
+
+            onEntered: (drag) => {
+                // Do not handle internal drag here:
+                if (!drag.source) {
+                    // Foreign drag, check if valid:
+                    if (drop.hasUrls || drop.hasText) {
+                        drag.accepted = true
                         return
                     }
                 }
 
-                mainPlaylistController.append(urls, true)
-                drop.accept()
+                drag.accepted = false
             }
-        }
 
-        Widgets.StackViewExt {
-            id: stackView
-            anchors.fill: parent
-            focus: true
+            onDropped: (drop) => {
+                let urls = []
+                if (drop.hasUrls) {
 
-            Connections {
-                target: Player
-                onPlayingStateChanged: {
-                    if (Player.playingState === Player.PLAYING_STATE_STOPPED
-                            && History.current.name === "player") {
-                        if (History.previousEmpty)
-                        {
-                            if (MainCtx.mediaLibraryAvailable)
-                                History.push(["mc", "video"])
-                            else
-                                History.push(["mc", "home"])
+                    for (let i = 0; i < drop.urls.length; i++)
+                    {
+                        /* First decode the URL since we'll re-encode it
+                           afterwards, while fixing the non-encoded spaces. */
+                        let url = decodeURIComponent(drop.urls[i]);
+                        urls.push(url);
+                    }
+
+                } else if (drop.hasText) {
+                    /* Browsers give content as text if you dnd the addressbar,
+                       so check if mimedata has valid url in text and use it
+                       if we didn't get any normal Urls()*/
+
+                    urls.push(drop.text)
+                }
+
+                if (urls.length > 0) {
+                    /* D&D of a subtitles file, add it on the fly */
+                    if (Player.isPlaying && urls.length == 1) {
+                        if (Player.associateSubtitleFile(urls[0])) {
+                            drop.accept()
+                            return
                         }
-                        else
-                            History.previous()
+                    }
+
+                    MainPlaylistController.append(urls, true)
+                    drop.accept()
+                }
+            }
+
+            Widgets.PageLoader {
+                id: stackView
+                anchors.fill: parent
+                focus: true
+                clip: _extendedFrameVisible
+
+                pageModel: _pageModel
+
+                Connections {
+                    target: Player
+                    function onPlayingStateChanged() {
+                        if (Player.playingState === Player.PLAYING_STATE_STOPPED
+                                && History.match(History.viewPath, ["player"]) ) {
+                            if (History.previousEmpty)
+                                _pushHome()
+                            else
+                                History.previous()
+                        }
                     }
                 }
             }
         }
-    }
 
-    Loader {
-        asynchronous: true
-        source: "qrc:///menus/GlobalShortcuts.qml"
-    }
-
-    MouseArea {
-        /// handles mouse navigation buttons
-        anchors.fill: parent
-        acceptedButtons: Qt.BackButton
-        cursorShape: undefined
-        onClicked: History.previous()
-    }
-
-    Loader {
-        active: {
-            var windowVisibility = MainCtx.intfMainWindow.visibility
-            return MainCtx.clientSideDecoration
-                    && (windowVisibility !== Window.Maximized)
-                    && (windowVisibility !== Window.FullScreen)
-
+        Loader {
+            asynchronous: true
+            source: "qrc:///menus/GlobalShortcuts.qml"
         }
 
-        source: "qrc:///widgets/CSDMouseStealer.qml"
+        MouseArea {
+            /// handles mouse navigation buttons
+            anchors.fill: parent
+            acceptedButtons: Qt.BackButton
+            cursorShape: undefined
+            onClicked: History.previous()
+        }
+
+        Loader {
+            active: {
+                const windowVisibility = MainCtx.intfMainWindow.visibility
+                return MainCtx.clientSideDecoration
+                        && (windowVisibility !== Window.Maximized)
+                        && (windowVisibility !== Window.FullScreen)
+
+            }
+            Component.onCompleted: {
+                setSource(
+                    "qrc:///widgets/CSDMouseStealer.qml", {
+                        target: g_mainInterface,
+                        anchorInside: Qt.binding(() => !_extendedFrameVisible)
+                    })
+            }
+        }
     }
 
+    //draw the window drop shadow ourselve when the windowing system doesn't
+    //provide them but support extended frame
+    RectangularGlow {
+        id: effect
+        z: -1
+        visible: _extendedFrameVisible
+        anchors.fill: g_mainInterface
+        spread: 0.0
+        color: "black"
+        opacity:  0.5
+        cornerRadius: glowRadius
+        states: [
+            State {
+                when: MainCtx.intfMainWindow.active
+                PropertyChanges {
+                    target: effect
+                    glowRadius: MainCtx.windowExtendedMargin * 0.7
+                }
+            },
+            State {
+                when: !MainCtx.intfMainWindow.active
+                PropertyChanges {
+                    target: effect
+                    glowRadius: MainCtx.windowExtendedMargin * 0.5
+                }
+            }
+        ]
+        Behavior on  glowRadius {
+            NumberAnimation {
+                duration: VLCStyle.duration_veryShort
+            }
+        }
+    }
 }

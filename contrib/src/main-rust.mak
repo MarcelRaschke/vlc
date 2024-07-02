@@ -5,12 +5,14 @@
 
 ifdef HAVE_WIN32
 ifndef HAVE_WINSTORE
+ifndef HAVE_CLANG # FIXME: this could be refined to only skip if LLVM linker is < 15
 ifeq ($(HOST),i686-w64-mingw32)
 RUST_TARGET = i686-pc-windows-gnu # ARCH is i386
 else ifeq ($(HOST),x86_64-w64-mingw32)
 RUST_TARGET = $(ARCH)-pc-windows-gnu
 else
 # Not supported on armv7/aarch64 yet
+endif
 endif
 endif
 else ifdef HAVE_ANDROID
@@ -41,6 +43,8 @@ endif
 endif
 else ifdef HAVE_BSD
 RUST_TARGET = $(HOST)
+else ifdef HAVE_EMSCRIPTEN
+RUST_TARGET = $(HOST)
 endif
 
 # For now, VLC don't support Tier 3 platforms (ios 32bit, tvOS).
@@ -60,6 +64,10 @@ RUSTFLAGS += -C opt-level=1
 else
 CARGO_PROFILE := "release"
 RUSTFLAGS += -C opt-level=z
+endif
+
+ifdef HAVE_EMSCRIPTEN
+RUSTFLAGS += -C target-feature=+atomics
 endif
 
 CARGO_ENV = TARGET_CC="$(CC)" TARGET_AR="$(AR)" TARGET_RANLIB="$(RANLIB)" \

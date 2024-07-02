@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 
@@ -23,10 +23,12 @@ import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 
 
-Widgets.IconControlButton {
+Widgets.IconToolButton {
     id: extdSettingsBtn
 
-    iconText: VLCIcons.extended
+    text: VLCIcons.effect_filter
+
+    description: qsTr("Extended settings")
+
     onClicked: DialogsProvider.extendedDialog()
-    Accessible.name: I18n.qtr("Extended settings")
 }

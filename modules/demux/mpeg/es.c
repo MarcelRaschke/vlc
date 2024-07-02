@@ -31,6 +31,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_plugin.h>
 #include <vlc_demux.h>
 #include <vlc_codec.h>
@@ -71,7 +72,7 @@ vlc_module_begin ()
 
     add_submodule()
     set_description( N_("MPEG-4 video" ) )
-    set_capability( "demux", 5 )
+    set_capability( "demux", 7 )
     set_callbacks( OpenVideo, Close )
     add_float( "es-fps", 25, FPS_TEXT, FPS_LONGTEXT )
 
@@ -228,7 +229,7 @@ static int ParseXing( const uint8_t *p_buf, size_t i_buf, struct xing_info_s *xi
         xing->encoder != VLC_FOURCC('L','a','v','f') )
         return VLC_SUCCESS;
 
-    xing->brmode  = p_fixed[8] & 0x0f; /* version upper / mode lower */
+    xing->brmode  = p_fixed[9] & 0x0f; /* version upper / mode lower */
     uint32_t peak_signal  = GetDWBE( &p_fixed[11] );
     xing->f_peak_signal = peak_signal / 8388608.0; /* pow(2, 23) */
     uint16_t gain = GetWBE( &p_fixed[15] );
@@ -1367,6 +1368,9 @@ static int MpgaInit( demux_t *p_demux )
     if( !MpgaCheckSync( p_peek ) || mpga_decode_frameheader( header, &p_sys->mpgah ) )
         return VLC_SUCCESS;
 
+    if( p_sys->mpgah.i_layer == 3 )
+        p_sys->codec.i_codec = VLC_CODEC_MP3;
+
     /* Xing header */
     int i_skip;
 
@@ -1391,7 +1395,8 @@ static int MpgaInit( demux_t *p_demux )
                or if we verified the file isn't truncated */
             if( xing->i_bytes == 0 ||
                 vlc_stream_GetSize( p_demux->s, &i_stream_size ) ||
-                i_stream_size >= xing->i_bytes + p_sys->mpgah.i_frame_size )
+               (i_stream_size >= xing->i_bytes &&
+                i_stream_size <= xing->i_bytes + p_sys->mpgah.i_frame_size) )
             {
                 p_sys->i_duration = vlc_tick_from_samples( i_total_samples - i_dropped_samples,
                                                            p_sys->mpgah.i_sample_rate );

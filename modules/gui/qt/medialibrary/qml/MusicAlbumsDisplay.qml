@@ -16,7 +16,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 
@@ -26,7 +26,15 @@ import "qrc:///widgets/" as Widgets
 MusicAlbums {
     id: root
 
-    onCurrentIndexChanged: {
-        History.update(["mc","music", "albums", {"initialIndex": currentIndex}])
+    header: Widgets.ViewHeader {
+        view: root
+
+        text: qsTr("Albums")
     }
+
+    searchPattern: MainCtx.search.pattern
+    sortCriteria: MainCtx.sort.criteria
+    sortOrder: MainCtx.sort.order
+
+    onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
 }

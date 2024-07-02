@@ -22,6 +22,7 @@
 # include "config.h"
 #endif
 
+#include <stdbit.h>
 #include <vlc_common.h>
 #include <vlc_picture.h>
 
@@ -244,8 +245,8 @@ vlc_gl_importer_New(struct vlc_gl_interop *interop)
             glfmt->tex_widths[j]  = w;
             glfmt->tex_heights[j] = h;
         } else {
-            glfmt->tex_widths[j]  = vlc_align_pot(w);
-            glfmt->tex_heights[j] = vlc_align_pot(h);
+            glfmt->tex_widths[j]  = stdc_bit_ceil((unsigned)w);
+            glfmt->tex_heights[j] = stdc_bit_ceil((unsigned)h);
         }
 
         glfmt->formats[j] = interop->texs[j].format;
@@ -273,9 +274,7 @@ vlc_gl_importer_Delete(struct vlc_gl_importer *importer)
 
     if (interop && !interop->handle_texs_gen)
     {
-        void (*DeleteTextures)(uint32_t, uint32_t*) =
-            vlc_gl_GetProcAddress(interop->gl, "glDeleteTextures");
-        (*DeleteTextures)(interop->tex_count, importer->pic.textures);
+        vlc_gl_interop_DeleteTextures(interop, importer->pic.textures);
     }
 
     free(importer);

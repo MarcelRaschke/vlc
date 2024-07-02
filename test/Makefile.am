@@ -4,11 +4,6 @@
 
 AUTOMAKE_OPTIONS = subdir-objects
 
-extra_check_verbose = $(extra_check_verbose_$(V))
-extra_check_verbose_ = $(extra_check_flags__$(AM_DEFAULT_VERBOSITY))
-extra_check_verbose_0 = @echo TEST $@
-extra_check_verbose__0 = $(extra_check_verbose_0)
-
 ###############################################################################
 # Unit/regression test
 ###############################################################################
@@ -17,12 +12,19 @@ check_PROGRAMS = \
 	test_libvlc_core \
 	test_libvlc_equalizer \
 	test_libvlc_media \
+	test_libvlc_media_callback \
+	test_libvlc_media_thumbnail_argb \
+	test_libvlc_media_thumbnail_jpeg \
+	test_libvlc_media_thumbnail_png \
+	test_libvlc_media_thumbnail_webp \
 	test_libvlc_media_list \
 	test_libvlc_media_player \
+	test_libvlc_media_player_record \
 	test_libvlc_media_discoverer \
 	test_libvlc_renderer_discoverer \
 	test_libvlc_slaves \
 	test_src_config_chain \
+	test_src_clock_clock \
 	test_src_misc_ancillary \
 	test_src_misc_variables \
 	test_src_input_stream \
@@ -30,6 +32,7 @@ check_PROGRAMS = \
 	test_src_input_thumbnail \
 	test_src_input_decoder \
 	test_src_player \
+	test_src_player_monotonic_clock \
 	test_src_interface_dialog \
 	test_src_media_source \
 	test_src_misc_bits \
@@ -50,18 +53,30 @@ check_PROGRAMS = \
 	test_modules_demux_timestamps_filter \
 	test_modules_demux_ts_pes \
 	test_modules_playlist_m3u \
+	test_modules_stream_out_pcr_sync \
+	test_modules_tls \
+	test_modules_stream_out_transcode \
+	test_modules_mux_webvtt \
+	test_modules_stream_out_hls_subtitles_segmenter \
 	$(NULL)
+
+if HAVE_GL
+check_PROGRAMS += \
+	test_modules_video_output_opengl_filters \
+	test_modules_video_output_opengl_sub_renderer
+endif
+
+if HAVE_GLES2
+check_PROGRAMS += \
+	test_modules_video_output_opengl_es2_filters \
+	test_modules_video_output_opengl_es2_sub_renderer
+endif
 
 if HAVE_DARWIN
 check_PROGRAMS += test_src_misc_image_cvpx
 endif
 
-if ENABLE_SOUT
-check_PROGRAMS += test_modules_tls \
-	test_modules_stream_out_transcode \
-	test_modules_stream_out_pcr_sync
 
-endif
 if UPDATE_CHECK
 check_PROGRAMS += test_src_crypto_update
 endif
@@ -80,6 +95,7 @@ EXTRA_PROGRAMS = \
 	$(NULL)
 
 EXTRA_DIST = \
+	modules/lua/extensions/extensions.lua \
 	samples/certs/certkey.pem \
 	samples/empty.voc \
 	samples/image.jpg \
@@ -88,11 +104,20 @@ EXTRA_DIST = \
 	samples/slaves \
 	$(check_SCRIPTS)
 
-check_HEADERS = libvlc/test.h libvlc/libvlc_additions.h libvlc/media_utils.h
+check_HEADERS = libvlc/test.h libvlc/libvlc_additions.h libvlc/media_utils.h \
+	libvlc/media_player.h
 
 TESTS = $(check_PROGRAMS) check_POTFILES.sh
 
-AM_CFLAGS = -DSRCDIR=\"$(srcdir)\"
+AM_CPPFLAGS = \
+	-DSRCDIR=\"$(srcdir)\" \
+	-DTOP_BUILDDIR=\"$(abs_top_builddir)\" \
+	-DTOP_SRCDIR=\"$(abs_top_srcdir)\"
+
+if HAVE_EMSCRIPTEN
+AM_CFLAGS = -sMAIN_MODULE=1
+endif
+
 AM_LDFLAGS = -no-install $(LDFLAGS_vlc)
 LIBVLCCORE = -L../src/ -lvlccore
 LIBVLC = -L../lib -lvlc
@@ -103,12 +128,28 @@ test_libvlc_equalizer_SOURCES = libvlc/equalizer.c
 test_libvlc_equalizer_LDADD = $(LIBVLC)
 test_libvlc_media_SOURCES = libvlc/media.c
 test_libvlc_media_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_libvlc_media_callback_SOURCES = libvlc/media_callback.c
+test_libvlc_media_callback_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_libvlc_media_thumbnail_argb_SOURCES = libvlc/media_thumbnail.c
+test_libvlc_media_thumbnail_argb_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_libvlc_media_thumbnail_argb_CPPFLAGS = $(AM_CPPFLAGS) -DTEST_THUMB_TYPE=libvlc_picture_Argb -DTEST_REQUIRED_MODULES=\"avcodec\"
+test_libvlc_media_thumbnail_png_SOURCES = libvlc/media_thumbnail.c
+test_libvlc_media_thumbnail_png_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_libvlc_media_thumbnail_png_CPPFLAGS = $(AM_CPPFLAGS) -DTEST_THUMB_TYPE=libvlc_picture_Png -DTEST_REQUIRED_MODULES=\"png\"
+test_libvlc_media_thumbnail_jpeg_SOURCES = libvlc/media_thumbnail.c
+test_libvlc_media_thumbnail_jpeg_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_libvlc_media_thumbnail_jpeg_CPPFLAGS = $(AM_CPPFLAGS) -DTEST_THUMB_TYPE=libvlc_picture_Jpg -DTEST_REQUIRED_MODULES=\"jpeg\"
+test_libvlc_media_thumbnail_webp_SOURCES = libvlc/media_thumbnail.c
+test_libvlc_media_thumbnail_webp_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_libvlc_media_thumbnail_webp_CPPFLAGS = $(AM_CPPFLAGS) -DTEST_THUMB_TYPE=libvlc_picture_WebP -DTEST_REQUIRED_MODULES=\"vpx\"
 test_libvlc_media_list_player_SOURCES = libvlc/media_list_player.c
 test_libvlc_media_list_player_LDADD = $(LIBVLC)
 test_libvlc_media_list_SOURCES = libvlc/media_list.c
 test_libvlc_media_list_LDADD = $(LIBVLC)
 test_libvlc_media_player_SOURCES = libvlc/media_player.c
 test_libvlc_media_player_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_libvlc_media_player_record_SOURCES = libvlc/media_player_record.c
+test_libvlc_media_player_record_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_libvlc_media_discoverer_SOURCES = libvlc/media_discoverer.c
 test_libvlc_media_discoverer_LDADD = $(LIBVLC)
 test_libvlc_renderer_discoverer_SOURCES = libvlc/renderer_discoverer.c
@@ -117,6 +158,11 @@ test_libvlc_slaves_SOURCES = libvlc/slaves.c
 test_libvlc_slaves_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_libvlc_meta_SOURCES = libvlc/meta.c
 test_libvlc_meta_LDADD = $(LIBVLCCORE) $(LIBVLC)
+
+test_src_clock_clock_SOURCES = src/clock/clock.c \
+	../src/clock/clock.c \
+	../src/clock/clock_internal.c
+test_src_clock_clock_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_src_misc_ancillary_SOURCES = src/misc/ancillary.c
 test_src_misc_ancillary_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_src_misc_variables_SOURCES = src/misc/variables.c
@@ -136,6 +182,9 @@ test_src_input_thumbnail_SOURCES = src/input/thumbnail.c
 test_src_input_thumbnail_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_src_player_SOURCES = src/player/player.c
 test_src_player_LDADD = $(LIBVLCCORE) $(LIBVLC) $(LIBM)
+test_src_player_monotonic_clock_SOURCES = src/player/player.c
+test_src_player_monotonic_clock_CFLAGS = $(AM_CFLAGS) -DTEST_CLOCK_MONOTONIC
+test_src_player_monotonic_clock_LDADD = $(LIBVLCCORE) $(LIBVLC) $(LIBM)
 test_src_misc_bits_SOURCES = src/misc/bits.c
 test_src_misc_bits_LDADD = $(LIBVLC)
 test_src_misc_epg_SOURCES = src/misc/epg.c
@@ -150,10 +199,26 @@ test_src_interface_dialog_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_src_media_source_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_src_media_source_SOURCES = src/media_source/media_source.c
 
+test_src_video_output_SOURCES = \
+	src/video_output/video_output.c \
+	src/video_output/video_output.h \
+	src/video_output/video_output_scenarios.c
+test_src_video_output_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_src_video_output_opengl_SOURCES = src/video_output/opengl.c
+test_src_video_output_opengl_LDADD = $(LIBVLCCORE) $(LIBVLC)
+
+test_src_input_decoder_SOURCES = \
+	src/input/decoder/input_decoder.c \
+	src/input/decoder/input_decoder.h \
+	src/input/decoder/input_decoder_scenarios.c
+test_src_input_decoder_LDADD = $(LIBVLCCORE) $(LIBVLC)
+
+test_src_misc_image_SOURCES = src/misc/image.c
+test_src_misc_image_LDADD = $(LIBVLCCORE) $(LIBVLC)
+
 test_modules_lua_extension_SOURCES = modules/lua/extension.c
 test_modules_lua_extension_LDADD = $(LIBVLCCORE) $(LIBVLC)
-test_modules_lua_extension_CPPFLAGS = $(AM_CPPFLAGS) \
-	-DLUA_EXTENSION_DIR=\"$(srcdir)/modules/\"
+test_modules_lua_extension_CPPFLAGS = $(AM_CPPFLAGS)
 test_modules_misc_medialibrary_SOURCES = modules/misc/medialibrary.c
 test_modules_misc_medialibrary_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_modules_packetizer_helpers_SOURCES = modules/packetizer/helpers.c
@@ -189,14 +254,39 @@ test_modules_codec_hxxx_helper_SOURCES = modules/codec/hxxx_helper.c \
                                       ../modules/packetizer/h264_nal.c \
                                       ../modules/packetizer/hevc_nal.c
 test_modules_codec_hxxx_helper_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_modules_video_output_opengl_filters_SOURCES = \
+	modules/video_output/opengl/filters.c \
+	../modules/video_output/opengl/filters.c \
+	../modules/video_output/opengl/filters.h \
+	../modules/video_output/opengl/filter.c \
+	../modules/video_output/opengl/gl_api.c \
+	../modules/video_output/opengl/gl_api.h \
+	../modules/video_output/opengl/interop.c \
+	../modules/video_output/opengl/interop.h \
+	../modules/video_output/opengl/importer.c \
+	../modules/video_output/opengl/importer.h
+test_modules_video_output_opengl_filters_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_modules_video_output_opengl_filters_CPPFLAGS = $(AM_CPPFLAGS) -DVLC_TEST_OPENGL_API=VLC_OPENGL
+test_modules_video_output_opengl_es2_filters_SOURCES = $(test_modules_video_output_opengl_filters_SOURCES)
+test_modules_video_output_opengl_es2_filters_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_modules_video_output_opengl_es2_filters_CPPFLAGS = $(AM_CPPFLAGS) -DVLC_TEST_OPENGL_API=VLC_OPENGL_ES2
 
-test_src_video_output_SOURCES = \
-	src/video_output/video_output.c \
-	src/video_output/video_output.h \
-	src/video_output/video_output_scenarios.c
-test_src_video_output_LDADD = $(LIBVLCCORE) $(LIBVLC)
-test_src_video_output_opengl_SOURCES = src/video_output/opengl.c
-test_src_video_output_opengl_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_modules_video_output_opengl_sub_renderer_SOURCES = \
+	modules/video_output/opengl/sub_renderer.c \
+	../modules/video_output/opengl/sub_renderer.c \
+	../modules/video_output/opengl/sub_renderer.h \
+	../modules/video_output/opengl/filter.c \
+	../modules/video_output/opengl/gl_api.c \
+	../modules/video_output/opengl/gl_api.h \
+	../modules/video_output/opengl/gl_util.c \
+	../modules/video_output/opengl/gl_util.h \
+	../modules/video_output/opengl/interop.c \
+	../modules/video_output/opengl/interop.h
+test_modules_video_output_opengl_sub_renderer_LDADD = $(LIBVLCCORE) $(LIBVLC) $(LIBPLACEBO_LIBS)
+test_modules_video_output_opengl_sub_renderer_CPPFLAGS = $(AM_CPPFLAGS) -DVLC_TEST_OPENGL_API=VLC_OPENGL
+test_modules_video_output_opengl_es2_sub_renderer_SOURCES = $(test_modules_video_output_opengl_sub_renderer_SOURCES)
+test_modules_video_output_opengl_es2_sub_renderer_LDADD = $(LIBVLCCORE) $(LIBVLC) $(LIBPLACEBO_LIBS)
+test_modules_video_output_opengl_es2_sub_renderer_CPPFLAGS = $(AM_CPPFLAGS) -DVLC_TEST_OPENGL_API=VLC_OPENGL_ES2
 
 test_modules_stream_out_transcode_SOURCES = \
 	modules/stream_out/transcode.c \
@@ -211,14 +301,14 @@ test_modules_stream_out_pcr_sync_SOURCES = modules/stream_out/pcr_sync.c \
 	../modules/stream_out/transcode/pcr_helper.c
 test_modules_stream_out_pcr_sync_LDADD = $(LIBVLCCORE)
 
-test_src_input_decoder_SOURCES = \
-	src/input/decoder/input_decoder.c \
-	src/input/decoder/input_decoder.h \
-	src/input/decoder/input_decoder_scenarios.c
-test_src_input_decoder_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_modules_mux_webvtt_SOURCES = modules/mux/webvtt.c
+test_modules_mux_webvtt_LDADD = $(LIBVLCCORE) $(LIBVLC)
 
-test_src_misc_image_SOURCES = src/misc/image.c
-test_src_misc_image_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_modules_stream_out_hls_subtitles_segmenter_SOURCES = \
+	modules/stream_out/hls/subtitles_segmenter.c \
+	../modules/stream_out/hls/hls.h \
+	../modules/stream_out/hls/subtitles_segmenter.c
+test_modules_stream_out_hls_subtitles_segmenter_LDADD = $(LIBVLCCORE) $(LIBVLC)
 
 checkall:
 	$(MAKE) check_PROGRAMS="$(check_PROGRAMS) $(EXTRA_PROGRAMS)" check
@@ -231,9 +321,7 @@ FORCE:
 
 libvlc_demux_run_la_SOURCES = src/input/demux-run.c src/input/demux-run.h \
 	src/input/common.c src/input/common.h
-libvlc_demux_run_la_CPPFLAGS = $(AM_CPPFLAGS) \
-	-DTOP_BUILDDIR=\"$$(cd "$(top_builddir)"; pwd)\" \
-	-DTOP_SRCDIR=\"$$(cd "$(top_srcdir)"; pwd)\"
+libvlc_demux_run_la_CPPFLAGS = $(AM_CPPFLAGS)
 libvlc_demux_run_la_LDFLAGS = -no-install -static
 libvlc_demux_run_la_LIBADD = \
 	../lib/libvlc.la ../src/libvlccore.la ../compat/libcompat.la
@@ -247,6 +335,7 @@ libvlc_demux_run_la_LIBADD += \
 	../modules/libau_plugin.la \
 	../modules/libavi_plugin.la \
 	../modules/libcaf_plugin.la \
+	../modules/libdemux_cdg_plugin.la \
 	../modules/libes_plugin.la \
 	../modules/libflacsys_plugin.la \
 	../modules/libh26x_plugin.la \
@@ -360,10 +449,22 @@ if HAVE_TVOS
 noinst_PROGRAMS += vlccoreios
 endif
 
+if HAVE_XROS
+noinst_PROGRAMS += vlccoreios
+endif
+
+vlccorewatchos_SOURCES = watchosvlc.m
+vlccorewatchos_LDFLAGS = $(LDFLAGS_vlc) -Wl,-framework,WatchKit
+vlccorewatchos_LDFLAGS += -Xlinker -rpath -Xlinker "@executable_path/Frameworks/"
+vlccorewatchos_OBJCFLAGS = -fobjc-arc
+vlccorewatchos_LDADD = ../lib/libvlc.la ../src/libvlccore.la
+
+if HAVE_WATCHOS
+noinst_PROGRAMS += vlccorewatchos
+endif
+
 vlc_window_SOURCES = vlc-window.c
-vlc_window_CPPFLAGS = $(AM_CPPFLAGS) -I../include/ \
-	-DTOP_BUILDDIR=\"$$(cd "$(top_builddir)"; pwd)\" \
-	-DTOP_SRCDIR=\"$$(cd "$(top_srcdir)"; pwd)\"
+vlc_window_CPPFLAGS = $(AM_CPPFLAGS) -I../include/
 vlc_window_LDADD = ../lib/libvlc.la ../src/libvlccore.la ../compat/libcompat.la
 # Opt-out for building the test driver if there is no dynamic plugins, since we
 # cannot link static plugins currently anyway.

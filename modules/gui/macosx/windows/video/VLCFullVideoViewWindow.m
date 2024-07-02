@@ -46,13 +46,14 @@
     [super setup];
     _autohideTitlebar = NO;
 
-    NSNotificationCenter *notificationCenter = [NSNotificationCenter defaultCenter];
+    NSNotificationCenter *notificationCenter = NSNotificationCenter.defaultCenter;
     [notificationCenter addObserver:self
                            selector:@selector(shouldShowFullscreenController:)
                                name:VLCVideoWindowShouldShowFullscreenController
                              object:nil];
 
     self.titleVisibility = NSWindowTitleHidden;
+    self.styleMask |= NSWindowStyleMaskFullSizeContentView;
     self.ignoresMouseEvents = NO;
     self.acceptsMouseMovedEvents = YES;
 }
@@ -92,7 +93,7 @@
 
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext * _Nonnull context) {
         self->_isFadingIn = YES;
-        [context setDuration:[VLCLibraryUIUnits controlsFadeAnimationDuration]];
+        [context setDuration:VLCLibraryUIUnits.controlsFadeAnimationDuration];
         [titlebarView.animator setAlphaValue:1.0f];
     } completionHandler:^{
         self->_isFadingIn = NO;
@@ -107,7 +108,8 @@
     if (self.videoViewController.mouseOnControls ||
         !_autohideTitlebar ||
         self.isInNativeFullscreen ||
-        self.videoViewController.view.hidden) {
+        self.videoViewController.view.hidden ||
+        !self.videoViewController.autohideControls) {
 
         [self showTitleBar];
         return;
@@ -116,7 +118,7 @@
     NSView *titlebarView = [self standardWindowButton:NSWindowCloseButton].superview;
 
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext * _Nonnull context) {
-        [context setDuration:[VLCLibraryUIUnits controlsFadeAnimationDuration]];
+        [context setDuration:VLCLibraryUIUnits.controlsFadeAnimationDuration];
         [titlebarView.animator setAlphaValue:0.0f];
     } completionHandler:nil];
 }
@@ -124,7 +126,6 @@
 - (void)enableVideoTitleBarMode
 {
     self.toolbar.visible = NO;
-    self.styleMask |= NSWindowStyleMaskFullSizeContentView;
     self.titlebarAppearsTransparent = YES;
 
     _autohideTitlebar = YES;
@@ -134,7 +135,6 @@
 - (void)disableVideoTitleBarMode
 {
     self.toolbar.visible = YES;
-    self.styleMask &= ~NSWindowStyleMaskFullSizeContentView;
     self.titlebarAppearsTransparent = NO;
 
     _autohideTitlebar = NO;

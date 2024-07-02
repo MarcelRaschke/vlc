@@ -25,13 +25,13 @@
 #include <vlc_common.h>
 #include <vlc_atomic.h>
 #include <vlc_executor.h>
+#include <vlc_preparser.h>
 
 #include "input/input_interface.h"
 #include "input/input_internal.h"
-#include "preparser.h"
 #include "fetcher.h"
 
-struct input_preparser_t
+struct vlc_preparser_t
 {
     vlc_object_t* owner;
     input_fetcher_t* fetcher;
@@ -45,10 +45,10 @@ struct input_preparser_t
 
 struct task
 {
-    input_preparser_t *preparser;
+    vlc_preparser_t *preparser;
     input_item_t *item;
     input_item_meta_request_option_t options;
-    const input_preparser_callbacks_t *cbs;
+    const struct vlc_metadata_cbs *cbs;
     void *userdata;
     void *id;
     vlc_tick_t timeout;
@@ -56,21 +56,20 @@ struct task
     input_item_parser_id_t *parser;
 
     vlc_sem_t preparse_ended;
-    vlc_sem_t fetch_ended;
     atomic_int preparse_status;
     atomic_bool interrupted;
 
     struct vlc_runnable runnable; /**< to be passed to the executor */
 
-    struct vlc_list node; /**< node of input_preparser_t.submitted_tasks */
+    struct vlc_list node; /**< node of vlc_preparser_t.submitted_tasks */
 };
 
 static void RunnableRun(void *);
 
 static struct task *
-TaskNew(input_preparser_t *preparser, input_item_t *item,
+TaskNew(vlc_preparser_t *preparser, input_item_t *item,
         input_item_meta_request_option_t options,
-        const input_preparser_callbacks_t *cbs, void *userdata,
+        const struct vlc_metadata_cbs *cbs, void *userdata,
         void *id, vlc_tick_t timeout)
 {
     assert(timeout >= 0);
@@ -91,7 +90,6 @@ TaskNew(input_preparser_t *preparser, input_item_t *item,
 
     task->parser = NULL;
     vlc_sem_init(&task->preparse_ended, 0);
-    vlc_sem_init(&task->fetch_ended, 0);
     atomic_init(&task->preparse_status, ITEM_PREPARSE_SKIPPED);
     atomic_init(&task->interrupted, false);
 
@@ -109,7 +107,7 @@ TaskDelete(struct task *task)
 }
 
 static void
-PreparserAddTask(input_preparser_t *preparser, struct task *task)
+PreparserAddTask(vlc_preparser_t *preparser, struct task *task)
 {
     vlc_mutex_lock(&preparser->lock);
     vlc_list_append(&task->node, &preparser->submitted_tasks);
@@ -117,7 +115,7 @@ PreparserAddTask(input_preparser_t *preparser, struct task *task)
 }
 
 static void
-PreparserRemoveTask(input_preparser_t *preparser, struct task *task)
+PreparserRemoveTask(vlc_preparser_t *preparser, struct task *task)
 {
     vlc_mutex_lock(&preparser->lock);
     vlc_list_remove(&task->node);
@@ -125,9 +123,17 @@ PreparserRemoveTask(input_preparser_t *preparser, struct task *task)
 }
 
 static void
-NotifyPreparseEnded(struct task *task)
+NotifyPreparseEnded(struct task *task, bool art_fetched)
 {
-    if (task->cbs && task->cbs->on_preparse_ended) {
+    if (task->cbs == NULL)
+        return;
+
+    if (task->options & META_REQUEST_OPTION_FETCH_ANY
+     && task->cbs->on_art_fetch_ended)
+        task->cbs->on_art_fetch_ended(task->item, art_fetched,
+                                      task->userdata);
+
+    if (task->cbs->on_preparse_ended) {
         int status = atomic_load_explicit(&task->preparse_status,
                                           memory_order_relaxed);
         task->cbs->on_preparse_ended(task->item, status, task->userdata);
@@ -166,6 +172,27 @@ OnParserSubtreeAdded(input_item_t *item, input_item_node_t *subtree,
 }
 
 static void
+OnParserAttachmentsAdded(input_item_t *item,
+                         input_attachment_t *const *array,
+                         size_t count, void *task_)
+{
+    VLC_UNUSED(item);
+    struct task *task = task_;
+
+    if (task->cbs && task->cbs->on_attachments_added)
+        task->cbs->on_attachments_added(task->item, array, count, task->userdata);
+}
+
+static void
+SetItemPreparsed(struct task *task)
+{
+    int status = atomic_load_explicit(&task->preparse_status,
+                                      memory_order_relaxed);
+    if (status == ITEM_PREPARSE_DONE)
+        input_item_SetPreparsed(task->item);
+}
+
+static void
 OnArtFetchEnded(input_item_t *item, bool fetched, void *userdata)
 {
     VLC_UNUSED(item);
@@ -173,7 +200,11 @@ OnArtFetchEnded(input_item_t *item, bool fetched, void *userdata)
 
     struct task *task = userdata;
 
-    vlc_sem_post(&task->fetch_ended);
+    if (!atomic_load(&task->interrupted))
+        SetItemPreparsed(task);
+
+    NotifyPreparseEnded(task, fetched);
+    TaskDelete(task);
 }
 
 static const input_fetcher_callbacks_t input_fetcher_callbacks = {
@@ -186,6 +217,7 @@ Parse(struct task *task, vlc_tick_t deadline)
     static const input_item_parser_cbs_t cbs = {
         .on_ended = OnParserEnded,
         .on_subtree_added = OnParserSubtreeAdded,
+        .on_attachments_added = OnParserAttachmentsAdded,
     };
 
     vlc_object_t *obj = task->preparser->owner;
@@ -212,22 +244,16 @@ Parse(struct task *task, vlc_tick_t deadline)
     input_item_parser_id_Release(task->parser);
 }
 
-static void
+static int
 Fetch(struct task *task)
 {
     input_fetcher_t *fetcher = task->preparser->fetcher;
     if (!fetcher || !(task->options & META_REQUEST_OPTION_FETCH_ANY))
-        return;
+        return VLC_ENOENT;
 
-    int ret =
-        input_fetcher_Push(fetcher, task->item,
-                           task->options & META_REQUEST_OPTION_FETCH_ANY,
-                           &input_fetcher_callbacks, task);
-    if (ret != VLC_SUCCESS)
-        return;
-
-    /* Wait until the end of fetching (fetching is not interruptible) */
-    vlc_sem_wait(&task->fetch_ended);
+    return input_fetcher_Push(fetcher, task->item,
+                              task->options & META_REQUEST_OPTION_FETCH_ANY,
+                              &input_fetcher_callbacks, task);
 }
 
 static void
@@ -236,29 +262,38 @@ RunnableRun(void *userdata)
     vlc_thread_set_name("vlc-run-prepars");
 
     struct task *task = userdata;
+    vlc_preparser_t *preparser = task->preparser;
 
     vlc_tick_t deadline = task->timeout ? vlc_tick_now() + task->timeout
                                         : VLC_TICK_INVALID;
 
+    if (task->options & (META_REQUEST_OPTION_SCOPE_ANY|
+                         META_REQUEST_OPTION_SCOPE_FORCED))
+    {
+        if (atomic_load(&task->interrupted))
+        {
+            PreparserRemoveTask(preparser, task);
+            goto end;
+        }
+
+        Parse(task, deadline);
+    }
+
+    PreparserRemoveTask(preparser, task);
+
     if (atomic_load(&task->interrupted))
         goto end;
 
-    Parse(task, deadline);
+    int ret = Fetch(task);
 
-    if (atomic_load(&task->interrupted))
-        goto end;
+    if (ret == VLC_SUCCESS)
+        return; /* Remove the task and notify from the fetcher callback */
 
-    Fetch(task);
-
-    if (atomic_load(&task->interrupted))
-        goto end;
-
-    input_item_SetPreparsed(task->item, true);
+    if (!atomic_load(&task->interrupted))
+        SetItemPreparsed(task);
 
 end:
-    NotifyPreparseEnded(task);
-    input_preparser_t *preparser = task->preparser;
-    PreparserRemoveTask(preparser, task);
+    NotifyPreparseEnded(task, false);
     TaskDelete(task);
 }
 
@@ -273,9 +308,9 @@ Interrupt(struct task *task)
     vlc_sem_post(&task->preparse_ended);
 }
 
-input_preparser_t* input_preparser_New( vlc_object_t *parent )
+vlc_preparser_t* vlc_preparser_New( vlc_object_t *parent )
 {
-    input_preparser_t* preparser = malloc( sizeof *preparser );
+    vlc_preparser_t* preparser = malloc( sizeof *preparser );
     if (!preparser)
         return NULL;
 
@@ -308,9 +343,9 @@ input_preparser_t* input_preparser_New( vlc_object_t *parent )
     return preparser;
 }
 
-int input_preparser_Push( input_preparser_t *preparser,
+int vlc_preparser_Push( vlc_preparser_t *preparser,
     input_item_t *item, input_item_meta_request_option_t i_options,
-    const input_preparser_callbacks_t *cbs, void *cbs_userdata,
+    const struct vlc_metadata_cbs *cbs, void *cbs_userdata,
     int timeout_ms, void *id )
 {
     if( atomic_load( &preparser->deactivated ) )
@@ -323,7 +358,7 @@ int input_preparser_Push( input_preparser_t *preparser,
         item->b_preparse_interact = true;
     vlc_mutex_unlock( &item->lock );
 
-    if (!(i_options & META_REQUEST_OPTION_NO_SKIP))
+    if (!(i_options & META_REQUEST_OPTION_SCOPE_FORCED))
     {
         switch( i_type )
         {
@@ -335,9 +370,16 @@ int input_preparser_Push( input_preparser_t *preparser,
                     break;
                 /* fallthrough */
             default:
-                if (cbs && cbs->on_preparse_ended)
-                    cbs->on_preparse_ended(item, ITEM_PREPARSE_SKIPPED, cbs_userdata);
-                return VLC_SUCCESS;
+                if( ( i_options & META_REQUEST_OPTION_FETCH_ANY ) == 0 )
+                {
+                    /* Nothing to do (no preparse and not fetch), notify it */
+                    if (cbs && cbs->on_preparse_ended)
+                        cbs->on_preparse_ended(item, ITEM_PREPARSE_SKIPPED,
+                                               cbs_userdata);
+                    return VLC_SUCCESS;
+                }
+                /* Continue without parsing (but fetching) */
+                i_options &= ~META_REQUEST_OPTION_SCOPE_ANY;
         }
     }
 
@@ -354,16 +396,7 @@ int input_preparser_Push( input_preparser_t *preparser,
     return VLC_SUCCESS;
 }
 
-void input_preparser_fetcher_Push( input_preparser_t *preparser,
-    input_item_t *item, input_item_meta_request_option_t options,
-    const input_fetcher_callbacks_t *cbs, void *cbs_userdata )
-{
-    if( preparser->fetcher )
-        input_fetcher_Push( preparser->fetcher, item, options,
-                            cbs, cbs_userdata );
-}
-
-void input_preparser_Cancel( input_preparser_t *preparser, void *id )
+void vlc_preparser_Cancel( vlc_preparser_t *preparser, void *id )
 {
     vlc_mutex_lock(&preparser->lock);
 
@@ -376,7 +409,7 @@ void input_preparser_Cancel( input_preparser_t *preparser, void *id )
                 vlc_executor_Cancel(preparser->executor, &task->runnable);
             if (canceled)
             {
-                NotifyPreparseEnded(task);
+                NotifyPreparseEnded(task, false);
                 vlc_list_remove(&task->node);
                 TaskDelete(task);
             }
@@ -389,16 +422,16 @@ void input_preparser_Cancel( input_preparser_t *preparser, void *id )
     vlc_mutex_unlock(&preparser->lock);
 }
 
-void input_preparser_Deactivate( input_preparser_t* preparser )
+void vlc_preparser_Deactivate( vlc_preparser_t* preparser )
 {
     atomic_store( &preparser->deactivated, true );
-    input_preparser_Cancel(preparser, NULL);
+    vlc_preparser_Cancel(preparser, NULL);
 }
 
-void input_preparser_Delete( input_preparser_t *preparser )
+void vlc_preparser_Delete( vlc_preparser_t *preparser )
 {
-    /* In case input_preparser_Deactivate() has not been called */
-    input_preparser_Cancel(preparser, NULL);
+    /* In case vlc_preparser_Deactivate() has not been called */
+    vlc_preparser_Cancel(preparser, NULL);
 
     vlc_executor_Delete(preparser->executor);
 

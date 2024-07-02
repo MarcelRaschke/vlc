@@ -79,7 +79,8 @@ static const struct wl_buffer_listener buffer_cbs =
     buffer_release_cb,
 };
 
-static void Prepare(vout_display_t *vd, picture_t *pic, subpicture_t *subpic,
+static void Prepare(vout_display_t *vd, picture_t *pic,
+                    const struct vlc_render_subpicture *subpic,
                     vlc_tick_t date)
 {
     VLC_UNUSED(date);
@@ -179,10 +180,9 @@ static int Control(vout_display_t *vd, int query)
     switch (query)
     {
         case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
-        case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
-        case VOUT_DISPLAY_CHANGE_ZOOM:
         case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
         case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
+        case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
         {
             if (sys->viewport != NULL)
             {
@@ -336,7 +336,7 @@ static int Open(vout_display_t *vd,
         video_format_ApplyRotation(fmtp, &fmt);
     }
 
-    fmtp->i_chroma = VLC_CODEC_RGB32;
+    fmtp->i_chroma = VLC_CODEC_BGRX;
 
     vd->ops = &ops;
 

@@ -15,10 +15,11 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts 1.11
-import QtGraphicalEffects 1.0
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import Qt5Compat.GraphicalEffects
+import QtQuick.Templates as T
 import org.videolan.vlc 0.1
 
 
@@ -75,14 +76,14 @@ Item {
     {
         target: dialogModel
 
-        onLogin: {
+        function onLogin(dialogId, title, text, defaultUsername, askStore) {
             loginDialog.dialogId = dialogId
             loginDialog.title = title
             loginDialog.defaultUsername = defaultUsername
             loginDialog.open()
         }
 
-        onQuestion: {
+        function onQuestion(dialogId, title, text, type, cancel, action1, action2) {
             questionDialog.dialogId = dialogId
             questionDialog.title = title
             questionDialog.text = text
@@ -92,15 +93,26 @@ Item {
             questionDialog.open()
         }
 
-        onProgress: {
-            console.warn("onProgressUpdated is not implemented")
+        function onProgress(dialogId, title, text, indeterminate, position, cancel) {
+            progressDialog.dialogId = dialogId
+            progressDialog.title = title
+            progressDialog.text = text
+            progressDialog.cancelTxt = cancel
+            progressDialog.position = position
+            progressDialog.interderminate = indeterminate
+            progressDialog.open()
         }
 
-        onProgressUpdated: {
-            console.warn("onProgressUpdated is not implemented")
+        function onProgressUpdated(dialogId, position, text) {
+            if (progressDialog.dialogId !== dialogId) {
+                console.warn("progress event on an inexisting dialog")
+                return
+            }
+            progressDialog.text = text
+            progressDialog.position = position
         }
 
-        onCancelled: {
+        function onCancelled(dialogId) {
             if (questionDialog.dialogId === dialogId) {
                 questionDialog.close()
                 questionDialog.dialogId = null
@@ -108,6 +120,10 @@ Item {
             } else if (loginDialog.dialogId === dialogId)  {
                 loginDialog.close()
                 loginDialog.dialogId = null
+                dialogModel.dismiss(dialogId)
+            } else if (progressDialog.dialogId === dialogId) {
+                progressDialog.close()
+                progressDialog.dialogId = null
                 dialogModel.dismiss(dialogId)
             } else {
                 dialogModel.dismiss(dialogId)
@@ -119,7 +135,7 @@ Item {
     {
         target: DialogErrorModel
 
-        onCountChanged: {
+        function onCountChanged() {
             hideErrorPopupTimer.restart()
             errorPopup.state = "visible"
         }
@@ -166,6 +182,9 @@ Item {
 
             property real layoutWidth: layout.width
 
+            Accessible.role: Accessible.AlertMessage
+            Accessible.name: qsTr("error popup")
+
             RowLayout {
                 id: layout
 
@@ -179,7 +198,7 @@ Item {
                     Layout.leftMargin: VLCStyle.margin_xxsmall
                 }
 
-                Text {
+                T.Label {
                     id: messageText
 
                     Layout.maximumWidth: root.width * 0.5
@@ -198,7 +217,7 @@ Item {
                 Widgets.TextToolButton {
                     id: detailsBtn
 
-                    text: I18n.qtr("Show Details")
+                    text: qsTr("Show Details")
 
                     colorContext.colorSet: ColorContext.ButtonAccent
 
@@ -212,9 +231,9 @@ Item {
 
                 Widgets.IconToolButton {
                     id: closeBtn
-                    size: VLCStyle.icon_normal
-                    iconText: VLCIcons.clear
-                    text: I18n.qtr("Dismiss")
+                    font.pixelSize: VLCStyle.icon_normal
+                    text: VLCIcons.clear
+                    description: qsTr("Dismiss")
                     Layout.rightMargin: VLCStyle.margin_xxsmall
 
                     color: closeBtn.colorContext.fg.negative
@@ -262,7 +281,7 @@ Item {
             }
 
             Text {
-                text: I18n.qtr("User")
+                text: qsTr("User")
                 color: loginContentTheme.fg.primary
                 font.pixelSize: VLCStyle.fontSize_normal
             }
@@ -277,11 +296,11 @@ Item {
 
                 Navigation.downItem: password
                 Keys.priority: Keys.AfterItem
-                Keys.onPressed: Navigation.defaultKeyAction(event)
+                Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
             }
 
             Text {
-                text: I18n.qtr("Password")
+                text: qsTr("Password")
                 color: loginContentTheme.fg.primary
                 font.pixelSize: VLCStyle.fontSize_normal
             }
@@ -296,11 +315,11 @@ Item {
                 Navigation.upItem: username
                 Navigation.downItem: savePassword
                 Keys.priority: Keys.AfterItem
-                Keys.onPressed: Navigation.defaultKeyAction(event)
+                Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
             }
 
             Text {
-                text: I18n.qtr("Save password")
+                text: qsTr("Save password")
                 color: loginContentTheme.fg.primary
                 font.pixelSize: VLCStyle.fontSize_normal
             }
@@ -310,7 +329,7 @@ Item {
                 Navigation.upItem: password
                 Navigation.downItem: loginButtons
                 Keys.priority: Keys.AfterItem
-                Keys.onPressed: Navigation.defaultKeyAction(event)
+                Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
             }
         }
 
@@ -336,12 +355,12 @@ Item {
                     Widgets.TextToolButton {
                         id: loginCancel
                         Layout.fillWidth: true
-                        text: I18n.qtr("cancel")
+                        text: qsTr("cancel")
 
                         Navigation.upItem: savePassword
                         Navigation.rightItem: loginOk
                         Keys.priority: Keys.AfterItem
-                        Keys.onPressed: Navigation.defaultKeyAction(event)
+                        Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
 
                         onClicked: {
                             loginDialog.reject()
@@ -352,13 +371,13 @@ Item {
                     Widgets.TextToolButton {
                         id: loginOk
                         Layout.fillWidth: true
-                        text: I18n.qtr("Ok")
+                        text: qsTr("Ok")
                         focus: true
 
                         Navigation.upItem: savePassword
                         Navigation.leftItem: loginCancel
                         Keys.priority: Keys.AfterItem
-                        Keys.onPressed: Navigation.defaultKeyAction(event)
+                        Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
 
                         onClicked: {
                             loginDialog.accept()
@@ -379,6 +398,78 @@ Item {
             if (loginDialog.dialogId !== null) {
                 dialogModel.dismiss(loginDialog.dialogId)
                 loginDialog.dialogId = null
+            }
+        }
+    }
+
+    ModalDialog {
+        id: progressDialog
+
+        property var dialogId: null
+
+        property string text : ""
+        property string cancelTxt: ""
+        property bool interderminate: false
+        property real position: 0.0
+
+        onAboutToHide: restoreFocus()
+        rootWindow: root.bgContent
+
+        contentItem:  ColumnLayout {
+
+            readonly property ColorContext colorContext: ColorContext {
+                id: progressContentTheme
+                palette: VLCStyle.palette
+                colorSet: ColorContext.Window
+            }
+
+            Text {
+                focus: false
+                font.pixelSize: VLCStyle.fontSize_normal
+                color: progressContentTheme.fg.primary
+                text: progressDialog.text
+                wrapMode: Text.WordWrap
+            }
+
+            ProgressBar {
+                Layout.fillWidth:true
+
+                from: 0.0
+                to: 1.0
+
+                indeterminate: progressDialog.interderminate
+                value: progressDialog.position
+            }
+        }
+
+
+        footer: FocusScope {
+            focus: true
+            implicitHeight: VLCStyle.icon_normal
+
+            readonly property ColorContext colorContext: ColorContext {
+                palette: VLCStyle.palette
+                colorSet: ColorContext.Window
+            }
+
+            Rectangle {
+                color: questionDialog.colorContext.bg.primary
+                anchors.fill: parent
+                anchors.leftMargin: VLCStyle.margin_xxsmall
+                anchors.rightMargin: VLCStyle.margin_xxsmall
+
+                Widgets.TextToolButton {
+                    anchors.right: parent.right
+                    focus: true
+                    visible: text !== ""
+                    text: progressDialog.cancelTxt
+
+                    onClicked: {
+                        dialogModel.dismiss(progressDialog.dialogId)
+                        progressDialog.dialogId = null
+                        progressDialog.close()
+                    }
+                }
             }
         }
     }
@@ -434,7 +525,7 @@ Item {
 
                         Navigation.rightItem: action1
                         Keys.priority: Keys.AfterItem
-                        Keys.onPressed: Navigation.defaultKeyAction(event)
+                        Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
 
                         onClicked: {
                             dialogModel.dismiss(questionDialog.dialogId)
@@ -453,7 +544,7 @@ Item {
                         Navigation.leftItem: cancel
                         Navigation.rightItem: action2
                         Keys.priority: Keys.AfterItem
-                        Keys.onPressed: Navigation.defaultKeyAction(event)
+                        Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
 
                         onClicked: {
                             dialogModel.post_action1(questionDialog.dialogId)
@@ -470,7 +561,7 @@ Item {
 
                         Navigation.leftItem: action1
                         Keys.priority: Keys.AfterItem
-                        Keys.onPressed: Navigation.defaultKeyAction(event)
+                        Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
 
                         onClicked: {
                             dialogModel.post_action2(questionDialog.dialogId)
@@ -497,7 +588,7 @@ Item {
         Connections {
             target: toolbarEditorDialogLoader.item
 
-            onUnload: {
+            function onUnload() {
                 toolbarEditorDialogLoader.active = false
             }
         }
@@ -505,7 +596,7 @@ Item {
         Connections {
             target: DialogsProvider
 
-            onShowToolbarEditorDialog: {
+            function onShowToolbarEditorDialog() {
                 toolbarEditorDialogLoader.active = true
                 toolbarEditorDialogLoader.item.open()
             }

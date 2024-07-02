@@ -23,12 +23,17 @@
 #import "VLCLibraryController.h"
 
 #import "main/VLCMain.h"
+
 #import "playlist/VLCPlaylistController.h"
 #import "playlist/VLCPlayerController.h"
+
+#import "library/VLCInputItem.h"
 #import "library/VLCLibraryModel.h"
 #import "library/VLCLibraryDataTypes.h"
 
 #import <vlc_media_library.h>
+
+typedef int (*folder_action_f)(vlc_medialibrary_t*, const char*);
 
 @interface VLCLibraryController()
 {
@@ -50,7 +55,7 @@
         _libraryModel = [[VLCLibraryModel alloc] initWithLibrary:_p_libraryInstance];
         _unsorted = YES;
 
-        NSNotificationCenter *defaultNotificationCenter = [NSNotificationCenter defaultCenter];
+        NSNotificationCenter *defaultNotificationCenter = NSNotificationCenter.defaultCenter;
         [defaultNotificationCenter addObserver:self
                                       selector:@selector(playbackStateChanged:)
                                           name:VLCPlayerStateChanged
@@ -61,7 +66,7 @@
 
 - (void)dealloc
 {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
     _p_libraryInstance = NULL;
 }
 
@@ -92,7 +97,7 @@
         msg_Err(getIntf(), "No input item found for media id %lli", mediaItem.libraryID);
         return VLC_ENOENT;
     }
-    int ret = [[[VLCMain sharedInstance] playlistController] addInputItem:p_inputItem atPosition:-1 startPlayback:playImmediately];
+    int ret = [VLCMain.sharedInstance.playlistController addInputItem:p_inputItem atPosition:-1 startPlayback:playImmediately];
     input_item_Release(p_inputItem);
     return ret;
 }
@@ -120,7 +125,7 @@
 
 #pragma mark - folder management
 
-- (int)addFolderWithFileURL:(NSURL *)fileURL
+- (int)performFolderAction:(folder_action_f)action withFileUrl:(NSURL *)fileURL
 {
     if (!_p_libraryInstance) {
         return VLC_EACCES;
@@ -128,32 +133,31 @@
     if (!fileURL) {
         return VLC_EINVAL;
     }
-    return vlc_ml_add_folder(_p_libraryInstance, [[fileURL absoluteString] UTF8String]);
+
+    return action(_p_libraryInstance, fileURL.absoluteString.UTF8String);
+}
+
+- (int)addFolderWithFileURL:(NSURL *)fileURL
+{
+    return [self performFolderAction:vlc_ml_add_folder withFileUrl:fileURL];
 }
 
 - (int)banFolderWithFileURL:(NSURL *)fileURL
 {
-    if (!_p_libraryInstance) {
-        return VLC_EACCES;
-    }
-    if (!fileURL) {
-        return VLC_EINVAL;
-    }
-    return vlc_ml_ban_folder(_p_libraryInstance, [[fileURL absoluteString] UTF8String]);
+    return [self performFolderAction:vlc_ml_ban_folder withFileUrl:fileURL];
 }
 
 - (int)unbanFolderWithFileURL:(NSURL *)fileURL
 {
-    if (!_p_libraryInstance) {
-        return VLC_EACCES;
-    }
-    if (!fileURL) {
-        return VLC_EINVAL;
-    }
-    return vlc_ml_unban_folder(_p_libraryInstance, [[fileURL absoluteString] UTF8String]);
+    return [self performFolderAction:vlc_ml_unban_folder withFileUrl:fileURL];
 }
 
 - (int)removeFolderWithFileURL:(NSURL *)fileURL
+{
+    return [self performFolderAction:vlc_ml_remove_folder withFileUrl:fileURL];
+}
+
+- (int)reloadFolderWithFileURL:(NSURL *)fileURL
 {
     if (!_p_libraryInstance) {
         return VLC_EACCES;
@@ -161,7 +165,33 @@
     if (!fileURL) {
         return VLC_EINVAL;
     }
-    return vlc_ml_remove_folder(_p_libraryInstance, [[fileURL absoluteString] UTF8String]);
+    return vlc_ml_reload_folder(_p_libraryInstance, fileURL.absoluteString.UTF8String);
+}
+
+- (void)reloadMediaLibraryFoldersForInputItems:(NSArray<VLCInputItem *> *)inputItems
+{
+    NSArray<VLCMediaLibraryEntryPoint *> * const entryPoints = self.libraryModel.listOfMonitoredFolders;
+    NSMutableSet<NSString *> * const reloadMRLs = NSMutableSet.set;
+    NSMutableSet<VLCInputItem *> * const checkedInputItems = NSMutableSet.set;
+
+    for (VLCMediaLibraryEntryPoint * const entryPoint in entryPoints) {
+        for (VLCInputItem * const inputItem in inputItems) {
+            if ([checkedInputItems containsObject:inputItem]) {
+                continue;
+            }
+
+            if ([inputItem.decodedMRL hasPrefix:entryPoint.decodedMRL]) {
+                [reloadMRLs addObject:entryPoint.MRL];
+                [checkedInputItems addObject:inputItem];
+                break;
+            }
+        }
+    }
+
+    for (NSString * const entryPointMRL in reloadMRLs) {
+        NSURL * const entryPointURL = [NSURL URLWithString:entryPointMRL];
+        [self reloadFolderWithFileURL:entryPointURL];
+    }
 }
 
 - (int)clearHistory
@@ -169,7 +199,7 @@
     if (!_p_libraryInstance) {
         return VLC_EACCES;
     }
-    return vlc_ml_clear_history(_p_libraryInstance);
+    return vlc_ml_clear_history(_p_libraryInstance, VLC_ML_HISTORY_TYPE_GLOBAL);
 }
 
 - (void)sortByCriteria:(enum vlc_ml_sorting_criteria_t)sortCriteria andDescending:(bool)descending
@@ -182,7 +212,7 @@
 
 - (void)filterByString:(NSString*)filterString
 {
-    [_libraryModel filterByString:filterString];
+    self.libraryModel.filterString = filterString;
 }
 
 @end

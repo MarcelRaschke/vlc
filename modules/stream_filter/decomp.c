@@ -23,6 +23,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_stream.h>
 #include <vlc_network.h>
@@ -45,12 +46,17 @@
 static int  OpenGzip (vlc_object_t *);
 static int  OpenBzip2 (vlc_object_t *);
 static int  OpenXZ (vlc_object_t *);
+static int  OpenZstd(vlc_object_t *);
 static void Close (vlc_object_t *);
 
 vlc_module_begin ()
     set_subcategory (SUBCAT_INPUT_STREAM_FILTER)
     set_capability ("stream_filter", 320)
 
+    set_description (N_("Zstandard decompression"))
+    set_callbacks (OpenZstd, Close)
+
+    add_submodule ()
     set_description (N_("LZMA decompression"))
     set_callbacks (OpenXZ, Close)
 
@@ -82,6 +88,7 @@ typedef struct
     bool         can_pace;
     bool         can_pause;
     vlc_tick_t   pts_delay;
+    uint64_t     mtime;
 } stream_sys_t;
 
 extern char **environ;
@@ -212,6 +219,11 @@ static int Control (stream_t *stream, int query, va_list args)
         case STREAM_CAN_CONTROL_PACE:
             *(va_arg (args, bool *)) = p_sys->can_pace;
             break;
+        case STREAM_GET_MTIME:
+            if (p_sys->mtime == (uint64_t)-1)
+                return VLC_EGENERIC;
+            *va_arg(args, uint64_t *) = p_sys->mtime;
+            break;
         case STREAM_GET_SIZE:
             *(va_arg (args, uint64_t *)) = 0;
             break;
@@ -223,11 +235,11 @@ static int Control (stream_t *stream, int query, va_list args)
             bool paused = va_arg (args, unsigned);
 
             vlc_mutex_lock (&p_sys->lock);
-            vlc_stream_Control(stream->s, STREAM_SET_PAUSE_STATE, paused);
+            const int status = vlc_stream_SetPauseState(stream->s, paused);
             p_sys->paused = paused;
             vlc_cond_signal (&p_sys->wait);
             vlc_mutex_unlock (&p_sys->lock);
-            break;
+            return status;
         }
         default:
             return VLC_EGENERIC;
@@ -250,9 +262,12 @@ static int Open (stream_t *stream, const char *path)
     vlc_mutex_init (&p_sys->lock);
     p_sys->paused = false;
     p_sys->pid = -1;
-    vlc_stream_Control(stream->s, STREAM_CAN_PAUSE, &p_sys->can_pause);
-    vlc_stream_Control(stream->s, STREAM_CAN_CONTROL_PACE, &p_sys->can_pace);
-    vlc_stream_Control(stream->s, STREAM_GET_PTS_DELAY, &p_sys->pts_delay);
+    p_sys->can_pause = vlc_stream_CanPause(stream->s);
+    p_sys->can_pace = vlc_stream_CanPace(stream->s);
+    p_sys->pts_delay = vlc_stream_GetPtsDelay(stream->s);
+
+    if (vlc_stream_GetMTime(stream->s, &p_sys->mtime) != VLC_SUCCESS)
+        p_sys->mtime = -1;
 
     /* I am not a big fan of the pyramid style, but I cannot think of anything
      * better here. There are too many failure cases. */
@@ -385,4 +400,24 @@ static int OpenXZ (vlc_object_t *obj)
 
     msg_Dbg (obj, "detected xz compressed stream");
     return Open (stream, "xzcat");
+}
+
+/**
+ * Detects zstd file format
+ */
+static int OpenZstd(vlc_object_t *obj)
+{
+    stream_t *stream = (stream_t *)obj;
+    const uint8_t *peek;
+
+    /* (Try to) parse the Zstd frame header (minimum size is 6 bytes) */
+    if (vlc_stream_Peek(stream->s, &peek, 6) < 6)
+        return VLC_ENOTSUP;
+    if (memcmp(peek, "\x28\xb5\x2f\xfd", 4)) /* magic number */
+        return VLC_ENOTSUP;
+    if (peek[4] & 0x08) /* reserved bit */
+        return VLC_ENOTSUP;
+
+    msg_Dbg(obj, "detected zstd compressed stream");
+    return Open(stream, "zstdcat");
 }

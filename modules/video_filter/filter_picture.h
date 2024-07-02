@@ -23,17 +23,14 @@
 /* FIXME: do all of these really have square pixels? */
 #define CASE_PLANAR_YUV_SQUARE              \
         case VLC_CODEC_I420:   \
-        case VLC_CODEC_J420:   \
         case VLC_CODEC_YV12:   \
         case VLC_CODEC_I411:   \
         case VLC_CODEC_I410:   \
         case VLC_CODEC_I444:   \
-        case VLC_CODEC_J444:   \
         case VLC_CODEC_YUVA:
 
 #define CASE_PLANAR_YUV_NONSQUARE           \
-        case VLC_CODEC_I422:   \
-        case VLC_CODEC_J422:
+        case VLC_CODEC_I422:
 
 #define CASE_PLANAR_YUV10                   \
         case VLC_CODEC_I420_10L:            \
@@ -55,6 +52,38 @@
         case VLC_CODEC_UYVY:   \
         case VLC_CODEC_YUYV:   \
         case VLC_CODEC_YVYU:
+
+#define CASE_PACKED_RGBX                    \
+        case VLC_CODEC_RGBX:   \
+        case VLC_CODEC_XRGB:   \
+        case VLC_CODEC_BGRX:   \
+        case VLC_CODEC_XBGR:
+
+#define CASE_PACKED_RGBA                    \
+        case VLC_CODEC_RGBA:   \
+        case VLC_CODEC_ARGB:   \
+        case VLC_CODEC_BGRA:   \
+        case VLC_CODEC_ABGR:
+
+#define CASE_PACKED_RGB32                   \
+        CASE_PACKED_RGBX       \
+        CASE_PACKED_RGBA
+
+#define CASE_PACKED_RGB16                   \
+        case VLC_CODEC_RGB565BE: \
+        case VLC_CODEC_RGB565LE: \
+        case VLC_CODEC_BGR565BE: \
+        case VLC_CODEC_BGR565LE:
+
+#define CASE_PACKED_RGB15                   \
+        case VLC_CODEC_RGB555BE: \
+        case VLC_CODEC_RGB555LE: \
+        case VLC_CODEC_BGR555BE: \
+        case VLC_CODEC_BGR555LE:
+
+#define CASE_PACKED_RGB1615                 \
+        CASE_PACKED_RGB16        \
+        CASE_PACKED_RGB15
 
 static inline int GetPackedYuvOffsets( vlc_fourcc_t i_chroma,
     int *i_y_offset, int *i_u_offset, int *i_v_offset )
@@ -90,22 +119,74 @@ static inline int GetPackedYuvOffsets( vlc_fourcc_t i_chroma,
     }
 }
 
-static inline int GetPackedRgbIndexes( const video_format_t *p_fmt, int *i_r_index,
-                                      int *i_g_index, int *i_b_index )
+static inline int GetPackedRgbIndexes( vlc_fourcc_t fcc, int *i_r_index,
+                                       int *i_g_index, int *i_b_index, int *i_a_index )
 {
-    if( p_fmt->i_chroma != VLC_CODEC_RGB24 && p_fmt->i_chroma != VLC_CODEC_RGB32 )
-        return VLC_EGENERIC;
-
-#ifdef WORDS_BIGENDIAN
-    const int i_mask_bits = p_fmt->i_chroma == VLC_CODEC_RGB24 ? 16 : 24;
-    *i_r_index = (i_mask_bits - vlc_ctz(p_fmt->i_rmask)) / 8;
-    *i_g_index = (i_mask_bits - vlc_ctz(p_fmt->i_gmask)) / 8;
-    *i_b_index = (i_mask_bits - vlc_ctz(p_fmt->i_bmask)) / 8;
-#else
-    *i_r_index = vlc_ctz(p_fmt->i_rmask) / 8;
-    *i_g_index = vlc_ctz(p_fmt->i_gmask) / 8;
-    *i_b_index = vlc_ctz(p_fmt->i_bmask) / 8;
-#endif
+    switch(fcc)
+    {
+        case VLC_CODEC_RGBA:
+            *i_r_index = 0;
+            *i_g_index = 1;
+            *i_b_index = 2;
+            *i_a_index = 3;
+            break;
+        case VLC_CODEC_ARGB:
+            *i_a_index = 0;
+            *i_r_index = 1;
+            *i_g_index = 2;
+            *i_b_index = 3;
+            break;
+        case VLC_CODEC_BGRA:
+            *i_b_index = 0;
+            *i_g_index = 1;
+            *i_r_index = 2;
+            *i_a_index = 3;
+            break;
+        case VLC_CODEC_ABGR:
+            *i_a_index = 0;
+            *i_b_index = 1;
+            *i_g_index = 2;
+            *i_r_index = 3;
+            break;
+        case VLC_CODEC_RGBX:
+            *i_r_index = 0;
+            *i_g_index = 1;
+            *i_b_index = 2;
+            *i_a_index = -1;
+            break;
+        case VLC_CODEC_XRGB:
+            *i_a_index = -1;
+            *i_r_index = 1;
+            *i_g_index = 2;
+            *i_b_index = 3;
+            break;
+        case VLC_CODEC_BGRX:
+            *i_b_index = 0;
+            *i_g_index = 1;
+            *i_r_index = 2;
+            *i_a_index = -1;
+            break;
+        case VLC_CODEC_XBGR:
+            *i_a_index = -1;
+            *i_b_index = 1;
+            *i_g_index = 2;
+            *i_r_index = 3;
+            break;
+        case VLC_CODEC_RGB24:
+            *i_r_index = 0;
+            *i_g_index = 1;
+            *i_b_index = 2;
+            *i_a_index = -1;
+            break;
+        case VLC_CODEC_BGR24:
+            *i_b_index = 0;
+            *i_g_index = 1;
+            *i_r_index = 2;
+            *i_a_index = -1;
+            break;
+        default:
+            return VLC_EGENERIC;
+    }
     return VLC_SUCCESS;
 }
 

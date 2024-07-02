@@ -183,10 +183,16 @@ QSGGeometry* QSGRoundedRectangularImageNode::rebuildGeometry(const Shape& shape,
         else
         {
             QPainterPath painterPath;
-            painterPath.addRoundedRect(0, 0, key.first.first, key.first.second, key.second, key.second);
+            constexpr const short extrapolationFactor = 2;
+            painterPath.addRoundedRect(0, 0,
+                                       key.first.first * extrapolationFactor,
+                                       key.first.second * extrapolationFactor,
+                                       key.second * extrapolationFactor,
+                                       key.second * extrapolationFactor);
             painterPath = painterPath.simplified();
 
-            path = new QVector<QPointF>(painterPath.elementCount());
+            upPath = std::make_unique<QVector<QPointF>>(painterPath.elementCount());
+            path = upPath.get();
 
             const int elementCount = painterPath.elementCount();
             for (int i = 0; i < elementCount; ++i)
@@ -199,12 +205,11 @@ QSGGeometry* QSGRoundedRectangularImageNode::rebuildGeometry(const Shape& shape,
                        || painterPath.elementAt(i).type == QPainterPath::ElementType::LineToElement);
 
                 // Symmetry based triangulation based on ordered painter path.
-                (*path)[i] = (painterPath.elementAt((i % 2) ? (i)
-                                                            : (elementCount - i - 1)));
+                (*path)[i] = static_cast<QPointF>(painterPath.elementAt((i % 2) ? (i)
+                                                                                : (elementCount - i - 1))) / extrapolationFactor;
             }
 
-            if (!paths.insert(key, path))
-                upPath.reset(path); // Own the path so there is no leak
+            paths.insert(key, new QVector<QPointF>(*path));
         }
 
         vertexCount = path->count();

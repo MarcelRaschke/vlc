@@ -904,7 +904,6 @@ void (var_DelListCallback)(vlc_object_t *p_this, const char *psz_name,
  * \param p_obj the object in which the variable must be created
  * \param psz_option the option to parse
  * \param trusted whether the option is set by a trusted input or not
- * \return nothing
  */
 void var_OptionParse( vlc_object_t *p_obj, const char *psz_option,
                       bool trusted )
@@ -1051,7 +1050,6 @@ int var_Inherit( vlc_object_t *p_this, const char *psz_name, int i_type,
     {
         case VLC_VAR_STRING:
             p_val->psz_string = config_GetPsz( psz_name );
-            if( !p_val->psz_string ) p_val->psz_string = strdup("");
             break;
         case VLC_VAR_FLOAT:
             p_val->f_float = config_GetFloat( psz_name );

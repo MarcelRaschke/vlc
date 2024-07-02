@@ -16,22 +16,25 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as T
+import QtQuick
+import QtQuick.Templates as T
 
 import org.videolan.vlc 0.1
 
 import "qrc:///style/"
 import "qrc:///player/" as P
+import "qrc:///widgets/"
 
-ControlButtonPopup {
+PopupIconToolButton {
     id: root
 
     popup.width: VLCStyle.dp(256, VLCStyle.scale)
 
-    text: I18n.qtr("Playback Speed")
+    text: qsTr("Playback Speed")
 
-    popupContent: P.PlaybackSpeed {
+    description: qsTr("change playback speed")
+
+    popup.contentItem: P.PlaybackSpeed {
         colorContext.palette: root.colorContext.palette
 
         Navigation.parentItem: root
@@ -40,17 +43,66 @@ ControlButtonPopup {
         Navigation.rightItem: root
     }
 
-    // Children
-
-    T.Label {
-        anchors.centerIn: parent
+    contentItem: T.Label {
+        verticalAlignment: Text.AlignVCenter
+        horizontalAlignment: Text.AlignHCenter
 
         font.pixelSize: VLCStyle.fontSize_normal
 
-        text: !root.paintOnly ? I18n.qtr("%1x").arg(+Player.rate.toFixed(2))
-                              : I18n.qtr("1x")
+        text: !root.paintOnly ? qsTr("%1x").arg(+Player.rate.toFixed(2))
+                              : qsTr("1x")
 
-        // IconToolButton.background is a AnimatedBackground
-        color: root.background.foregroundColor
+        color: root.color
+    }
+
+    // TODO: Qt 5.15 Use WheelHandler & TapHandler
+    MouseArea {
+        anchors.fill: parent
+
+        acceptedButtons: Qt.RightButton
+
+        onWheel: function(wheel) {
+            if (!root.popup.contentItem || !root.popup.contentItem.slider) {
+                wheel.accepted = false
+                return
+            }
+
+            let delta = 0
+
+            if (wheel.angleDelta.x)
+                delta = wheel.angleDelta.x
+            else if (wheel.angleDelta.y)
+                delta = wheel.angleDelta.y
+            else {
+                wheel.accepted = false
+                return
+            }
+
+            if (wheel.inverted)
+                delta = -delta
+
+            wheel.accepted = true
+
+            delta = delta / 8 / 15
+
+            let func
+            if (delta > 0)
+                func = root.popup.contentItem.slider.increase
+            else
+                func = root.popup.contentItem.slider.decrease
+
+            for (let i = 0; i < Math.ceil(Math.abs(delta)); ++i)
+                func()
+        }
+
+        onClicked: function(mouse) {
+            if (!root.popup.contentItem || !root.popup.contentItem.slider) {
+                mouse.accepted = false
+                return
+            }
+
+            mouse.accepted = true
+            root.popup.contentItem.slider.value = 0
+        }
     }
 }

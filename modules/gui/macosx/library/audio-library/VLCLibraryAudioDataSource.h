@@ -22,8 +22,10 @@
 
 #import <Cocoa/Cocoa.h>
 
-#import "library/VLCLibraryTableView.h"
 #import "library/VLCLibraryCollectionViewDataSource.h"
+#import "library/VLCLibraryTableViewDataSource.h"
+
+#include "views/iCarousel/iCarousel.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -31,29 +33,53 @@ NS_ASSUME_NONNULL_BEGIN
 @class VLCLibraryAudioGroupDataSource;
 @class VLCMediaLibraryAlbum;
 
-typedef NS_ENUM(NSUInteger, VLCAudioLibrarySegment) {
-    VLCAudioLibraryArtistsSegment = 0,
+typedef NS_ENUM(NSInteger, VLCAudioLibrarySegment) {
+    VLCAudioLibraryUnknownSegment = -1,
+    VLCAudioLibraryArtistsSegment,
     VLCAudioLibraryAlbumsSegment,
     VLCAudioLibrarySongsSegment,
-    VLCAudioLibraryGenresSegment
+    VLCAudioLibraryGenresSegment,
+    VLCAudioLibraryRecentsSegment
 };
 
-@interface VLCLibraryAudioDataSource : NSObject <VLCLibraryTableViewDataSource, NSTableViewDelegate, VLCLibraryCollectionViewDataSource>
+extern NSString * const VLCLibrarySongsTableViewSongPlayingColumnIdentifier;
+extern NSString * const VLCLibrarySongsTableViewTitleColumnIdentifier;
+extern NSString * const VLCLibrarySongsTableViewDurationColumnIdentifier;
+extern NSString * const VLCLibrarySongsTableViewArtistColumnIdentifier;
+extern NSString * const VLCLibrarySongsTableViewAlbumColumnIdentifier;
+extern NSString * const VLCLibrarySongsTableViewGenreColumnIdentifier;
+extern NSString * const VLCLibrarySongsTableViewPlayCountColumnIdentifier;
+extern NSString * const VLCLibrarySongsTableViewYearColumnIdentifier;
+
+extern NSString * const VLCLibraryTitleSortDescriptorKey;
+extern NSString * const VLCLibraryDurationSortDescriptorKey;
+extern NSString * const VLCLibraryArtistSortDescriptorKey;
+extern NSString * const VLCLibraryAlbumSortDescriptorKey;
+extern NSString * const VLCLibraryPlayCountSortDescriptorKey;
+extern NSString * const VLCLibraryYearSortDescriptorKey;
+
+extern NSString * const VLCLibraryAudioDataSourceDisplayedCollectionChangedNotification;
+
+@interface VLCLibraryAudioDataSource : NSObject <VLCLibraryTableViewDataSource, VLCLibraryCollectionViewDataSource, iCarouselDataSource>
 
 @property (readwrite, assign) VLCLibraryModel *libraryModel;
 @property (readwrite, assign) VLCLibraryAudioGroupDataSource *audioGroupDataSource;
 @property (readwrite, assign) NSTableView *collectionSelectionTableView;
-@property (readwrite, assign) NSTableView *groupSelectionTableView;
 @property (readwrite, assign) NSTableView *songsTableView;
 @property (readwrite, assign) NSCollectionView *collectionView;
+@property (readwrite, assign) iCarousel *carouselView;
 @property (readwrite, assign) NSTableView *gridModeListTableView;
-@property (readwrite, assign) NSCollectionView *gridModeListSelectionCollectionView;
 
 @property (nonatomic, readwrite, assign) VLCAudioLibrarySegment audioLibrarySegment;
 
+@property (readonly) size_t collectionToDisplayCount;
+@property (readonly) NSInteger displayedCollectionCount;
+@property (readonly) BOOL displayedCollectionUpdating;
+
++ (void)setupCollectionView:(NSCollectionView *)collectionView;
 - (void)setup;
-- (void)setupCollectionView:(NSCollectionView *)collectionView;
 - (void)reloadData;
+- (void)tableView:(NSTableView * const)tableView selectRowIndices:(NSIndexSet * const)indices;
 
 @end
 

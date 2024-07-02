@@ -16,22 +16,34 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 
 ScaledImage {
-    property var blurRadius: null
-    property var color: null
-    property var xOffset: null
-    property var yOffset: null
-    property var xRadius: null
-    property var yRadius: null
+
+    property Item sourceItem: null
+
+    property real viewportWidth: rectWidth + (blurRadius + Math.abs(xOffset)) * 2
+    property real viewportHeight: rectHeight + (blurRadius + Math.abs(yOffset)) * 2
+
+    property real blurRadius: 0
+    property color color
+
+    property real rectWidth: sourceItem?.width ?? 0
+    property real rectHeight: sourceItem?.height ?? 0
+
+    property real xOffset: 0
+    property real yOffset: 0
+    property real xRadius: sourceItem?.radius ?? 0
+    property real yRadius: sourceItem?.radius ?? 0
+
+    sourceSize: Qt.size(viewportWidth, viewportHeight)
 
     cache: true
     asynchronous: true
 
-    fillMode: Image.Pad
+    fillMode: Image.Stretch
 
     onSourceSizeChanged: {
         // Do not load the image when size is not valid:
@@ -39,8 +51,14 @@ ScaledImage {
             source = Qt.binding(function() {
                 return Effects.url((xRadius > 0 || yRadius > 0) ? Effects.RoundedRectDropShadow
                                                                 : Effects.RectDropShadow,
-                                   {"blurRadius": blurRadius,
+                                   {
+                                    "viewportWidth" : viewportWidth,
+                                    "viewportHeight" :viewportHeight,
+
+                                    "blurRadius": blurRadius,
                                     "color": color,
+                                    "rectWidth": rectWidth,
+                                    "rectHeight": rectHeight,
                                     "xOffset": xOffset,
                                     "yOffset": yOffset,
                                     "xRadius": xRadius,

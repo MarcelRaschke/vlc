@@ -106,6 +106,16 @@ static bool ts_pes_Push( ts_pes_parse_callback *cb,
     {
         block_t *p_datachain = p_pes->gather.p_data;
         uint32_t i_flags = p_pes->gather.i_block_flags;
+        if( p_pes->gather.i_data_size &&
+            p_pes->gather.i_gathered != p_pes->gather.i_data_size )
+        {
+            /* too early unit start resulting from packet loss */
+            /* or ending on a pkt not belonging to PES (%15 packets loss) */
+            /* But some encoders can't compute PES size right #28649 :/ */
+            if( p_pes->gather.i_gathered < p_pes->gather.i_data_size  ||
+                p_pes->gather.i_gathered > p_pes->gather.i_data_size + 16 )
+                i_flags |= BLOCK_FLAG_CORRUPTED;
+        }
         /* Flush the pes from pid */
         p_pes->gather.p_data = NULL;
         p_pes->gather.i_data_size = 0;
@@ -172,6 +182,15 @@ bool ts_pes_Gather( ts_pes_parse_callback *cb,
 
     }
 
+    /* Deal with explicit packet loss */
+    if( p_pkt->i_flags & BLOCK_FLAG_PRIVATE_PACKET_LOSS )
+    {
+        /* Flag unfinished unit as corrupted */
+        if ( p_pes->gather.i_gathered )
+            p_pes->gather.i_block_flags |= BLOCK_FLAG_CORRUPTED;
+        p_pkt->i_flags &= ~BLOCK_FLAG_PRIVATE_PACKET_LOSS;
+    }
+
     /* We'll cannot parse any pes data */
     if( (p_pkt->i_flags & BLOCK_FLAG_SCRAMBLED) && b_valid_scrambling )
     {
@@ -181,7 +200,7 @@ bool ts_pes_Gather( ts_pes_parse_callback *cb,
 
     /* Seek discontinuity, we need to drop or output currently
      * gathered data */
-    if( p_pkt->i_flags & BLOCK_FLAG_SOURCE_RANDOM_ACCESS )
+    if( p_pkt->i_flags & BLOCK_FLAG_PRIVATE_SOURCE_RANDOM_ACCESS )
     {
         p_pes->gather.i_saved = 0;
         /* Flush/output current */
@@ -190,14 +209,14 @@ bool ts_pes_Gather( ts_pes_parse_callback *cb,
         if( p_pes->p_es )
             p_pes->p_es->i_next_block_flags |= BLOCK_FLAG_DISCONTINUITY;
     }
-    /* On dropped blocks discontinuity */
+    /* On dropped packets, detected by continuity counter */
     else if( p_pkt->i_flags & BLOCK_FLAG_DISCONTINUITY )
     {
         /* If we know the final size and didn't gather enough bytes it is corrupted
            or if the discontinuity doesn't carry the start code */
-        if( p_pes->gather.i_gathered && (p_pes->gather.i_data_size ||
-                                         (b_aligned_ts_payload && !b_unit_start) ) )
-            p_pes->gather.i_block_flags |= BLOCK_FLAG_CORRUPTED;
+       if( p_pes->gather.i_gathered && (p_pes->gather.i_data_size ||
+                                        (b_aligned_ts_payload && !b_unit_start) ) )
+           p_pes->gather.i_block_flags |= BLOCK_FLAG_CORRUPTED;
         b_ret |= ts_pes_Push( cb, p_pes, NULL, true, i_append_pcr );
 
         /* it can't match the target size and need to resync on sync code */
@@ -209,11 +228,18 @@ bool ts_pes_Gather( ts_pes_parse_callback *cb,
             p_pes->p_es->i_next_block_flags |= BLOCK_FLAG_DISCONTINUITY;
         p_pes->gather.i_block_flags|= BLOCK_FLAG_DISCONTINUITY;
     }
+    /* On dropped packets, detected by continuity counter */
+    else if( p_pkt->i_flags & BLOCK_FLAG_CORRUPTED )
+    {
+        p_pes->gather.i_block_flags |= BLOCK_FLAG_CORRUPTED;
+        /* can't reuse prev bytes to lookup sync code */
+        p_pes->gather.i_saved = 0;
+    }
 
     if ( unlikely(p_pes->gather.i_saved > 0) )
     {
         /* Saved from previous packet end */
-        assert(p_pes->gather.i_saved < 6);
+        assert(p_pes->gather.i_saved < TS_PES_HEADER_SIZE);
         if( !b_aligned_ts_payload )
         {
             p_pkt = block_Realloc( p_pkt, p_pes->gather.i_saved, p_pkt->i_buffer );
@@ -227,7 +253,7 @@ bool ts_pes_Gather( ts_pes_parse_callback *cb,
     {
         assert( p_pes->gather.i_saved == 0 );
 
-        if( p_pes->gather.p_data == NULL && b_unit_start && !b_first_sync_done && p_pkt->i_buffer >= 6 )
+        if( p_pes->gather.p_data == NULL && b_unit_start && !b_first_sync_done && p_pkt->i_buffer >= TS_PES_HEADER_SIZE )
         {
             if( likely(b_aligned_ts_payload) )
             {
@@ -260,7 +286,7 @@ bool ts_pes_Gather( ts_pes_parse_callback *cb,
             /* now points to PES header */
             p_pes->gather.i_data_size = GetWBE(&p_pkt->p_buffer[4]);
             if( p_pes->gather.i_data_size > 0 )
-                p_pes->gather.i_data_size += 6;
+                p_pes->gather.i_data_size += TS_PES_HEADER_SIZE;
             b_first_sync_done = true; /* Because if size is 0, we would not look for second sync */
         }
         else
@@ -268,8 +294,9 @@ bool ts_pes_Gather( ts_pes_parse_callback *cb,
             assert( p_pes->gather.i_data_size > p_pes->gather.i_gathered ||
                     p_pes->gather.i_data_size == 0 );
 
-            /* If we started reading a fixed size */
-            if( p_pes->gather.i_data_size > p_pes->gather.i_gathered && !b_single_payload )
+            /* If we started reading a fixed size that might not end on boundary */
+            if( unlikely(!b_aligned_ts_payload) &&
+                p_pes->gather.i_data_size > p_pes->gather.i_gathered )
             {
                 const size_t i_remain = p_pes->gather.i_data_size - p_pes->gather.i_gathered;
                 /* Append whole block */
@@ -286,6 +313,7 @@ bool ts_pes_Gather( ts_pes_parse_callback *cb,
                         block_Release( p_pkt );
                         return false;
                     }
+                    p_pes->gather.i_block_flags |= BLOCK_FLAG_CORRUPTED;
                     b_ret |= ts_pes_Push( cb, p_pes, p_pkt, p_pes->gather.p_data == NULL, i_append_pcr );
                     p_pkt = p_split;
                     b_first_sync_done = false;
@@ -297,11 +325,11 @@ bool ts_pes_Gather( ts_pes_parse_callback *cb,
                 {
                     b_ret |= ts_pes_Push( cb, p_pes, NULL, true, i_append_pcr );
                     /* now points to PES header */
-                    if( p_pkt->i_buffer >= 6 )
+                    if( p_pkt->i_buffer >= TS_PES_HEADER_SIZE )
                     {
                         p_pes->gather.i_data_size = GetWBE(&p_pkt->p_buffer[4]);
                         if( p_pes->gather.i_data_size > 0 )
-                            p_pes->gather.i_data_size += 6;
+                            p_pes->gather.i_data_size += TS_PES_HEADER_SIZE;
                     }
                 }
                 /* Append or finish current/start new PES depending on unit_start */
@@ -310,7 +338,7 @@ bool ts_pes_Gather( ts_pes_parse_callback *cb,
             }
         }
 
-        if( unlikely(p_pkt && p_pkt->i_buffer < 6) )
+        if( unlikely(p_pkt && p_pkt->i_buffer < TS_PES_HEADER_SIZE) )
         {
             /* save and prepend to next packet */
             assert(!b_single_payload);

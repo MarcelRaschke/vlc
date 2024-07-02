@@ -73,15 +73,15 @@ error:
 
 static HANDLE dup_handle_from_fd(const int fd)
 {
-    HANDLE vlc_handle = (HANDLE)_get_osfhandle(fd);
-    if (vlc_handle == INVALID_HANDLE_VALUE)
-        return vlc_handle;
+    intptr_t vlc_handle = _get_osfhandle(fd);
+    if (vlc_handle == (intptr_t)INVALID_HANDLE_VALUE)
+        return INVALID_HANDLE_VALUE;
 
-    if (vlc_handle == (HANDLE)-2)
+    if (vlc_handle == -2)
         return INVALID_HANDLE_VALUE;
 
     HANDLE dup_inheritable_handle;
-    BOOL result = DuplicateHandle(GetCurrentProcess(), vlc_handle, GetCurrentProcess(),
+    BOOL result = DuplicateHandle(GetCurrentProcess(), (HANDLE)vlc_handle, GetCurrentProcess(),
                                   &dup_inheritable_handle, 0, TRUE, DUPLICATE_SAME_ACCESS);
     if (!result)
         return INVALID_HANDLE_VALUE;
@@ -112,15 +112,8 @@ static int vlc_spawn_inner(pid_t *restrict pid, const char *path,
         }
     };
 
-    struct vlc_memstream application_name;
-    struct vlc_memstream cmdline;
-    {
-        int error;
-        error = vlc_memstream_open(&application_name);
-        error |= vlc_memstream_open(&cmdline);
-        if (unlikely(error))
-            goto error;
-    }
+    const char *application_name = NULL;
+    char *cmdline = NULL;
 
     if (fdv[0] == -1 || fdv[1] == -1) {
         nulfd = vlc_open("\\\\.\\NUL", O_RDWR);
@@ -175,20 +168,25 @@ static int vlc_spawn_inner(pid_t *restrict pid, const char *path,
             goto error;
         }
 
-        vlc_memstream_printf(&application_name, "%s", application_path);
-        free(application_path);
+        application_name = application_path;
 
     } else {
-        vlc_memstream_printf(&application_name, "%s", path);
+        application_name = path;
     }
 
     if (likely(argv[0])) {
-        vlc_memstream_printf(&cmdline, "%s", argv[0]);
+        struct vlc_memstream cmdline_s;
+        if (unlikely(vlc_memstream_open(&cmdline_s) != 0))
+            goto error;
+        vlc_memstream_printf(&cmdline_s, "%s", argv[0]);
         for (int argc = 1; argv[argc]; ++argc)
-            vlc_memstream_printf(&cmdline, " %s", argv[argc]);
+            vlc_memstream_printf(&cmdline_s, " %s", argv[argc]);
+        if (vlc_memstream_close(&cmdline_s) != 0)
+            goto error;
+        cmdline = cmdline_s.ptr;
     }
 
-    BOOL bSuccess = CreateProcessA(application_name.ptr, cmdline.ptr, NULL,
+    BOOL bSuccess = CreateProcessA(application_name, cmdline, NULL,
                                    NULL, TRUE, EXTENDED_STARTUPINFO_PRESENT,
                                    NULL, NULL, &siEx.StartupInfo, &pi);
     if (!bSuccess)
@@ -222,10 +220,9 @@ error:
         free(siEx.lpAttributeList);
     }
 
-    if (!vlc_memstream_close(&application_name))
-        free(application_name.ptr);
-    if (!vlc_memstream_close(&cmdline))
-        free(cmdline.ptr);
+    if (application_name != path)
+        free((char*)application_name);
+    free(cmdline);
 
     return ret;
 }

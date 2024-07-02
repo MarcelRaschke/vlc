@@ -17,24 +17,44 @@
  *****************************************************************************/
 
 //CSD is only supported on Qt 5.15
-import QtQuick 2.15
-import QtQuick.Window 2.15
+import QtQuick
+import QtQuick.Window
 
 import org.videolan.vlc 0.1
 
 Item {
     TapHandler {
-        onDoubleTapped: {
-            
-                if ((MainCtx.intfMainWindow.visibility & Window.Maximized) !== 0) {
-                    MainCtx.requestInterfaceNormal()
-                } else {
-                    MainCtx.requestInterfaceMaximized()
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+
+        onSingleTapped: (eventPoint, button) => {
+            if (button & Qt.RightButton) {
+                const systemButton = MainCtx.csdButtonModel.systemMenuButton
+                if (systemButton) {
+                    systemButton.showSystemMenu(eventPoint.position)
                 }
-            
+            }
+        }
+
+        onDoubleTapped: (eventpoint, button) => {
+            if (!(button & Qt.LeftButton))
+                return
+
+            // handle left button click
+            if ((MainCtx.intfMainWindow.visibility & Window.Maximized) !== 0) {
+                MainCtx.requestInterfaceNormal()
+            } else {
+                MainCtx.requestInterfaceMaximized()
+            }
+
         }
         gesturePolicy: TapHandler.DragThreshold
     }
+
+    HoverHandler {
+        // explicitely set cursor shape here so no other control can interfere, causing confusion (see #28115)
+        cursorShape: Qt.ArrowCursor
+    }
+
     DragHandler {
         target: null
         grabPermissions: TapHandler.CanTakeOverFromAnything

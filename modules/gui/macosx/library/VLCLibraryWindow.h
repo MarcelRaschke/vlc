@@ -22,6 +22,8 @@
 
 #import "windows/video/VLCFullVideoViewWindow.h"
 
+#import "views/VLCDragDropView.h"
+
 NS_ASSUME_NONNULL_BEGIN
 
 @class VLCControlsBarCommon;
@@ -32,40 +34,43 @@ NS_ASSUME_NONNULL_BEGIN
 @class VLCLibraryAudioViewController;
 @class VLCLibraryMediaSourceViewController;
 @class VLCLibraryVideoViewController;
+@class VLCLibraryHomeViewController;
 @class VLCLibrarySortingMenuController;
-@class VLCPlaylistDataSource;
 @class VLCPlaylistController;
-@class VLCPlaylistSortingMenuController;
 @class VLCCustomEmptyLibraryBrowseButton;
+@class VLCLibraryWindowSplitViewController;
+@class VLCLibraryWindowToolbarDelegate;
 
-typedef NS_ENUM(NSUInteger, VLCLibrarySegment) {
-    VLCLibraryVideoSegment = 0,
-    VLCLibraryMusicSegment,
-    VLCLibraryBrowseSegment,
-    VLCLibraryStreamsSegment
+@protocol VLCMediaLibraryItemProtocol;
+
+typedef NS_ENUM(NSInteger, VLCLibraryViewModeSegment) {
+    VLCLibrarySmallestSentinelViewModeSegment = -1,
+    VLCLibraryGridViewModeSegment,
+    VLCLibraryListViewModeSegment,
+    VLCLibraryLargestSentinelViewModeSegment
 };
 
-typedef NS_ENUM(NSUInteger, VLCViewModeSegment) {
-    VLCGridViewModeSegment = 0,
-    VLCListViewModeSegment
-};
-
-@interface VLCLibraryWindow : VLCFullVideoViewWindow<NSUserInterfaceItemIdentification>
+@interface VLCLibraryWindow : VLCFullVideoViewWindow<NSUserInterfaceItemIdentification, VLCDragDropTarget>
 
 extern const CGFloat VLCLibraryWindowMinimalWidth;
 extern const CGFloat VLCLibraryWindowMinimalHeight;
 extern const NSUserInterfaceItemIdentifier VLCLibraryWindowIdentifier;
 
+@property (readonly) NSView *libraryTargetView;
+
 @property (nonatomic, weak) IBOutlet VLCControlsBarCommon* controlsBar;
+@property (readwrite, weak) IBOutlet NSLayoutConstraint *controlsBarHeightConstraint;
 @property (readwrite, weak) IBOutlet NSLayoutConstraint *videoViewBottomConstraint;
-@property (readwrite, weak) IBOutlet NSSegmentedControl *segmentedTitleControl;
 @property (readwrite, weak) IBOutlet NSSegmentedControl *gridVsListSegmentedControl;
 @property (readwrite, weak) IBOutlet NSSplitView *mainSplitView;
-@property (readwrite, strong) IBOutlet NSView *playlistView;
+@property (readwrite, strong) IBOutlet NSOutlineView *navSidebarOutlineView;
+@property (readwrite, weak) IBOutlet NSView *homeLibraryView;
+@property (readwrite, weak) IBOutlet NSScrollView *homeLibraryStackViewScrollView;
+@property (readwrite, weak) IBOutlet NSStackView *homeLibraryStackView;
 @property (readwrite, weak) IBOutlet NSView *videoLibraryView;
 @property (readwrite, weak) IBOutlet NSSplitView *videoLibrarySplitView;
-@property (readwrite, weak) IBOutlet NSScrollView *videoLibraryCollectionViewsStackViewScrollView;
-@property (readwrite, weak) IBOutlet NSStackView *videoLibraryCollectionViewsStackView;
+@property (readwrite, weak) IBOutlet NSScrollView *videoLibraryCollectionViewScrollView;
+@property (readwrite, weak) IBOutlet NSCollectionView *videoLibraryCollectionView;
 @property (readwrite, weak) IBOutlet NSScrollView *videoLibraryGroupSelectionTableViewScrollView;
 @property (readwrite, weak) IBOutlet NSTableView *videoLibraryGroupSelectionTableView;
 @property (readwrite, weak) IBOutlet NSScrollView *videoLibraryGroupsTableViewScrollView;
@@ -86,78 +91,58 @@ extern const NSUserInterfaceItemIdentifier VLCLibraryWindowIdentifier;
 @property (readwrite, weak) IBOutlet NSTableView *audioLibraryGridModeSplitViewListTableView;
 @property (readwrite, weak) IBOutlet NSScrollView *audioLibraryGridModeSplitViewListSelectionCollectionViewScrollView;
 @property (readwrite, weak) IBOutlet NSCollectionView *audioLibraryGridModeSplitViewListSelectionCollectionView;
-@property (readwrite, weak) IBOutlet NSVisualEffectView *optionBarView;
-@property (readwrite, weak) IBOutlet NSSegmentedControl *audioSegmentedControl;
 @property (readwrite, weak) IBOutlet NSView *mediaSourceView;
 @property (readwrite, weak) IBOutlet NSButton *mediaSourceHomeButton;
 @property (readwrite, weak) IBOutlet VLCInputNodePathControl *mediaSourcePathControl;
+@property (readwrite, weak) IBOutlet NSVisualEffectView *mediaSourcePathControlVisualEffectView;
 @property (readwrite, weak) IBOutlet NSScrollView *mediaSourceTableViewScrollView;
 @property (readwrite, weak) IBOutlet NSTableView *mediaSourceTableView;
 @property (readwrite, weak) IBOutlet NSScrollView *mediaSourceCollectionViewScrollView;
-@property (readwrite, weak) IBOutlet NSView *libraryTargetView;
-@property (readwrite, weak) IBOutlet NSTableView *playlistTableView;
 @property (readwrite, weak) IBOutlet NSView *mediaOptionBar;
 @property (readwrite, weak) IBOutlet NSToolbar *mediaToolBar;
-@property (readwrite, weak) IBOutlet NSTextField *upNextLabel;
-@property (readwrite, weak) IBOutlet VLCDragDropView *playlistDragDropView;
-@property (readwrite, weak) IBOutlet NSButton *openMediaButton;
-@property (readwrite, weak) IBOutlet NSBox *dragDropImageBackgroundBox;
-@property (readwrite, weak) IBOutlet NSBox *upNextSeparator;
-@property (readwrite, weak) IBOutlet NSButton *clearPlaylistButton;
-@property (readwrite, weak) IBOutlet NSBox *clearPlaylistSeparator;
-@property (readwrite, weak) IBOutlet NSButton *repeatPlaylistButton;
-@property (readwrite, weak) IBOutlet NSButton *shufflePlaylistButton;
-@property (readwrite, weak) IBOutlet VLCRoundedCornerTextField *playlistCounterTextField;
 @property (readwrite, weak) IBOutlet NSButton *librarySortButton;
 @property (readwrite, weak) IBOutlet NSSearchField *librarySearchField;
 @property (readwrite, weak) IBOutlet NSButton *playQueueToggle;
 @property (readwrite, weak) IBOutlet NSButton *backwardsNavigationButton;
 @property (readwrite, weak) IBOutlet NSButton *forwardsNavigationButton;
 @property (readwrite, weak) IBOutlet NSButton *artworkButton;
-@property (readwrite, weak) IBOutlet NSToolbarItem *backwardsToolbarItem;
-@property (readwrite, weak) IBOutlet NSToolbarItem *forwardsToolbarItem;
-@property (readwrite, weak) IBOutlet NSToolbarItem *libraryViewModeToolbarItem;
-@property (readwrite, weak) IBOutlet NSToolbarItem *sortOrderToolbarItem;
-@property (readwrite, weak) IBOutlet NSToolbarItem *flexibleSpaceToolbarItem;
-@property (readwrite, weak) IBOutlet NSToolbarItem *segmentedTitleControlToolbarItem;
-@property (readwrite, weak) IBOutlet NSToolbarItem *librarySearchToolbarItem;
-@property (readwrite, weak) IBOutlet NSToolbarItem *togglePlaylistToolbarItem;
+@property (readwrite, weak) IBOutlet VLCLibraryWindowToolbarDelegate *toolbarDelegate;
 @property (readwrite, weak) IBOutlet NSLayoutConstraint *splitViewBottomConstraintToBottomBar;
-@property (readwrite, weak) IBOutlet NSLayoutConstraint *splitViewBottomConstraintToSuperView;
 
 @property (nonatomic, readwrite, strong) IBOutlet NSView *emptyLibraryView;
 @property (nonatomic, readwrite, strong) IBOutlet NSImageView *placeholderImageView;
 @property (nonatomic, readwrite, strong) IBOutlet NSTextField *placeholderLabel;
 @property (nonatomic, readwrite, strong) IBOutlet VLCCustomEmptyLibraryBrowseButton *placeholderGoToBrowseButton;
 
+@property (readwrite, nonatomic) NSInteger librarySegmentType;
 @property (readwrite) BOOL nonembedded;
+
+@property (readwrite, weak) IBOutlet VLCLibraryWindowSplitViewController *splitViewController;
 @property (readwrite) VLCLibraryNavigationStack *navigationStack;
 @property (readonly) VLCLibraryAudioViewController *libraryAudioViewController;
 @property (readonly) VLCLibraryMediaSourceViewController *libraryMediaSourceViewController;
 @property (readonly) VLCLibraryVideoViewController *libraryVideoViewController;
+@property (readonly) VLCLibraryHomeViewController *libraryHomeViewController;
 @property (readonly) VLCLibrarySortingMenuController *librarySortingMenuController;
-@property (readonly) VLCPlaylistDataSource *playlistDataSource;
-@property (readonly) VLCPlaylistSortingMenuController *playlistSortingMenuController;
 @property (readonly) VLCPlaylistController *playlistController;
 
 - (void)reopenVideoView;
 - (void)disableVideoPlaybackAppearance;
-- (void)togglePlaylist;
 - (void)hideControlsBar;
 - (void)showControlsBar;
+- (void)updateGridVsListViewModeSegmentedControl;
+- (void)updateFilterString;
+- (void)clearFilterString;
 
-- (IBAction)playlistDoubleClickAction:(id)sender;
-- (IBAction)shuffleAction:(id)sender;
-- (IBAction)repeatAction:(id)sender;
-- (IBAction)clearPlaylist:(id)sender;
-- (IBAction)sortPlaylist:(id)sender;
+- (void)presentLibraryItem:(id<VLCMediaLibraryItemProtocol>)libraryItem;
+
+- (IBAction)goToBrowseSection:(id)sender;
 - (IBAction)sortLibrary:(id)sender;
 - (IBAction)filterLibrary:(id)sender;
-- (IBAction)openMedia:(id)sender;
-- (IBAction)showAndHidePlaylist:(id)sender;
 - (IBAction)backwardsNavigationAction:(id)sender;
 - (IBAction)forwardsNavigationAction:(id)sender;
-- (IBAction)segmentedControlAction:(id)sender;
+- (IBAction)gridVsListSegmentedControlAction:(id)sender;
+
 @end
 
 NS_ASSUME_NONNULL_END

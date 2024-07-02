@@ -30,11 +30,13 @@
 #include <EGL/eglext.h>
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_opengl.h>
 #include <vlc_window.h>
 #ifdef USE_PLATFORM_X11
 # include <vlc_xlib.h>
+# include <X11/Xutil.h>
 #endif
 #ifdef USE_PLATFORM_XCB
 # include <xcb/xcb.h>
@@ -60,10 +62,12 @@ typedef struct vlc_gl_sys_t
     EGLContext context;
 #if defined (USE_PLATFORM_X11)
     Display *x11;
+    unsigned long x11_black_pixel;
     Window x11_win;
 #endif
 #if defined (USE_PLATFORM_XCB)
     xcb_connection_t *conn;
+    uint32_t xcb_black_pixel;
     xcb_window_t xcb_win;
 #endif
 #if defined (USE_PLATFORM_WAYLAND)
@@ -163,34 +167,32 @@ static void ReleaseDisplay(vlc_gl_t *gl)
 static EGLDisplay OpenDisplay(vlc_gl_t *gl)
 {
     vlc_window_t *surface = gl->surface;
-    EGLint ref_attr = EGL_NONE;
-
-# ifdef EGL_KHR_display_reference
-    if (CheckClientExt("EGL_KHR_display_reference"))
-        ref_attr = EGL_TRACK_REFERENCES_KHR;
-# endif
 
     if (surface->type != VLC_WINDOW_TYPE_WAYLAND)
         return EGL_NO_DISPLAY;
+    if (!CheckClientExt("EGL_KHR_display_reference")) {
+        msg_Warn(gl, "EGL display reference counting not supported");
+        return EGL_NO_DISPLAY;
+    }
 
-# if defined(EGL_VERSION_1_5)
-#  ifdef EGL_KHR_platform_wayland
-    if (CheckClientExt("EGL_KHR_platform_wayland")) {
-        const EGLAttrib attrs[] = { ref_attr, EGL_TRUE, EGL_NONE };
+# ifdef EGL_KHR_display_reference
+    static const EGLAttrib attrs[] = {
+        EGL_TRACK_REFERENCES_KHR, EGL_TRUE,
+        EGL_NONE
+    };
 
+#  if defined(EGL_VERSION_1_5)
+#   ifdef EGL_KHR_platform_wayland
+    if (CheckClientExt("EGL_KHR_platform_wayland"))
         return eglGetPlatformDisplay(EGL_PLATFORM_WAYLAND_KHR,
                                      surface->display.wl, attrs);
-    }
-#  endif
+#   endif
 
-# elif defined(EGL_EXT_platform_wayland)
-    if (CheckClientExt("EGL_EXT_platform_wayland")) {
-        const EGLint attrs[] = { ref_attr, EGL_TRUE, EGL_NONE };
-
+#  elif defined(EGL_EXT_platform_wayland)
+    if (CheckClientExt("EGL_EXT_platform_wayland"))
         return getPlatformDisplayEXT(EGL_PLATFORM_WAYLAND_EXT,
                                      surface->display.wl, attrs);
-    }
-
+#  endif
 # endif
     return EGL_NO_DISPLAY;
 }
@@ -238,9 +240,33 @@ static EGLSurface CreateSurface(vlc_gl_t *gl, EGLDisplay dpy, EGLConfig config,
                                 unsigned int width, unsigned int height)
 {
     vlc_gl_sys_t *sys = gl->sys;
-    Window win = sys->x11_win;
 
-    XResizeWindow(sys->x11, win, width, height);
+    EGLint val;
+    if (eglGetConfigAttrib(dpy, config, EGL_NATIVE_VISUAL_ID, &val) == EGL_FALSE)
+        return EGL_NO_SURFACE;
+    XVisualInfo vinfo_template;
+    int vinfoc;
+    vinfo_template.visualid = (VisualID) val;
+    XVisualInfo *vinfov = XGetVisualInfo(sys->x11, VisualIDMask, &vinfo_template, &vinfoc);
+    if (vinfov == NULL || vinfoc == 0)
+        return EGL_NO_SURFACE;
+    Visual *visual = vinfov[0].visual;
+    int depth = vinfov[0].depth;
+    XFree(vinfov);
+
+    unsigned long mask =
+        CWBackPixel | CWBorderPixel | CWBitGravity | CWColormap;
+    XSetWindowAttributes swa = {
+        .background_pixel = sys->x11_black_pixel,
+        .border_pixel = sys->x11_black_pixel,
+        .bit_gravity = NorthWestGravity,
+        .colormap = XCreateColormap(sys->x11, gl->surface->handle.xid, visual,
+                                    AllocNone),
+    };
+    Window win = XCreateWindow(sys->x11, gl->surface->handle.xid, 0, 0, width,
+                               height, 0, depth, InputOutput, visual, mask,
+                               &swa);
+    sys->x11_win = win;
     XMapWindow(sys->x11, win);
 
 # if defined(EGL_VERSION_1_5)
@@ -313,20 +339,8 @@ static EGLDisplay OpenDisplay(vlc_gl_t *gl)
     if (display == EGL_NO_DISPLAY)
         goto error;
 
-    unsigned long mask =
-        CWBackPixel | CWBorderPixel | CWBitGravity | CWColormap;
-    XSetWindowAttributes swa = {
-        .background_pixel = BlackPixelOfScreen(wa.screen),
-        .border_pixel = BlackPixelOfScreen(wa.screen),
-        .bit_gravity = NorthWestGravity,
-        .colormap = DefaultColormapOfScreen(wa.screen),
-    };
-
     sys->x11 = x11;
-    sys->x11_win = XCreateWindow(x11, surface->handle.xid, 0, 0, wa.width,
-                                 wa.height, 0, DefaultDepthOfScreen(wa.screen),
-                                 InputOutput, DefaultVisualOfScreen(wa.screen),
-                                 mask, &swa);
+    sys->x11_black_pixel = BlackPixelOfScreen(wa.screen);
     return display;
 error:
     XCloseDisplay(x11);
@@ -383,18 +397,62 @@ static void DestroySurface(vlc_gl_t *gl)
     xcb_unmap_window(sys->conn, sys->xcb_win);
 }
 
+static uint8_t VisualIdToDepth(xcb_connection_t *conn, xcb_visualid_t vid)
+{
+    xcb_screen_iterator_t si = xcb_setup_roots_iterator (xcb_get_setup (conn));
+    for (; si.rem; xcb_screen_next (&si)) {
+        xcb_depth_iterator_t di = xcb_screen_allowed_depths_iterator (si.data);
+        for (; di.rem; xcb_depth_next (&di)) {
+            xcb_visualtype_iterator_t vi = xcb_depth_visuals_iterator (di.data);
+            for (; vi.rem; xcb_visualtype_next (&vi)) {
+                if (vid == vi.data->visual_id) {
+                    return di.data->depth;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 static EGLSurface CreateSurface(vlc_gl_t *gl, EGLDisplay dpy, EGLConfig config,
                                 unsigned int width, unsigned int height)
 {
 # ifdef EGL_EXT_platform_base
     vlc_gl_sys_t *sys = gl->sys;
     xcb_connection_t *conn = sys->conn;
-    xcb_window_t win = sys->xcb_win;
-    uint32_t mask = XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
-    const uint32_t values[] = { width, height, };
 
-    xcb_configure_window(conn, win, mask, values);
+    EGLint val;
+    if (eglGetConfigAttrib(dpy, config, EGL_NATIVE_VISUAL_ID, &val) == EGL_FALSE)
+        return EGL_NO_SURFACE;
+    xcb_visualid_t vid = (xcb_visualid_t) val;
+    xcb_colormap_t cmap = xcb_generate_id(conn);
+    xcb_create_colormap(conn, XCB_COLORMAP_ALLOC_NONE,
+                        cmap, gl->surface->handle.xid, vid);
+    uint8_t depth = VisualIdToDepth(conn, vid);
+    if (depth == 0)
+        return EGL_NO_SURFACE;
+
+    xcb_window_t win = xcb_generate_id(conn);
+    uint32_t mask =
+        XCB_CW_BACK_PIXEL |
+        XCB_CW_BORDER_PIXEL |
+        XCB_CW_BIT_GRAVITY |
+        XCB_CW_COLORMAP;
+    const uint32_t values[] = {
+        /* XCB_CW_BACK_PIXEL */
+        sys->xcb_black_pixel,
+        /* XCB_CW_BORDER_PIXEL */
+        sys->xcb_black_pixel,
+        /* XCB_CW_BIT_GRAVITY */
+        XCB_GRAVITY_NORTH_WEST,
+        /* XCB_CW_COLORMAP */
+        cmap,
+    };
+    xcb_create_window(conn, depth, win, gl->surface->handle.xid, 0, 0,
+                      width, height, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT, vid,
+                      mask, values);
     xcb_map_window(conn, win);
+    sys->xcb_win = win;
 
     assert(CheckClientExt("EGL_EXT_platform_xcb"));
     return createPlatformWindowSurfaceEXT(dpy, config, &win, NULL);
@@ -438,28 +496,8 @@ static EGLDisplay OpenDisplay(vlc_gl_t *gl)
         goto out;
     }
 
-    xcb_window_t win = xcb_generate_id(conn);
-    uint32_t mask =
-        XCB_CW_BACK_PIXEL |
-        XCB_CW_BORDER_PIXEL |
-        XCB_CW_BIT_GRAVITY |
-        XCB_CW_COLORMAP;
-    const uint32_t values[] = {
-        /* XCB_CW_BACK_PIXEL */
-        scr->black_pixel,
-        /* XCB_CW_BORDER_PIXEL */
-        scr->black_pixel,
-        /* XCB_CW_BIT_GRAVITY */
-        XCB_GRAVITY_NORTH_WEST,
-        /* XCB_CW_COLORMAP */
-        scr->default_colormap,
-    };
-
-    xcb_create_window(conn, scr->root_depth, win, surface->handle.xid, 0, 0, 1,
-                      1, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT, scr->root_visual,
-                      mask, values);
     sys->conn = conn;
-    sys->xcb_win = win;
+    sys->xcb_black_pixel = scr->black_pixel;
 out:
     return display;
 # else

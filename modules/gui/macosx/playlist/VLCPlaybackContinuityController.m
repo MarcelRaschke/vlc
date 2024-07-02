@@ -31,6 +31,8 @@
 #import "library/VLCInputItem.h"
 #import "library/VLCLibraryDataTypes.h"
 
+#import <vlc_configuration.h>
+
 static const int64_t SecInMillisecs = 1000;
 static const int64_t MinInMillisecs = SecInMillisecs * 60;
 static const int64_t MinimumDuration = 3 * MinInMillisecs;
@@ -64,10 +66,10 @@ static NSString *VLCRecentlyPlayedMediaListKey = @"recentlyPlayedMediaList";
 {
     self = [super init];
     if (self) {
-        NSNotificationCenter *notificationCenter = [NSNotificationCenter defaultCenter];
+        NSNotificationCenter *notificationCenter = NSNotificationCenter.defaultCenter;
         [notificationCenter addObserver:self
                                selector:@selector(inputItemChanged:)
-                                   name:VLCPlaylistCurrentItemChanged
+                                   name:VLCPlayerCurrentMediaItemChanged
                                  object:nil];
         [notificationCenter addObserver:self
                                selector:@selector(playbackStatusUpdated:)
@@ -81,25 +83,26 @@ static NSString *VLCRecentlyPlayedMediaListKey = @"recentlyPlayedMediaList";
 {
     msg_Dbg(getIntf(), "Deinitializing input manager");
 
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
 
     if (_currentInput) {
         /* continue playback where you left off */
-        [self storePlaybackPositionForItem:_currentInput player:[VLCMain sharedInstance].playlistController.playerController];
+        [self storePlaybackPositionForItem:_currentInput player:VLCMain.sharedInstance.playlistController.playerController];
     }
 }
 
 - (void)inputItemChanged:(NSNotification *)aNotification
 {
-    VLCMain *mainInstance = [VLCMain sharedInstance];
+    VLCPlayerController * const playerController = VLCMain.sharedInstance.playlistController.playerController;
+
     // Cancel pending resume dialogs
     [_resumeDialogController cancel];
 
     // object is hold here and released then it is dead
-    _currentInput = [[mainInstance playlistController] currentlyPlayingInputItem];
+    _currentInput = playerController.currentMedia;
     if (_currentInput) {
-        VLCPlaylistController *playlistController = aNotification.object;
-        [self continuePlaybackWhereYouLeftOff:_currentInput player:playlistController.playerController];
+        [self continuePlaybackWhereYouLeftOff:_currentInput
+                                       player:playerController];
     }
 }
 
@@ -107,7 +110,7 @@ static NSString *VLCRecentlyPlayedMediaListKey = @"recentlyPlayedMediaList";
 {
     // On shutdown, input might not be dead yet. Cleanup actions like itunes playback
     // and playback positon are done in different code paths (dealloc and appWillTerminate:).
-    if ([[VLCMain sharedInstance] isTerminating]) {
+    if ([VLCMain.sharedInstance isTerminating]) {
         return;
     }
 

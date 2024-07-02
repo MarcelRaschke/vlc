@@ -23,6 +23,8 @@
 #include <vlc_common.h>
 #include <vlc_es.h>
 #include <vlc_codecs.h>
+
+#include <assert.h>
 #include <limits.h>
 
 /* biCompression / Others are FourCC */
@@ -42,54 +44,69 @@
 static const struct
 {
     vlc_fourcc_t codec;
-    uint32_t i_rmask, i_gmask, i_bmask;
+    uint32_t i_rmask, i_gmask, i_bmask, i_amask;
+    uint8_t depth;
 } bitmap_rgb_masks[] = {
-    { VLC_CODEC_RGB15,      0x7c00,
-                            0x03e0,
-                            0x001f, },
-    { VLC_CODEC_RGB16,      0xf800,
-                            0x07e0,
-                            0x001f, },
-    { VLC_CODEC_RGB24,      0x000000ff, /* BGR (see biBitCount) */
+    { VLC_CODEC_XRGB,       0x00ff0000,
                             0x0000ff00,
-                            0x00ff0000, },
-    { VLC_CODEC_RGB32,      0x0000ff00, /* This is in BGR0 format */
+                            0x000000ff,
+                            0x00000000, 32 },
+    { VLC_CODEC_XBGR,       0x000000ff,
+                            0x0000ff00,
                             0x00ff0000,
-                            0xff000000U, },
-    { VLC_CODEC_RGBA,       0x0000ff00, /* This is in BGRA format */
+                            0x00000000, 32 },
+    { VLC_CODEC_RGBX,       0xff000000,
                             0x00ff0000,
-                            0xff000000U, },
+                            0x0000ff00,
+                            0x00000000, 32 },
+    { VLC_CODEC_BGRX,       0x0000ff00,
+                            0x00ff0000,
+                            0xff000000,
+                            0x00000000, 32 },
+    { VLC_CODEC_ARGB,       0x00ff0000,
+                            0x0000ff00,
+                            0x000000ff,
+                            0xff000000, 32 },
+    { VLC_CODEC_ABGR,       0x000000ff,
+                            0x0000ff00,
+                            0x00ff0000,
+                            0xff000000, 32 },
+    { VLC_CODEC_RGBA,       0xff000000,
+                            0x00ff0000,
+                            0x0000ff00,
+                            0x000000ff, 32 },
+    { VLC_CODEC_BGRA,       0x0000ff00,
+                            0x00ff0000,
+                            0xff000000,
+                            0x000000ff, 32 },
+
+    { VLC_CODEC_RGB24,      0xff0000,
+                            0x00ff00,
+                            0x0000ff,
+                            0x000000, 24 },
+    { VLC_CODEC_BGR24,      0x0000ff,
+                            0x00ff00,
+                            0xff0000,
+                            0x000000, 24 },
+
+    { VLC_CODEC_RGB565LE,   0xf800,
+                            0x07e0,
+                            0x001f,
+                            0x0000, 16 },
+    { VLC_CODEC_BGR565LE,   0x001f,
+                            0x07e0,
+                            0xf800,
+                            0x0000, 16 },
+
+    { VLC_CODEC_RGB555LE,   0x7c00,
+                            0x03e0,
+                            0x001f,
+                            0x0000, 15 },
+    { VLC_CODEC_BGR555LE,   0x001f,
+                            0x03e0,
+                            0x7c00,
+                            0x0000, 15 },
 };
-
-static inline void SetBitmapRGBMasks( vlc_fourcc_t i_fourcc, es_format_t *fmt )
-{
-    for( size_t i=0; i<ARRAY_SIZE(bitmap_rgb_masks); i++ )
-    {
-        if( bitmap_rgb_masks[i].codec == i_fourcc )
-        {
-            fmt->video.i_rmask = bitmap_rgb_masks[i].i_rmask;
-            fmt->video.i_gmask = bitmap_rgb_masks[i].i_gmask;
-            fmt->video.i_bmask = bitmap_rgb_masks[i].i_bmask;
-            fmt->video.i_chroma = i_fourcc;
-            video_format_FixRgb( &fmt->video );
-            break;
-        }
-    }
-}
-
-static inline bool MatchBitmapRGBMasks( const es_format_t *fmt )
-{
-    for( size_t i=0; i<ARRAY_SIZE(bitmap_rgb_masks); i++ )
-    {
-        if( bitmap_rgb_masks[i].codec == fmt->i_codec )
-        {
-            return fmt->video.i_rmask == bitmap_rgb_masks[i].i_rmask &&
-                   fmt->video.i_gmask == bitmap_rgb_masks[i].i_gmask &&
-                   fmt->video.i_bmask == bitmap_rgb_masks[i].i_bmask;
-        }
-    }
-    return false;
-}
 
 struct bitmapinfoheader_properties
 {
@@ -97,7 +114,7 @@ struct bitmapinfoheader_properties
     unsigned i_stride;
 };
 
-static inline int ParseBitmapInfoHeader( VLC_BITMAPINFOHEADER *p_bih, size_t i_bih,
+static inline int ParseBitmapInfoHeader( const VLC_BITMAPINFOHEADER *p_bih, size_t i_bih,
                                          es_format_t *fmt,
                                          struct bitmapinfoheader_properties *p_props )
 {
@@ -113,36 +130,26 @@ static inline int ParseBitmapInfoHeader( VLC_BITMAPINFOHEADER *p_bih, size_t i_b
     if( p_bih->biCompression == BI_RGB ||
         p_bih->biCompression == BI_BITFIELDS )
     {
+        uint32_t biCompression = p_bih->biCompression;
         switch( p_bih->biBitCount )
         {
             case 32:
-                fmt->i_codec = VLC_CODEC_RGB32;
-                SetBitmapRGBMasks( fmt->i_codec, fmt );
-                break;
             case 24:
-                fmt->i_codec = VLC_CODEC_RGB24; /* BGR (see biBitCount) */
-                SetBitmapRGBMasks( fmt->i_codec, fmt );
-                break;
             case 16:
-                fmt->i_codec = VLC_CODEC_RGB16; /* RGB (5,6,5 bits) */
-                SetBitmapRGBMasks( fmt->i_codec, fmt );
-                break;
-            case 15: /* RGB (B least 5 bits) */
-                fmt->i_codec = VLC_CODEC_RGB15;
-                SetBitmapRGBMasks( fmt->i_codec, fmt );
+            case 15:
                 break;
             case 9: /* <- TODO check that */
-                fmt->i_codec = VLC_CODEC_I410;
+                fmt->video.i_chroma = fmt->i_codec = VLC_CODEC_I410;
                 break;
             case 8:
                 if ( p_bih->biClrUsed )
-                    fmt->i_codec = VLC_CODEC_RGBP;
+                    fmt->video.i_chroma = fmt->i_codec = VLC_CODEC_RGBP;
                 else
-                    fmt->i_codec = VLC_CODEC_GREY;
+                    fmt->video.i_chroma = fmt->i_codec = VLC_CODEC_GREY;
                 break;
             default:
                 if( p_bih->biClrUsed < 8 )
-                    fmt->i_codec = VLC_CODEC_RGBP;
+                    fmt->video.i_chroma = fmt->i_codec = VLC_CODEC_RGBP;
                 break;
         }
 
@@ -150,17 +157,40 @@ static inline int ParseBitmapInfoHeader( VLC_BITMAPINFOHEADER *p_bih, size_t i_b
         {
             if( i_bihextra >= 3 * sizeof(uint32_t) )
             {
-                fmt->video.i_rmask = GetDWLE( &p_bihextra[0] );
-                fmt->video.i_gmask = GetDWLE( &p_bihextra[4] );
-                fmt->video.i_bmask = GetDWLE( &p_bihextra[8] );
-                if( i_bihextra >= 4 * sizeof(uint32_t) ) /* Alpha channel ? */
+                uint32_t rmask = GetDWLE( &p_bihextra[0] );
+                uint32_t gmask = GetDWLE( &p_bihextra[4] );
+                uint32_t bmask = GetDWLE( &p_bihextra[8] );
+                uint32_t amask = i_bihextra >= 4 * sizeof(uint32_t) ? GetDWLE( &p_bihextra[12] ) : 0;
+
+                vlc_fourcc_t known_chroma = 0;
+                for( size_t i=0; i<ARRAY_SIZE(bitmap_rgb_masks); i++ )
                 {
-                    uint32_t i_alpha = GetDWLE( &p_bihextra[8] );
-                    if( fmt->i_codec == VLC_CODEC_RGB32 && i_alpha == 0xFF )
-                        fmt->i_codec = VLC_CODEC_BGRA;
+                    if (bitmap_rgb_masks[i].depth == p_bih->biBitCount &&
+                        bitmap_rgb_masks[i].i_rmask == rmask &&
+                        bitmap_rgb_masks[i].i_gmask == gmask &&
+                        bitmap_rgb_masks[i].i_bmask == bmask &&
+                        bitmap_rgb_masks[i].i_amask == amask )
+                    {
+                        known_chroma = bitmap_rgb_masks[i].codec;
+                        break;
+                    }
+                }
+
+                if (known_chroma != 0)
+                {
+                    fmt->video.i_chroma = fmt->i_codec = known_chroma;
+                }
+                else
+                {
+                    // unsupported alpha mask
+                    return VLC_ENOTSUP;
                 }
             }
-            SetBitmapRGBMasks( fmt->i_codec, fmt ); /* override default masks shifts */
+            else
+            {
+                // bogus mask size, assume BI_RGB positions
+                biCompression = BI_RGB;
+            }
         }
         else if( fmt->i_codec == VLC_CODEC_RGBP )
         {
@@ -172,10 +202,24 @@ static inline int ParseBitmapInfoHeader( VLC_BITMAPINFOHEADER *p_bih, size_t i_b
                 fmt->video.p_palette->i_entries = __MIN(i_bihextra/4, 256);
                 for( int k = 0; k < fmt->video.p_palette->i_entries; k++ )
                 {
-                    for( int j = 0; j < 4; j++ )
+                    for( int j = 0; j < 3; j++ )
                         fmt->video.p_palette->palette[k][j] = p_bihextra[4*k+j];
+                    fmt->video.p_palette->palette[k][3] = 0xFF;
                 }
             }
+        }
+        if (biCompression == BI_RGB)
+        {
+            vlc_fourcc_t bi_rgb_chroma;
+            switch (p_bih->biBitCount)
+            {
+                case 32: bi_rgb_chroma = VLC_CODEC_XBGR; break;
+                case 24: bi_rgb_chroma = VLC_CODEC_BGR24; break;
+                case 16: bi_rgb_chroma = VLC_CODEC_BGR565LE; break;
+                case 15: bi_rgb_chroma = VLC_CODEC_BGR555LE; break;
+                default: return VLC_EINVAL;
+            }
+            fmt->video.i_chroma = fmt->i_codec = bi_rgb_chroma;
         }
 
         p_props->i_stride = p_bih->biWidth * (p_bih->biBitCount >> 3);
@@ -199,9 +243,6 @@ static inline int ParseBitmapInfoHeader( VLC_BITMAPINFOHEADER *p_bih, size_t i_b
             fmt->i_extra = i_bihextra;
             memcpy( fmt->p_extra, p_bihextra, i_bihextra );
         }
-
-        /* Shitty VLC muxed files storing chroma in biCompression */
-        SetBitmapRGBMasks( fmt->i_codec, fmt );
     }
 
     video_format_Setup( &fmt->video, fmt->i_codec,
@@ -221,39 +262,40 @@ static inline int ParseBitmapInfoHeader( VLC_BITMAPINFOHEADER *p_bih, size_t i_b
     return VLC_SUCCESS;
 }
 
-static inline VLC_BITMAPINFOHEADER * CreateBitmapInfoHeader( const es_format_t *fmt,
-                                                             size_t *pi_total )
+static inline int CreateBitmapInfoHeader( const es_format_t *fmt,
+                                          VLC_BITMAPINFOHEADER *p_bih,
+                                          uint8_t **p_bih_extra,
+                                          size_t *pi_total )
 {
-    uint16_t biBitCount = 0;
-    uint32_t biCompression = 0;
+    const vlc_chroma_description_t *desc =
+        vlc_fourcc_GetChromaDescription(fmt->i_codec);
+    uint16_t biBitCount = desc != NULL ? desc->pixel_size * 8 : 0;
+    uint32_t biCompression;
     bool b_has_alpha = false;
     switch( fmt->i_codec )
     {
-        case VLC_CODEC_RGB32:
-            biBitCount = 32;
-            biCompression = MatchBitmapRGBMasks( fmt ) ? BI_RGB : BI_BITFIELDS;
+        case VLC_CODEC_XRGB:
+        case VLC_CODEC_BGR24:
+        case VLC_CODEC_BGR565LE:
+        case VLC_CODEC_BGR555LE:
+        case VLC_CODEC_RGBP:
+        case VLC_CODEC_GREY:
+            biCompression = BI_RGB;
+            break;
+        case VLC_CODEC_BGRX:
+        case VLC_CODEC_XBGR:
+        case VLC_CODEC_RGBX:
+            biCompression = BI_BITFIELDS;
             break;
         case VLC_CODEC_BGRA:
         case VLC_CODEC_RGBA:
         case VLC_CODEC_ARGB:
-            biBitCount = 32;
-            biCompression = MatchBitmapRGBMasks( fmt ) ? BI_RGB : BI_BITFIELDS;
+        case VLC_CODEC_ABGR:
+            biCompression = BI_BITFIELDS;
             b_has_alpha = true;
             break;
         case VLC_CODEC_RGB24:
-            biBitCount = 24;
-            biCompression = BI_RGB;
-            break;
-        case VLC_CODEC_RGB16:
-        case VLC_CODEC_RGB15:
-            biBitCount = 16;
-            biCompression = BI_BITFIELDS;
-            break;
-        case VLC_CODEC_RGBP:
-        case VLC_CODEC_GREY:
-            biBitCount = 8;
-            biCompression = BI_RGB;
-            break;
+            return VLC_EINVAL;
         case VLC_CODEC_MP4V:
             biCompression = VLC_FOURCC( 'X', 'V', 'I', 'D' );
             break;
@@ -272,35 +314,51 @@ static inline VLC_BITMAPINFOHEADER * CreateBitmapInfoHeader( const es_format_t *
     else
         i_bih_extra = fmt->i_extra;
 
-    VLC_BITMAPINFOHEADER *p_bih = malloc( sizeof(VLC_BITMAPINFOHEADER) +
-                                          i_bih_extra +  i_bmiColors );
-    if( p_bih == NULL )
-        return NULL;
+    *p_bih_extra = malloc( i_bih_extra + i_bmiColors );
+    if( *p_bih_extra == NULL && (i_bih_extra + i_bmiColors) != 0 )
+        return VLC_ENOMEM;
 
-    uint8_t *p_bih_extra = (uint8_t *) &p_bih[1];
-    uint8_t *p_bmiColors = p_bih_extra + i_bih_extra;
+    uint8_t *p_bmiColors = *p_bih_extra;
     p_bih->biClrUsed = 0;
     if( biCompression == BI_BITFIELDS )
     {
-        SetDWBE( &p_bmiColors[0], fmt->video.i_rmask );
-        SetDWBE( &p_bmiColors[4], fmt->video.i_gmask );
-        SetDWBE( &p_bmiColors[8], fmt->video.i_bmask );
+        uint32_t i_rmask, i_gmask, i_bmask, i_amask;
+        size_t i=0;
+        for( ; i<ARRAY_SIZE(bitmap_rgb_masks); i++ )
+        {
+            if ( bitmap_rgb_masks[i].codec == fmt->i_codec )
+            {
+                i_rmask = bitmap_rgb_masks[i].i_rmask;
+                i_gmask = bitmap_rgb_masks[i].i_gmask;
+                i_bmask = bitmap_rgb_masks[i].i_bmask;
+                i_amask = bitmap_rgb_masks[i].i_amask;
+                break;
+            }
+        }
+        if (i == ARRAY_SIZE(bitmap_rgb_masks))
+            vlc_assert_unreachable();
+
+        SetDWLE( &p_bmiColors[0], i_rmask );
+        SetDWLE( &p_bmiColors[4], i_gmask );
+        SetDWLE( &p_bmiColors[8], i_bmask );
         if( b_has_alpha )
         {
-            SetDWBE( &p_bmiColors[12], ~(fmt->video.i_rmask |
-                                         fmt->video.i_gmask |
-                                         fmt->video.i_bmask) );
+            SetDWLE( &p_bmiColors[12], i_amask );
         }
     }
     else if( fmt->i_codec == VLC_CODEC_RGBP )
     {
         for( int i = 0; i < fmt->video.p_palette->i_entries; i++ )
-            memcpy( &p_bmiColors[i * 4], fmt->video.p_palette->palette[i], 4 );
+        {
+            for( int j = 0; i < 3; i++ )
+                p_bmiColors[i * 4 + j] = fmt->video.p_palette->palette[i][j];
+            p_bmiColors[i * 4 + 3] = 0;
+        }
         p_bih->biClrUsed = fmt->video.p_palette->i_entries;
     }
     else if( fmt->i_extra )
     {
-        memcpy( p_bih_extra, fmt->p_extra, fmt->i_extra );
+        memcpy( *p_bih_extra, fmt->p_extra, fmt->i_extra );
     }
 
     p_bih->biSize = sizeof(VLC_BITMAPINFOHEADER) + i_bih_extra;
@@ -314,6 +372,6 @@ static inline VLC_BITMAPINFOHEADER * CreateBitmapInfoHeader( const es_format_t *
     p_bih->biYPelsPerMeter = 0;
     p_bih->biClrImportant = 0;
 
-    *pi_total = sizeof(VLC_BITMAPINFOHEADER) + i_bih_extra +  i_bmiColors;
-    return p_bih;
+    *pi_total = i_bih_extra + i_bmiColors;
+    return VLC_SUCCESS;
 }

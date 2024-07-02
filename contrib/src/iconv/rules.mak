@@ -1,5 +1,5 @@
 # libiconv
-LIBICONV_VERSION := 1.16
+LIBICONV_VERSION := 1.17
 LIBICONV_URL := $(GNU)/libiconv/libiconv-$(LIBICONV_VERSION).tar.gz
 
 PKGS += iconv
@@ -15,6 +15,12 @@ endif
 endif
 endif
 
+DEPS_iconv =
+ifdef HAVE_WINSTORE
+# gnulib uses GetFileInformationByHandle
+DEPS_iconv += alloweduwp $(DEPS_alloweduwp)
+endif
+
 $(TARBALLS)/libiconv-$(LIBICONV_VERSION).tar.gz:
 	$(call download_pkg,$(LIBICONV_URL),iconv)
 
@@ -22,11 +28,13 @@ $(TARBALLS)/libiconv-$(LIBICONV_VERSION).tar.gz:
 
 iconv: libiconv-$(LIBICONV_VERSION).tar.gz .sum-iconv
 	$(UNPACK)
-	$(APPLY) $(SRC)/iconv/win32.patch
+	$(call update_autoconfig,build-aux)
+	$(call update_autoconfig,libcharset/build-aux)
 	$(APPLY) $(SRC)/iconv/bins.patch
-	$(UPDATE_AUTOCONFIG)
-	cd $(UNPACK_DIR) && cp config.guess config.sub build-aux \
-	                 && mv config.guess config.sub libcharset/build-aux
+
+	# use CreateFile2 in Win8 as CreateFileW is forbidden in UWP
+	$(APPLY) $(SRC)/iconv/0001-Use-CreateFile2-in-UWP-builds.patch
+
 	$(MOVE)
 
 ICONV_CONF := --disable-nls

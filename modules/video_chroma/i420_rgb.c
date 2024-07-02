@@ -36,17 +36,18 @@
 #include <vlc_cpu.h>
 
 #include "i420_rgb.h"
+#include "../video_filter/filter_picture.h"
 #ifdef PLUGIN_PLAIN
 # include "i420_rgb_c.h"
 
-static void SetYUV( filter_t *, const video_format_t * );
+static void SetYUV( filter_t * );
 static void Set8bppPalette( filter_t *, uint8_t * );
 #endif
 
 /*****************************************************************************
  * RGB2PIXEL: assemble RGB components to a pixel value, returns a uint32_t
  *****************************************************************************/
-#define RGB2PIXEL( p_filter, i_r, i_g, i_b )                 \
+#define RGB2PIXEL( i_r, i_g, i_b )       \
     ((((i_r) >> i_rrshift) << i_lrshift) \
    | (((i_g) >> i_rgshift) << i_lgshift) \
    | (((i_b) >> i_rbshift) << i_lbshift))
@@ -91,10 +92,6 @@ VIDEO_FILTER_WRAPPER_CLOSE_EXT( I420_RGB32, Deactivate )
  *****************************************************************************/
 static int Activate( filter_t *p_filter )
 {
-#ifdef PLUGIN_PLAIN
-    size_t i_tables_size;
-#endif
-
     if( !vlc_CPU_capable() )
         return VLC_EGENERIC;
     if( p_filter->fmt_out.video.i_width & 1
@@ -115,74 +112,49 @@ static int Activate( filter_t *p_filter )
             switch( p_filter->fmt_out.video.i_chroma )
             {
 #ifndef PLUGIN_PLAIN
-                case VLC_CODEC_RGB15:
-                case VLC_CODEC_RGB16:
-                    /* If we don't have support for the bitmasks, bail out */
-                    if( ( p_filter->fmt_out.video.i_rmask == 0x7c00
-                       && p_filter->fmt_out.video.i_gmask == 0x03e0
-                       && p_filter->fmt_out.video.i_bmask == 0x001f ) )
-                    {
-                        /* R5G5B6 pixel format */
-                        msg_Dbg(p_filter, "RGB pixel format is R5G5B5");
-                        p_filter->ops = &I420_R5G5B5_ops;
-                    }
-                    else if( ( p_filter->fmt_out.video.i_rmask == 0xf800
-                            && p_filter->fmt_out.video.i_gmask == 0x07e0
-                            && p_filter->fmt_out.video.i_bmask == 0x001f ) )
-                    {
-                        /* R5G6B5 pixel format */
-                        msg_Dbg(p_filter, "RGB pixel format is R5G6B5");
-                        p_filter->ops = &I420_R5G6B5_ops;
-                    }
-                    else
-                        return VLC_EGENERIC;
+                case VLC_CODEC_RGB565:
+                    /* R5G6B5 pixel format */
+                    msg_Dbg(p_filter, "RGB pixel format is R5G6B5");
+                    p_filter->ops = &I420_R5G6B5_ops;
                     break;
-                case VLC_CODEC_RGB32:
-                    /* If we don't have support for the bitmasks, bail out */
-                    if( p_filter->fmt_out.video.i_rmask == 0x00ff0000
-                     && p_filter->fmt_out.video.i_gmask == 0x0000ff00
-                     && p_filter->fmt_out.video.i_bmask == 0x000000ff )
-                    {
-                        /* A8R8G8B8 pixel format */
-                        msg_Dbg(p_filter, "RGB pixel format is A8R8G8B8");
-                        p_filter->ops = &I420_A8R8G8B8_ops;
-                    }
-                    else if( p_filter->fmt_out.video.i_rmask == 0xff000000
-                          && p_filter->fmt_out.video.i_gmask == 0x00ff0000
-                          && p_filter->fmt_out.video.i_bmask == 0x0000ff00 )
-                    {
-                        /* R8G8B8A8 pixel format */
-                        msg_Dbg(p_filter, "RGB pixel format is R8G8B8A8");
-                        p_filter->ops = &I420_R8G8B8A8_ops;
-                    }
-                    else if( p_filter->fmt_out.video.i_rmask == 0x0000ff00
-                          && p_filter->fmt_out.video.i_gmask == 0x00ff0000
-                          && p_filter->fmt_out.video.i_bmask == 0xff000000 )
-                    {
-                        /* B8G8R8A8 pixel format */
-                        msg_Dbg(p_filter, "RGB pixel format is B8G8R8A8");
-                        p_filter->ops = &I420_B8G8R8A8_ops;
-                    }
-                    else if( p_filter->fmt_out.video.i_rmask == 0x000000ff
-                          && p_filter->fmt_out.video.i_gmask == 0x0000ff00
-                          && p_filter->fmt_out.video.i_bmask == 0x00ff0000 )
-                    {
-                        /* A8B8G8R8 pixel format */
-                        msg_Dbg(p_filter, "RGB pixel format is A8B8G8R8");
-                        p_filter->ops = &I420_A8B8G8R8_ops;
-                    }
-                    else
-                        return VLC_EGENERIC;
+                case VLC_CODEC_RGB555:
+                    /* R5G5B5 pixel format */
+                    msg_Dbg(p_filter, "RGB pixel format is R5G5B5");
+                    p_filter->ops = &I420_R5G5B5_ops;
+                    break;
+                case VLC_CODEC_XRGB:
+                    /* A8R8G8B8 pixel format */
+                    msg_Dbg(p_filter, "RGB pixel format is XBGR");
+                    p_filter->ops = &I420_A8R8G8B8_ops;
+                    break;
+                case VLC_CODEC_RGBX:
+                    /* R8G8B8A8 pixel format */
+                    msg_Dbg(p_filter, "RGB pixel format is RGBX");
+                    p_filter->ops = &I420_R8G8B8A8_ops;
+                    break;
+                case VLC_CODEC_BGRX:
+                    /* B8G8R8A8 pixel format */
+                    msg_Dbg(p_filter, "RGB pixel format is BGRX");
+                    p_filter->ops = &I420_B8G8R8A8_ops;
+                    break;
+                case VLC_CODEC_XBGR:
+                    /* A8B8G8R8 pixel format */
+                    msg_Dbg(p_filter, "RGB pixel format is XBGR");
+                    p_filter->ops = &I420_A8B8G8R8_ops;
                     break;
 #else
-                case VLC_CODEC_RGB8:
+                case VLC_CODEC_RGB233:
+                case VLC_CODEC_RGB332:
+                case VLC_CODEC_BGR233:
                     p_filter->ops = &I420_RGB8_ops;
                     break;
-                case VLC_CODEC_RGB15:
-                case VLC_CODEC_RGB16:
+                case VLC_CODEC_RGB565:
+                case VLC_CODEC_BGR565:
+                case VLC_CODEC_RGB555:
+                case VLC_CODEC_BGR555:
                     p_filter->ops = &I420_RGB16_ops;
                     break;
-                case VLC_CODEC_RGB32:
+                CASE_PACKED_RGBX
                     p_filter->ops = &I420_RGB32_ops;
                     break;
 #endif
@@ -205,16 +177,18 @@ static int Activate( filter_t *p_filter )
     switch( p_filter->fmt_out.video.i_chroma )
     {
 #ifdef PLUGIN_PLAIN
-        case VLC_CODEC_RGB8:
+        case VLC_CODEC_RGB233:
+        case VLC_CODEC_RGB332:
+        case VLC_CODEC_BGR233:
             p_sys->i_bytespp = 1;
             break;
 #endif
-        case VLC_CODEC_RGB15:
-        case VLC_CODEC_RGB16:
+        CASE_PACKED_RGB1615
             p_sys->i_bytespp = 2;
             break;
+        CASE_PACKED_RGBX
         case VLC_CODEC_RGB24:
-        case VLC_CODEC_RGB32:
+        case VLC_CODEC_BGR24:
             p_sys->i_bytespp = 4;
             break;
         default:
@@ -223,8 +197,7 @@ static int Activate( filter_t *p_filter )
     }
 
     p_sys->p_offset = malloc( p_filter->fmt_out.video.i_width
-                    * ( ( p_filter->fmt_out.video.i_chroma
-                           == VLC_CODEC_RGB8 ) ? 2 : 1 )
+                    * ( ( p_sys->i_bytespp == 1 ) ? 2 : 1 )
                     * sizeof( int ) );
     if( p_sys->p_offset == NULL )
     {
@@ -233,21 +206,7 @@ static int Activate( filter_t *p_filter )
     }
 
 #ifdef PLUGIN_PLAIN
-    switch( p_filter->fmt_out.video.i_chroma )
-    {
-    case VLC_CODEC_RGB8:
-        i_tables_size = sizeof( uint8_t ) * PALETTE_TABLE_SIZE;
-        break;
-    case VLC_CODEC_RGB15:
-    case VLC_CODEC_RGB16:
-        i_tables_size = sizeof( uint16_t ) * RGB_TABLE_SIZE;
-        break;
-    default: /* RV24, RV32 */
-        i_tables_size = sizeof( uint32_t ) * RGB_TABLE_SIZE;
-        break;
-    }
-
-    p_sys->p_base = malloc( i_tables_size );
+    p_sys->p_base = malloc( p_sys->i_bytespp * RGB_TABLE_SIZE );
     if( p_sys->p_base == NULL )
     {
         free( p_sys->p_offset );
@@ -255,14 +214,7 @@ static int Activate( filter_t *p_filter )
         return -1;
     }
 
-    video_format_t vfmt;
-    video_format_Init( &vfmt, p_filter->fmt_out.video.i_chroma );
-    video_format_Copy( &vfmt, &p_filter->fmt_out.video );
-    if( !vfmt.i_rmask || !vfmt.i_gmask || !vfmt.i_bmask )
-        msg_Warn( p_filter, "source did not set proper target RGB masks, using default" );
-    video_format_FixRgb( &vfmt );
-    SetYUV( p_filter, &vfmt );
-    video_format_Clean( &vfmt );
+    SetYUV( p_filter );
 #endif
 
     return 0;
@@ -289,15 +241,101 @@ static void Deactivate( filter_t *p_filter )
 /*****************************************************************************
  * SetYUV: compute tables and set function pointers
  *****************************************************************************/
-static void SetYUV( filter_t *p_filter, const video_format_t *vfmt )
+static void SetYUV( filter_t *p_filter )
 {
     filter_sys_t *p_sys = p_filter->p_sys;
-    unsigned i_lrshift = ctz(vfmt->i_rmask);
-    unsigned i_lgshift = ctz(vfmt->i_gmask);
-    unsigned i_lbshift = ctz(vfmt->i_bmask);
-    unsigned i_rrshift = 8 - vlc_popcount(vfmt->i_rmask);
-    unsigned i_rgshift = 8 - vlc_popcount(vfmt->i_gmask);
-    unsigned i_rbshift = 8 - vlc_popcount(vfmt->i_bmask);
+    unsigned i_lrshift, i_lgshift, i_lbshift;
+    unsigned i_rrshift = 0;
+    unsigned i_rgshift = 0;
+    unsigned i_rbshift = 0;
+
+    switch (p_filter->fmt_out.video.i_chroma)
+    {
+        case VLC_CODEC_XRGB:
+        case VLC_CODEC_RGB24:
+            i_lrshift = 16;
+            i_lgshift =  8;
+            i_lbshift =  0;
+            break;
+        case VLC_CODEC_XBGR:
+        case VLC_CODEC_BGR24:
+            i_lbshift = 16;
+            i_lgshift =  8;
+            i_lrshift =  0;
+            break;
+        case VLC_CODEC_RGBX:
+            i_lrshift = 24;
+            i_lgshift = 16;
+            i_lbshift =  8;
+            break;
+        case VLC_CODEC_BGRX:
+            i_lbshift = 24;
+            i_lgshift = 16;
+            i_lrshift =  8;
+            break;
+        case VLC_CODEC_RGB565BE:
+        case VLC_CODEC_RGB565LE:
+            i_lrshift = 11;
+            i_lgshift = 6;
+            i_lbshift = 0;
+            i_rrshift = 3;
+            i_rgshift = 2;
+            i_rbshift = 3;
+            break;
+        case VLC_CODEC_BGR565BE:
+        case VLC_CODEC_BGR565LE:
+            i_lbshift = 11;
+            i_lgshift = 6;
+            i_lrshift = 0;
+            i_rbshift = 3;
+            i_rgshift = 2;
+            i_rrshift = 3;
+            break;
+        case VLC_CODEC_RGB555BE:
+        case VLC_CODEC_RGB555LE:
+            i_lrshift = 10;
+            i_lgshift = 5;
+            i_lbshift = 0;
+            i_rrshift = 3;
+            i_rgshift = 3;
+            i_rbshift = 3;
+            break;
+        case VLC_CODEC_BGR555BE:
+        case VLC_CODEC_BGR555LE:
+            i_lbshift = 10;
+            i_lgshift = 5;
+            i_lrshift = 0;
+            i_rbshift = 3;
+            i_rgshift = 3;
+            i_rrshift = 3;
+            break;
+        case VLC_CODEC_RGB233:
+            i_lrshift = 6;
+            i_lgshift = 3;
+            i_lbshift = 0;
+            i_rrshift = 6;
+            i_rgshift = 5;
+            i_rbshift = 5;
+            break;
+        case VLC_CODEC_BGR233:
+            i_lbshift = 6;
+            i_lgshift = 3;
+            i_lrshift = 0;
+            i_rbshift = 6;
+            i_rgshift = 5;
+            i_rrshift = 5;
+            break;
+        case VLC_CODEC_RGB332:
+            i_lrshift = 5;
+            i_lgshift = 2;
+            i_lbshift = 0;
+            i_rrshift = 5;
+            i_rgshift = 5;
+            i_rbshift = 6;
+            break;
+        default:
+            vlc_assert_unreachable();
+    }
 
     /*
      * Set pointers and build YUV tables
@@ -306,60 +344,62 @@ static void SetYUV( filter_t *p_filter, const video_format_t *vfmt )
     /* Color: build red, green and blue tables */
     switch( p_filter->fmt_out.video.i_chroma )
     {
-    case VLC_CODEC_RGB8:
+    case VLC_CODEC_RGB233:
+    case VLC_CODEC_RGB332:
+    case VLC_CODEC_BGR233:
         p_sys->p_rgb8 = (uint8_t *)p_sys->p_base;
         Set8bppPalette( p_filter, p_sys->p_rgb8 );
         break;
 
-    case VLC_CODEC_RGB15:
-    case VLC_CODEC_RGB16:
+    CASE_PACKED_RGB1615
         p_sys->p_rgb16 = (uint16_t *)p_sys->p_base;
         for( unsigned i_index = 0; i_index < RED_MARGIN; i_index++ )
         {
-            p_sys->p_rgb16[RED_OFFSET - RED_MARGIN + i_index] = RGB2PIXEL( p_filter, 0, 0, 0 );
-            p_sys->p_rgb16[RED_OFFSET + 256 + i_index] =        RGB2PIXEL( p_filter, 255, 0, 0 );
+            p_sys->p_rgb16[RED_OFFSET - RED_MARGIN + i_index] = 0;
+            p_sys->p_rgb16[RED_OFFSET + 256 + i_index] =        RGB2PIXEL( 255, 0, 0 );
         }
         for( unsigned i_index = 0; i_index < GREEN_MARGIN; i_index++ )
         {
-            p_sys->p_rgb16[GREEN_OFFSET - GREEN_MARGIN + i_index] = RGB2PIXEL( p_filter, 0, 0, 0 );
-            p_sys->p_rgb16[GREEN_OFFSET + 256 + i_index] =          RGB2PIXEL( p_filter, 0, 255, 0 );
+            p_sys->p_rgb16[GREEN_OFFSET - GREEN_MARGIN + i_index] = 0;
+            p_sys->p_rgb16[GREEN_OFFSET + 256 + i_index] =          RGB2PIXEL( 0, 255, 0 );
         }
         for( unsigned i_index = 0; i_index < BLUE_MARGIN; i_index++ )
         {
-            p_sys->p_rgb16[BLUE_OFFSET - BLUE_MARGIN + i_index] = RGB2PIXEL( p_filter, 0, 0, 0 );
-            p_sys->p_rgb16[BLUE_OFFSET + BLUE_MARGIN + i_index] = RGB2PIXEL( p_filter, 0, 0, 255 );
+            p_sys->p_rgb16[BLUE_OFFSET - BLUE_MARGIN + i_index] = 0;
+            p_sys->p_rgb16[BLUE_OFFSET + BLUE_MARGIN + i_index] = RGB2PIXEL( 0, 0, 255 );
         }
         for( unsigned i_index = 0; i_index < 256; i_index++ )
         {
-            p_sys->p_rgb16[RED_OFFSET + i_index] =   RGB2PIXEL( p_filter, i_index, 0, 0 );
-            p_sys->p_rgb16[GREEN_OFFSET + i_index] = RGB2PIXEL( p_filter, 0, i_index, 0 );
-            p_sys->p_rgb16[BLUE_OFFSET + i_index] =  RGB2PIXEL( p_filter, 0, 0, i_index );
+            p_sys->p_rgb16[RED_OFFSET + i_index] =   RGB2PIXEL( i_index, 0, 0 );
+            p_sys->p_rgb16[GREEN_OFFSET + i_index] = RGB2PIXEL( 0, i_index, 0 );
+            p_sys->p_rgb16[BLUE_OFFSET + i_index] =  RGB2PIXEL( 0, 0, i_index );
         }
         break;
 
+    CASE_PACKED_RGBX
     case VLC_CODEC_RGB24:
-    case VLC_CODEC_RGB32:
+    case VLC_CODEC_BGR24:
         p_sys->p_rgb32 = (uint32_t *)p_sys->p_base;
         for( unsigned i_index = 0; i_index < RED_MARGIN; i_index++ )
         {
-            p_sys->p_rgb32[RED_OFFSET - RED_MARGIN + i_index] = RGB2PIXEL( p_filter, 0, 0, 0 );
-            p_sys->p_rgb32[RED_OFFSET + 256 + i_index] =        RGB2PIXEL( p_filter, 255, 0, 0 );
+            p_sys->p_rgb32[RED_OFFSET - RED_MARGIN + i_index] = 0;
+            p_sys->p_rgb32[RED_OFFSET + 256 + i_index] =        RGB2PIXEL( 255, 0, 0 );
         }
         for( unsigned i_index = 0; i_index < GREEN_MARGIN; i_index++ )
         {
-            p_sys->p_rgb32[GREEN_OFFSET - GREEN_MARGIN + i_index] = RGB2PIXEL( p_filter, 0, 0, 0 );
-            p_sys->p_rgb32[GREEN_OFFSET + 256 + i_index] =          RGB2PIXEL( p_filter, 0, 255, 0 );
+            p_sys->p_rgb32[GREEN_OFFSET - GREEN_MARGIN + i_index] = 0;
+            p_sys->p_rgb32[GREEN_OFFSET + 256 + i_index] =          RGB2PIXEL( 0, 255, 0 );
         }
         for( unsigned i_index = 0; i_index < BLUE_MARGIN; i_index++ )
         {
-            p_sys->p_rgb32[BLUE_OFFSET - BLUE_MARGIN + i_index] = RGB2PIXEL( p_filter, 0, 0, 0 );
-            p_sys->p_rgb32[BLUE_OFFSET + BLUE_MARGIN + i_index] = RGB2PIXEL( p_filter, 0, 0, 255 );
+            p_sys->p_rgb32[BLUE_OFFSET - BLUE_MARGIN + i_index] = 0;
+            p_sys->p_rgb32[BLUE_OFFSET + BLUE_MARGIN + i_index] = RGB2PIXEL( 0, 0, 255 );
         }
         for( unsigned i_index = 0; i_index < 256; i_index++ )
         {
-            p_sys->p_rgb32[RED_OFFSET + i_index] =   RGB2PIXEL( p_filter, i_index, 0, 0 );
-            p_sys->p_rgb32[GREEN_OFFSET + i_index] = RGB2PIXEL( p_filter, 0, i_index, 0 );
-            p_sys->p_rgb32[BLUE_OFFSET + i_index] =  RGB2PIXEL( p_filter, 0, 0, i_index );
+            p_sys->p_rgb32[RED_OFFSET + i_index] =   RGB2PIXEL( i_index, 0, 0 );
+            p_sys->p_rgb32[GREEN_OFFSET + i_index] = RGB2PIXEL( 0, i_index, 0 );
+            p_sys->p_rgb32[BLUE_OFFSET + i_index] =  RGB2PIXEL( 0, 0, i_index );
         }
         break;
     }

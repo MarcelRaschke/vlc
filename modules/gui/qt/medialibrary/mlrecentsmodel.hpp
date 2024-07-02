@@ -47,8 +47,6 @@ private:
 class MLRecentsModel : public MLBaseModel
 {
     Q_OBJECT
-    Q_PROPERTY(int numberOfItemsToShow READ getNumberOfItemsToShow WRITE setNumberOfItemsToShow FINAL)
-
 public:
     enum Roles {
         RECENT_MEDIA_ID = Qt::UserRole + 1,
@@ -61,17 +59,13 @@ public:
     virtual ~MLRecentsModel() = default;
 
     QHash<int, QByteArray> roleNames() const override;
-    int m_numberOfItemsToShow = -1;
 
     Q_INVOKABLE void clearHistory();
-
-    void setNumberOfItemsToShow(int);
-    int getNumberOfItemsToShow() const;
 
 protected:
     QVariant itemRoleData(MLItem *item, int role) const override;
 
-    std::unique_ptr<MLBaseModel::BaseLoader> createLoader() const override;
+    std::unique_ptr<MLListCacheLoader> createMLLoader() const override;
 
 private:
     vlc_ml_sorting_criteria_t roleToCriteria( int /* role */ ) const override{
@@ -80,17 +74,14 @@ private:
     vlc_ml_sorting_criteria_t nameToCriteria( QByteArray /* name */ ) const override{
         return VLC_ML_SORTING_DEFAULT;
     }
-    virtual void onVlcMlEvent( const MLEvent &event ) override;
+    void onVlcMlEvent( const MLEvent &event ) override;
 
-    struct Loader : public BaseLoader
+    struct Loader : public MLListCacheLoader::MLOp
     {
-        Loader(const MLRecentsModel &model, int numberOfItemsToShow);
-
-        size_t count(vlc_medialibrary_t* ml) const override;
-        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, size_t index, size_t count) const override;
+        using MLListCacheLoader::MLOp::MLOp;
+        size_t count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const override;
+        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const override;
         std::unique_ptr<MLItem> loadItemById(vlc_medialibrary_t* ml, MLItemId itemId) const override;
-    private:
-        int m_numberOfItemsToShow;
     };
 };
 

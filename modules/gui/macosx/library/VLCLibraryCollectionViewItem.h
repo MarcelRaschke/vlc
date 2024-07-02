@@ -26,6 +26,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @class VLCImageView;
 @class VLCLinearProgressIndicator;
+@class VLCLibraryRepresentedItem;
 @protocol VLCMediaLibraryItemProtocol;
 
 extern NSString *VLCLibraryCellIdentifier;
@@ -33,11 +34,13 @@ extern NSString *VLCLibraryCellIdentifier;
 @interface VLCLibraryCollectionViewItem : NSCollectionViewItem
 
 // NOTE: These will need to be changed after changes to XIB
-+ (const NSSize)defaultSize;
-+ (const NSSize)defaultVideoItemSize;
-+ (const CGFloat)defaultWidth;
-+ (const CGFloat)bottomTextViewsHeight;
-+ (const CGFloat)videoHeightAspectRatioMultiplier;
+@property (class, readonly) const NSSize defaultSize;
+@property (class, readonly) const NSSize defaultVideoItemSize;
+@property (class, readonly) const CGFloat defaultWidth;
+@property (class, readonly) const CGFloat bottomTextViewsHeight;
+@property (class, readonly) const CGFloat videoHeightAspectRatioMultiplier;
+
+@property (readwrite, assign) BOOL deselectWhenClickedIfSelected;
 
 @property (readwrite, assign) IBOutlet NSTextField *mediaTitleTextField;
 @property (readwrite, assign) IBOutlet NSTextField *annotationTextField;
@@ -49,8 +52,10 @@ extern NSString *VLCLibraryCellIdentifier;
 @property (readwrite, assign) IBOutlet VLCLinearProgressIndicator *progressIndicator;
 @property (readwrite, assign) IBOutlet NSBox *highlightBox;
 @property (readwrite, assign) IBOutlet NSLayoutConstraint *imageViewAspectRatioConstraint;
+@property (readwrite, assign) IBOutlet NSLayoutConstraint *trailingSecondaryTextToLeadingUnplayedIndicatorConstraint;
+@property (readwrite, assign) IBOutlet NSLayoutConstraint *trailingSecondaryTextToTrailingSuperviewConstraint;
 
-@property (readwrite, retain, nonatomic) id<VLCMediaLibraryItemProtocol> representedItem;
+@property (readwrite, retain, nonatomic) VLCLibraryRepresentedItem *representedItem;
 
 @end
 

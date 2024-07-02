@@ -33,9 +33,11 @@
 #endif
 
 #include <assert.h>
+#include <stdbit.h>
 #include <stdint.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
@@ -567,7 +569,7 @@ notsupp:
 #endif
     {
         vlc_CPU_functions_init_once("deinterlace functions", &funcs);
-        p_sys->pf_merge = funcs.merges[vlc_ctz(pixel_size)];
+        p_sys->pf_merge = funcs.merges[stdc_trailing_zeros(pixel_size)];
 #if defined(__i386__) || defined(__x86_64__)
         p_sys->pf_end_merge = NULL;
 #endif
@@ -612,14 +614,13 @@ notsupp:
             2 * chroma->p[2].h.num == chroma->p[2].h.den &&
             i_c420 == PC_UPCONVERT )
         {
-            fmt.i_chroma = p_filter->fmt_in.video.i_chroma == VLC_CODEC_J420 ?
-                        VLC_CODEC_J422 : VLC_CODEC_I422;
+            fmt.i_chroma = VLC_CODEC_I422;
         }
     }
     free( psz_mode );
 
     if( !p_filter->b_allow_fmt_out_change &&
-        ( fmt.i_chroma != p_filter->fmt_in.video.i_chroma ||
+        ( !video_format_IsSameChroma( &fmt, &p_filter->fmt_in.video ) ||
           fmt.i_height != p_filter->fmt_in.video.i_height ) )
     {
         Close( p_filter );

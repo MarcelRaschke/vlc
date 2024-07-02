@@ -29,6 +29,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_subpicture.h>
@@ -207,17 +208,16 @@ static int SubsdelayCalculateAlpha( filter_t *p_filter, int i_overlapping, int i
 
 static int SubsdelayGetTextRank( char *psz_text );
 
-static bool SubsdelayIsTextEmpty( const text_segment_t* p_segment );
+static bool SubsdelayIsTextEmpty( const subpicture_region_t * );
 
 /*****************************************************************************
  * Subpicture functions
  *****************************************************************************/
 
-static int SubpicValidateWrapper( subpicture_t *p_subpic, bool has_src_changed, const video_format_t *p_fmt_src,
-                                  bool has_dst_changed, const video_format_t *p_fmt_dst, vlc_tick_t i_ts );
-
-static void SubpicUpdateWrapper( subpicture_t *p_subpic, const video_format_t *p_fmt_src,
-                                  const video_format_t *p_fmt_dst, vlc_tick_t i_ts );
+static void SubpicUpdateWrapper( subpicture_t *p_subpic,
+                                 const video_format_t *prev_src, const video_format_t *p_fmt_src,
+                                 const video_format_t *prev_dst, const video_format_t *p_fmt_dst,
+                                 vlc_tick_t i_ts );
 
 static void SubpicDestroyWrapper( subpicture_t *p_subpic );
 
@@ -658,8 +658,6 @@ static subsdelay_heap_entry_t * SubsdelayEntryCreate( subpicture_t *p_source, fi
 
     subpicture_t *p_new_subpic;
 
-    subpicture_updater_t updater;
-
     /* allocate structure */
 
     p_entry = (subsdelay_heap_entry_t *) malloc( sizeof( subsdelay_heap_entry_t ) );
@@ -670,11 +668,17 @@ static subsdelay_heap_entry_t * SubsdelayEntryCreate( subpicture_t *p_source, fi
     }
 
     /* initialize local updater */
+    static const struct vlc_spu_updater_ops spu_ops =
+    {
+        .update   = SubpicUpdateWrapper,
+        .destroy  = SubpicDestroyWrapper,
+    };
 
-    updater.p_sys = p_entry;
-    updater.pf_validate = SubpicValidateWrapper;
-    updater.pf_update = SubpicUpdateWrapper;
-    updater.pf_destroy = SubpicDestroyWrapper;
+    subpicture_updater_t updater =
+    {
+        .sys = p_entry,
+        .ops = &spu_ops,
+    };
 
     /* create new subpic */
 
@@ -910,82 +914,51 @@ static void SubsdelayRecalculateDelays( filter_t *p_filter )
 }
 
 /*****************************************************************************
- * SubpicValidateWrapper: Subpicture validate callback wrapper
- *****************************************************************************/
-static int SubpicValidateWrapper( subpicture_t *p_subpic, bool has_src_changed, const video_format_t *p_fmt_src,
-                                  bool has_dst_changed, const video_format_t *p_fmt_dst, vlc_tick_t i_ts )
-{
-    subsdelay_heap_entry_t *p_entry;
-    vlc_tick_t i_new_ts;
-    int i_result = VLC_SUCCESS;
-
-    p_entry = p_subpic->updater.p_sys;
-    if( !p_entry )
-    {
-        return VLC_SUCCESS;
-    }
-
-    /* call source validate */
-    if( p_entry->p_source->updater.pf_validate )
-    {
-        i_new_ts = p_entry->p_source->i_start +
-                   ( (double)( p_entry->p_source->i_stop - p_entry->p_source->i_start ) * ( i_ts - p_entry->p_source->i_start ) ) /
-                   ( p_entry->i_new_stop - p_entry->p_source->i_start );
-
-        i_result = p_entry->p_source->updater.pf_validate( p_entry->p_source, has_src_changed, p_fmt_src,
-                                                        has_dst_changed, p_fmt_dst, i_new_ts );
-    }
-
-
-    p_entry->b_last_region_saved = false;
-
-    if( p_subpic->p_region )
-    {
-        /* save copy */
-        p_entry->i_last_region_x = p_subpic->p_region->i_x;
-        p_entry->i_last_region_y = p_subpic->p_region->i_y;
-        p_entry->i_last_region_align = p_subpic->p_region->i_align;
-
-        p_entry->b_last_region_saved = true;
-    }
-
-    if( !i_result )
-    {
-        /* subpic update isn't necessary, so local update should be called here */
-        SubpicLocalUpdate( p_subpic, i_ts );
-    }
-
-    return i_result;
-}
-
-/*****************************************************************************
  * SubpicUpdateWrapper: Subpicture update callback wrapper
  *****************************************************************************/
-static void SubpicUpdateWrapper( subpicture_t *p_subpic, const video_format_t *p_fmt_src,
-                                  const video_format_t *p_fmt_dst, vlc_tick_t i_ts )
+static void SubpicUpdateWrapper( subpicture_t *p_subpic,
+                                 const video_format_t *prev_src, const video_format_t *p_fmt_src,
+                                 const video_format_t *prev_dst, const video_format_t *p_fmt_dst,
+                                 vlc_tick_t i_ts )
 {
     subsdelay_heap_entry_t *p_entry;
     vlc_tick_t i_new_ts;
 
-    p_entry = p_subpic->updater.p_sys;
+    p_entry = p_subpic->updater.sys;
     if( !p_entry )
     {
         return;
     }
 
-    /* call source update */
-    if( p_entry->p_source->updater.pf_update )
+    p_entry->b_last_region_saved = false;
+
+    subpicture_region_t *p_region =
+        vlc_spu_regions_first_or_null(&p_subpic->regions);
+    if( p_region )
     {
-        i_new_ts = p_entry->p_source->i_start +
-                   ( (double)( p_entry->p_source->i_stop - p_entry->p_source->i_start ) * ( i_ts - p_entry->p_source->i_start ) ) /
-                   ( p_entry->i_new_stop - p_entry->p_source->i_start );
+        /* save copy */
+        p_entry->i_last_region_x = p_region->i_x;
+        p_entry->i_last_region_y = p_region->i_y;
+        p_entry->i_last_region_align = p_region->i_align;
 
-        p_entry->p_source->p_region = p_entry->p_subpic->p_region;
-
-        p_entry->p_source->updater.pf_update( p_entry->p_source, p_fmt_src, p_fmt_dst, i_new_ts );
-
-        p_entry->p_subpic->p_region = p_entry->p_source->p_region;
+        p_entry->b_last_region_saved = true;
     }
+
+    vlc_spu_regions_Clear( &p_subpic->regions );
+
+    /* call source update */
+    i_new_ts = p_entry->p_source->i_start +
+                ( (double)( p_entry->p_source->i_stop - p_entry->p_source->i_start ) * ( i_ts - p_entry->p_source->i_start ) ) /
+                ( p_entry->i_new_stop - p_entry->p_source->i_start );
+
+    p_entry->p_source->regions = p_entry->p_subpic->regions;
+
+    subpicture_updater_t *updater = &p_entry->p_source->updater;
+    updater->ops->update( p_entry->p_source,
+                          prev_src, p_fmt_src,
+                          prev_dst, p_fmt_dst, i_new_ts );
+
+    p_entry->p_subpic->regions = p_entry->p_source->regions;
 
     SubpicLocalUpdate( p_subpic, i_ts );
 }
@@ -998,7 +971,7 @@ static void SubpicDestroyWrapper( subpicture_t *p_subpic )
     subsdelay_heap_entry_t *p_entry;
     subsdelay_heap_t *p_heap;
 
-    p_entry = p_subpic->updater.p_sys;
+    p_entry = p_subpic->updater.sys;
 
     if( !p_entry )
     {
@@ -1029,7 +1002,7 @@ static void SubpicLocalUpdate( subpicture_t* p_subpic, vlc_tick_t i_ts )
 
     int i_overlapping;
 
-    p_entry = p_subpic->updater.p_sys;
+    p_entry = p_subpic->updater.sys;
     if( !p_entry || !p_entry->p_filter )
     {
         return;
@@ -1041,10 +1014,11 @@ static void SubpicLocalUpdate( subpicture_t* p_subpic, vlc_tick_t i_ts )
 
     SubsdelayHeapLock( p_heap );
 
-    if( p_entry->b_check_empty && p_subpic->p_region )
+    subpicture_region_t *p_region =
+        vlc_spu_regions_first_or_null(&p_subpic->regions);
+    if( p_entry->b_check_empty && p_region )
     {
-        //FIXME: What if there is more than one segment?
-        if( SubsdelayIsTextEmpty( p_subpic->p_region->p_text ) )
+        if( SubsdelayIsTextEmpty( p_region ) )
         {
             /* remove empty subtitle */
 
@@ -1075,13 +1049,12 @@ static void SubpicLocalUpdate( subpicture_t* p_subpic, vlc_tick_t i_ts )
 
     if( p_entry->b_update_position )
     {
-        p_subpic->b_absolute = false;
-
-        if( p_subpic->p_region )
+        if( p_region )
         {
-            p_subpic->p_region->i_x = 0;
-            p_subpic->p_region->i_y = 10;
-            p_subpic->p_region->i_align = ( p_subpic->p_region->i_align & ( ~SUBPICTURE_ALIGN_MASK ) )
+            p_region->b_absolute = false;
+            p_region->i_x = 0;
+            p_region->i_y = 10;
+            p_region->i_align = ( p_region->i_align & ( ~SUBPICTURE_ALIGN_MASK ) )
                     | SUBPICTURE_ALIGN_BOTTOM;
         }
 
@@ -1089,13 +1062,12 @@ static void SubpicLocalUpdate( subpicture_t* p_subpic, vlc_tick_t i_ts )
     }
     else if( p_entry->b_last_region_saved )
     {
-        p_subpic->b_absolute = true;
-
-        if( p_subpic->p_region )
+        if( p_region )
         {
-            p_subpic->p_region->i_x = p_entry->i_last_region_x;
-            p_subpic->p_region->i_y = p_entry->i_last_region_y;
-            p_subpic->p_region->i_align = p_entry->i_last_region_align;
+            p_region->b_absolute = true;
+            p_region->i_x = p_entry->i_last_region_x;
+            p_region->i_y = p_entry->i_last_region_y;
+            p_region->i_align = p_entry->i_last_region_align;
         }
     }
 
@@ -1107,7 +1079,9 @@ static void SubpicLocalUpdate( subpicture_t* p_subpic, vlc_tick_t i_ts )
  *****************************************************************************/
 static bool SubpicIsEmpty( subpicture_t* p_subpic )
 {
-    return ( p_subpic->p_region && ( SubsdelayIsTextEmpty( p_subpic->p_region->p_text ) ) );
+    subpicture_region_t *p_region =
+        vlc_spu_regions_first_or_null(&p_subpic->regions);
+    return p_region != NULL && SubsdelayIsTextEmpty( p_region );
 }
 
 /*****************************************************************************
@@ -1146,7 +1120,7 @@ static subpicture_t *SubpicClone( subpicture_t *p_source, subpicture_updater_t *
  *****************************************************************************/
 static void SubpicDestroyClone( subpicture_t *p_subpic )
 {
-    p_subpic->p_region = NULL; /* don't destroy region */
+    vlc_spu_regions_init(&p_subpic->regions); /* don't destroy region */
     subpicture_Delete( p_subpic );
 }
 
@@ -1170,12 +1144,17 @@ static vlc_tick_t SubsdelayEstimateDelay( filter_t *p_filter, subsdelay_heap_ent
 
     if( i_mode == SUBSDELAY_MODE_RELATIVE_SOURCE_CONTENT )
     {
-        if( p_entry->p_subpic && p_entry->p_subpic->p_region && ( p_entry->p_subpic->p_region->p_text ) )
+        if( p_entry->p_subpic )
         {
+            subpicture_region_t *p_region =
+                vlc_spu_regions_first_or_null( &p_entry->p_subpic->regions );
+            if( p_region && ( p_region->p_text ) )
+            {
             //FIXME: We only use a single segment here
-            i_rank = SubsdelayGetTextRank( p_entry->p_subpic->p_region->p_text->psz_text );
+            i_rank = SubsdelayGetTextRank( p_region->p_text->psz_text );
 
             return vlc_tick_from_sec( p_sys->f_factor * i_rank );
+            }
         }
 
         /* content is unavailable, calculation mode should be based on source delay */
@@ -1326,8 +1305,11 @@ static int SubsdelayGetTextRank( char *psz_text )
 /*****************************************************************************
  * SubsdelayIsTextEmpty: Check if the text contains spaces only
  *****************************************************************************/
-static bool SubsdelayIsTextEmpty( const text_segment_t *p_segment )
+static bool SubsdelayIsTextEmpty( const subpicture_region_t *p_region )
 {
+    if (!subpicture_region_IsText( p_region ))
+        return true;
+    const text_segment_t *p_segment = p_region->p_text;
     while ( p_segment )
     {
         if ( p_segment->psz_text && strlen( p_segment->psz_text ) > 0 )

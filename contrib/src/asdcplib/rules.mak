@@ -4,9 +4,18 @@ ASDCPLIB_VERSION := 2.7.19
 
 ASDCPLIB_URL := http://download.cinecert.com/asdcplib/asdcplib-$(ASDCPLIB_VERSION).tar.gz
 
-ifndef HAVE_IOS
+# nettle/gmp can't be used with the LGPLv2 license
+ifdef GPL
+ASDCP_PKG=1
+else
+ifdef GNUV3
+ASDCP_PKG=1
+endif
+endif
+
+ifdef ASDCP_PKG
 ifndef HAVE_ANDROID
-ifndef HAVE_WINSTORE
+ifndef HAVE_WINSTORE # FIXME uses some fordbidden SetErrorModes, GetModuleFileName in fileio.cpp
 PKGS += asdcplib
 endif
 endif
@@ -25,11 +34,13 @@ $(TARBALLS)/asdcplib-$(ASDCPLIB_VERSION).tar.gz:
 
 asdcplib: asdcplib-$(ASDCPLIB_VERSION).tar.gz .sum-asdcplib
 	$(UNPACK)
+	# $(call update_autoconfig,build-aux)
 	$(APPLY) $(SRC)/asdcplib/port-to-nettle.patch
 	$(APPLY) $(SRC)/asdcplib/static-programs.patch
 	$(APPLY) $(SRC)/asdcplib/adding-pkg-config-file.patch
 	$(APPLY) $(SRC)/asdcplib/win32-cross-compilation.patch
 	$(APPLY) $(SRC)/asdcplib/win32-dirent.patch
+	$(APPLY) $(SRC)/asdcplib/0001-Remove-a-broken-unused-template-class.patch
 	$(MOVE)
 
 DEPS_asdcplib = nettle $(DEPS_nettle)

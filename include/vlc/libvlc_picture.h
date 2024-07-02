@@ -35,6 +35,7 @@ typedef enum libvlc_picture_type_t
     libvlc_picture_Argb,
     libvlc_picture_Png,
     libvlc_picture_Jpg,
+    libvlc_picture_WebP,
 } libvlc_picture_type_t;
 
 /**
@@ -42,8 +43,9 @@ typedef enum libvlc_picture_type_t
  *
  * \see libvlc_picture_release()
  * \param pic A picture object
+ * \return the same object
  */
-LIBVLC_API void
+LIBVLC_API libvlc_picture_t *
 libvlc_picture_retain( libvlc_picture_t* pic );
 
 /**

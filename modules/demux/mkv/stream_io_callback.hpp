@@ -30,9 +30,10 @@
 
 #include <vlc_demux.h>
 
-#include "ebml/IOCallback.h"
+#include <ebml/IOCallback.h>
+#include <ebml/EbmlStream.h>
 
-using namespace LIBEBML_NAMESPACE;
+using namespace libebml;
 
 namespace mkv {
 
@@ -57,13 +58,29 @@ class vlc_stream_io_callback: public IOCallback
 
     bool IsEOF() const { return mb_eof; }
 
-    virtual uint32   read            ( void *p_buffer, size_t i_size);
-    virtual void     setFilePointer  ( int64_t i_offset, seek_mode mode = seek_beginning );
-    virtual size_t   write           ( const void *p_buffer, size_t i_size);
-    virtual uint64   getFilePointer  ( void );
-    virtual void     close           ( void ) { return; }
-    uint64           toRead          ( void );
+    uint32_t read            ( void *p_buffer, size_t i_size) override;
+    void     setFilePointer  ( int64_t i_offset, seek_mode mode = seek_beginning ) override;
+    size_t   write           ( const void *p_buffer, size_t i_size) override;
+    uint64_t getFilePointer  ( void ) override;
+    void     close           ( void ) override { return; }
 };
+
+class matroska_iostream_c : public EbmlStream
+{
+public:
+    matroska_iostream_c(vlc_stream_io_callback & io)
+        :EbmlStream(io)
+    {}
+
+    inline vlc_stream_io_callback & I_O() {
+        return static_cast<vlc_stream_io_callback &>(EbmlStream::I_O());
+    }
+
+private:
+    // hide generic method
+    using EbmlStream::I_O;
+};
+
 
 } // namespace
 

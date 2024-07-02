@@ -28,6 +28,7 @@ class QQmlEngine;
 class QQmlComponent;
 class QQuickItem;
 class QQuickRenderControl;
+class QOffscreenSurface;
 
 namespace vlc {
 
@@ -51,6 +52,7 @@ private:
 class CompositorX11UISurface : public QWindow , public CompositorVideo::QmlUISurface
 {
     Q_OBJECT
+
 public:
     explicit CompositorX11UISurface(QWindow* window, QScreen *screen = nullptr);
     ~CompositorX11UISurface();
@@ -73,6 +75,8 @@ signals:
     void sizeChanged(const QSize& size);
     void updated();
 
+    void requestPixmapReset();
+
 protected:
     bool eventFilter(QObject* object, QEvent *event) override;
 
@@ -90,14 +94,25 @@ protected:
     void resizeFbo();
 
 private:
+    static void applyNvidiaWorkaround(QSurfaceFormat& format);
+
     QQuickItem* m_rootItem = nullptr;
     QOpenGLContext *m_context = nullptr;
+    QBackingStore *m_backingStore = nullptr;
+    QPainter *m_backingStorePainter = nullptr;
     CompositorOffscreenWindow* m_uiWindow = nullptr;
     QQmlEngine* m_qmlEngine = nullptr;
     QWindow* m_renderWindow = nullptr;
     CompositorX11RenderControl* m_uiRenderControl = nullptr;
 
     QSize m_onscreenSize;
+
+    uint m_textureId = 0;
+    qreal m_dpr = 0;
+
+    bool initialized = false;
+
+    unsigned int m_fboId = 0;
 };
 
 }

@@ -28,6 +28,7 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_charset.h>
 #include <vlc_strings.h>
 #include <vlc_arrays.h>
@@ -558,7 +559,7 @@ void vorbis_ParseComment( es_format_t *p_fmt, vlc_meta_t **pp_meta,
                 if( psz_comment[i] >= 'a' && psz_comment[i] <= 'z' )
                     psz_comment[i] -= 'a' - 'A';
 
-            vlc_meta_AddExtra( p_meta, psz_comment, p );
+            vlc_meta_SetExtra( p_meta, psz_comment, p );
         }
 #undef IF_EXTRACT
 next_comment:

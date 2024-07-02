@@ -3,7 +3,7 @@
  *****************************************************************************
  * Copyright (C) 2022 VLC authors and VideoLAN
  *
- * Authors: Claudio Cambra <claudio.cambra@gmail.com>
+ * Authors: Claudio Cambra <developer@claudiocambra.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,12 +26,17 @@
 #import "extensions/NSFont+VLCAdditions.h"
 #import "extensions/NSString+Helpers.h"
 #import "extensions/NSView+VLCAdditions.h"
+
 #import "views/VLCImageView.h"
 #import "views/VLCTrackingView.h"
+
 #import "main/VLCMain.h"
+
 #import "library/VLCLibraryController.h"
 #import "library/VLCLibraryDataTypes.h"
 #import "library/VLCLibraryTableCellView.h"
+#import "library/VLCLibraryRepresentedItem.h"
+
 #import "library/audio-library/VLCLibraryAlbumTracksDataSource.h"
 
 NSString *VLCAudioLibrarySongCellIdentifier = @"VLCAudioLibrarySongCellIdentifier";
@@ -53,15 +58,16 @@ NSString *VLCAudioLibrarySongCellIdentifier = @"VLCAudioLibrarySongCellIdentifie
 
 - (void)awakeFromNib
 {
-    if(@available(macOS 10.14, *)) {
-        self.playInstantlyButton.contentTintColor = [NSColor VLCAccentColor];
-    }
-
     self.playInstantlyButton.target = self;
     self.playInstantlyButton.action = @selector(playInstantly:);
 
     self.trackingView.viewToHide = self.playInstantlyButton;
     self.trackingView.viewToShow = self.trackNumberTextField;
+
+    if (@available(macOS 10.14, *)) {
+        self.playInstantlyButton.contentTintColor = NSColor.VLCAccentColor;
+    }
+
     [self prepareForReuse];
 }
 
@@ -77,24 +83,29 @@ NSString *VLCAudioLibrarySongCellIdentifier = @"VLCAudioLibrarySongCellIdentifie
 
 - (IBAction)playInstantly:(id)sender
 {
-    if(_representedMediaItem == nil) {
+    [self.representedItem play];
+}
+
+- (void)setRepresentedItem:(VLCLibraryRepresentedItem *)representedItem
+{
+    if (representedItem == nil) {
+        NSLog(@"Represented item is nil, cannot set in song table cell view");
         return;
     }
 
-    if (!_libraryController) {
-        _libraryController = [[VLCMain sharedInstance] libraryController];
+    _representedItem = representedItem;
+
+    VLCMediaLibraryMediaItem * const mediaItem = (VLCMediaLibraryMediaItem *)representedItem.item;
+    NSAssert(mediaItem != nil, @"Represented item should be a medialibrarymediaitem!");
+
+    self.songNameTextField.stringValue = mediaItem.displayString;
+    self.durationTextField.stringValue = mediaItem.durationString;
+
+    if (mediaItem.trackNumber == 0) {
+        self.trackNumberTextField.stringValue = @"—";
+    } else {
+        self.trackNumberTextField.stringValue = [NSString stringWithFormat:@"%d", mediaItem.trackNumber];
     }
-
-    BOOL playImmediately = YES;
-    [_libraryController appendItemToPlaylist:_representedMediaItem playImmediately:playImmediately];
-}
-
-- (void)setRepresentedMediaItem:(VLCMediaLibraryMediaItem *)representedMediaItem
-{
-    _representedMediaItem = representedMediaItem;
-    self.songNameTextField.stringValue = representedMediaItem.displayString;
-    self.durationTextField.stringValue = representedMediaItem.durationString;
-    self.trackNumberTextField.stringValue = [NSString stringWithFormat:@"%d", representedMediaItem.trackNumber];
 
 }
 

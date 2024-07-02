@@ -23,6 +23,8 @@
 # include "config.h"
 #endif
 
+#include "qt.hpp"
+
 #include <QObject>
 #include <QVector>
 #include <QVariantList>
@@ -32,13 +34,17 @@
 #include "playlist_item.hpp"
 
 namespace vlc {
-  namespace playlist {
+namespace playlist {
 
-class PlaylistControllerModelPrivate;
-class PlaylistControllerModel : public QObject
+QVector<vlc::playlist::Media> toMediaList(const QVariantList &sources);
+
+using vlc_playlist_locker = vlc_locker<vlc_playlist_t, vlc_playlist_Lock, vlc_playlist_Unlock>;
+
+class PlaylistControllerPrivate;
+class PlaylistController : public QObject
 {
     Q_OBJECT
-    Q_DISABLE_COPY(PlaylistControllerModel)
+    Q_DISABLE_COPY(PlaylistController)
 
 public:
     enum PlaybackRepeat
@@ -62,6 +68,8 @@ public:
         SORT_KEY_DISC_NUMBER = VLC_PLAYLIST_SORT_KEY_DISC_NUMBER,
         SORT_KEY_URL = VLC_PLAYLIST_SORT_KEY_URL,
         SORT_KEY_RATING = VLC_PLAYLIST_SORT_KEY_RATING,
+        SORT_KEY_FILE_SIZE = VLC_PLAYLIST_SORT_KEY_FILE_SIZE,
+        SORT_KEY_FILE_MODIFIED = VLC_PLAYLIST_SORT_KEY_FILE_MODIFIED,
         SORT_KEY_NONE
     };
     Q_ENUM(SortKey)
@@ -73,9 +81,18 @@ public:
     };
     Q_ENUM(SortOrder)
 
+    enum MediaStopAction
+    {
+        MEDIA_STOPPED_CONTINUE = VLC_PLAYLIST_MEDIA_STOPPED_CONTINUE,
+        MEDIA_STOPPED_PAUSE = VLC_PLAYLIST_MEDIA_STOPPED_PAUSE,
+        MEDIA_STOPPED_STOP = VLC_PLAYLIST_MEDIA_STOPPED_STOP,
+        MEDIA_STOPPED_EXIT = VLC_PLAYLIST_MEDIA_STOPPED_EXIT
+    };
+    Q_ENUM(MediaStopAction)
+
     Q_PROPERTY(QVariantList sortKeyTitleList READ getSortKeyTitleList CONSTANT FINAL)
 
-    Q_PROPERTY(PlaylistPtr playlistPtr READ getPlaylistPtr WRITE setPlaylistPtr NOTIFY playlistPtrChanged FINAL)
+    Q_PROPERTY(Playlist playlist READ getPlaylist WRITE setPlaylist NOTIFY playlistChanged FINAL)
 
     Q_PROPERTY(PlaylistItem currentItem READ getCurrentItem NOTIFY currentItemChanged FINAL)
 
@@ -83,11 +100,13 @@ public:
     Q_PROPERTY(bool hasPrev READ hasPrev NOTIFY hasPrevChanged FINAL)
     Q_PROPERTY(bool random READ isRandom WRITE setRandom NOTIFY randomChanged  FINAL)
     Q_PROPERTY(PlaybackRepeat repeatMode READ getRepeatMode WRITE setRepeatMode NOTIFY repeatModeChanged FINAL)
-    Q_PROPERTY(bool playAndExit READ isPlayAndExit WRITE setPlayAndExit NOTIFY playAndExitChanged FINAL)
     Q_PROPERTY(bool empty READ isEmpty NOTIFY isEmptyChanged FINAL)
-    Q_PROPERTY(size_t count READ count NOTIFY countChanged FINAL)
+    Q_PROPERTY(int count READ count NOTIFY countChanged FINAL)
     Q_PROPERTY(SortKey sortKey READ getSortKey WRITE setSortKey NOTIFY sortKeyChanged FINAL)
     Q_PROPERTY(SortOrder sortOrder READ getSortOrder WRITE setSortOrder NOTIFY sortOrderChanged FINAL)
+    Q_PROPERTY(MediaStopAction mediaStopAction READ getMediaStopAction WRITE setMediaStopAction NOTIFY mediaStopActionChanged FINAL)
+    Q_PROPERTY(int currentIndex READ currentIndex NOTIFY currentIndexChanged FINAL)
+
 
 public:
     Q_INVOKABLE void play();
@@ -122,9 +141,9 @@ public:
     Q_INVOKABLE void explore(const PlaylistItem& pItem);
 
 public:
-    PlaylistControllerModel(QObject *parent = nullptr);
-    PlaylistControllerModel(vlc_playlist_t *playlist, QObject *parent = nullptr);
-    virtual ~PlaylistControllerModel();
+    PlaylistController(QObject *parent = nullptr);
+    PlaylistController(vlc_playlist_t *playlist, QObject *parent = nullptr);
+    virtual ~PlaylistController();
 
 
 public slots:
@@ -136,14 +155,15 @@ public slots:
     bool isRandom() const;
     void setRandom( bool );
 
+    MediaStopAction getMediaStopAction() const;
+    void setMediaStopAction(MediaStopAction );
+
     PlaybackRepeat getRepeatMode() const;
     void setRepeatMode( PlaybackRepeat mode );
 
-    bool isPlayAndExit() const;
-    void setPlayAndExit(bool );
-
     bool isEmpty() const;
-    size_t count() const;
+    int count() const;
+    int currentIndex() const;
 
     SortKey getSortKey() const;
     void setSortKey(SortKey sortKey);
@@ -152,24 +172,24 @@ public slots:
     void switchSortOrder();
 
     QVariantList getSortKeyTitleList() const;
-    PlaylistPtr getPlaylistPtr() const;
-    void setPlaylistPtr(PlaylistPtr id);
-    void setPlaylistPtr(vlc_playlist_t* newPlaylist);
+    Playlist getPlaylist() const;
+    void setPlaylist(const Playlist& playlist);
+    void setPlaylist(vlc_playlist_t* newPlaylist);
 
     void resetSortKey();
 
 signals:
-    void playlistPtrChanged( PlaylistPtr );
+    void playlistChanged( Playlist );
 
     void currentItemChanged( );
 
     void hasNextChanged( bool );
     void hasPrevChanged( bool );
     void randomChanged( bool );
-    void playAndExitChanged( bool );
+    void mediaStopActionChanged( MediaStopAction );
     void repeatModeChanged( PlaybackRepeat );
     void isEmptyChanged( bool empty );
-    void countChanged(size_t );
+    void countChanged(int);
 
     void sortKeyChanged();
     void sortOrderChanged();
@@ -184,11 +204,11 @@ signals:
     void playlistInitialized();
 
 private:
-    Q_DECLARE_PRIVATE(PlaylistControllerModel)
-    QScopedPointer<PlaylistControllerModelPrivate> d_ptr;
+    Q_DECLARE_PRIVATE(PlaylistController)
+    QScopedPointer<PlaylistControllerPrivate> d_ptr;
 };
 
-  } // namespace playlist
+} // namespace playlist
 } // namespace vlc
 
 #endif

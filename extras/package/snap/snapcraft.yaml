@@ -11,6 +11,11 @@ description: |
   NOTE. This snap contains an untested daily build of VLC
 confinement: strict
 compression: lzo
+plugs:
+  dot-config-aacs:
+    interface: personal-files
+    read:
+    - $HOME/.config/aacs
 
 apps:
   vlc:
@@ -37,6 +42,7 @@ apps:
       - audio-record
       - jack1
       - avahi-control
+      - dot-config-aacs
     slots:
       - mpris
 
@@ -66,26 +72,25 @@ parts:
     source-type: git
     plugin: autotools
     override-build: |
+      false
       sed -i 's|0\.19\.8|0\.19\.7|'  configure.ac
       cd extras/tools
       ./bootstrap
-      make -j $(getconf _NPROCESSORS_ONLN) .nasm
-      make -j $(getconf _NPROCESSORS_ONLN) .meson
+      make -j $(getconf _NPROCESSORS_ONLN)
       cd ../../
       export PATH=$PWD/extras/tools/build/bin:$PATH
       cd contrib && mkdir linux && cd linux
       ../bootstrap \
           --host=$TRIPLET \
           --enable-libdsm \
-          --enable-dvdcss \
-          --disable-chromaprint
+          --enable-dvdcss
       if [ -v VLC_PREBUILT_CONTRIBS_URL ]; then
           make prebuilt PREBUILT_URL="$VLC_PREBUILT_CONTRIBS_URL"
           make -j $(getconf _NPROCESSORS_ONLN) tools
       else
           make list
           make -j $(getconf _NPROCESSORS_ONLN) fetch
-          make -j $(getconf _NPROCESSORS_ONLN) -k install || make -j1
+          make -j $(getconf _NPROCESSORS_ONLN) -k || make -j1
           make package
       fi
       cd ../../
@@ -95,7 +100,8 @@ parts:
           --prefix=$SNAPCRAFT_PART_INSTALL/usr \
           --host=$TRIPLET \
           --disable-wayland \
-          --enable-merge-ffmpeg
+          --enable-merge-ffmpeg \
+          --enable-extra-checks
       make -j $(getconf _NPROCESSORS_ONLN)
       echo $(git describe --always HEAD) > $SNAPCRAFT_STAGE/version
       make -j $(getconf _NPROCESSORS_ONLN) install

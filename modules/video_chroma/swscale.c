@@ -44,10 +44,6 @@
 
 #include "../codec/avcodec/chroma.h" // Chroma Avutil <-> VLC conversion
 
-/* Gruikkkkkkkkkk!!!!! */
-#undef AVPALETTE_SIZE
-#define AVPALETTE_SIZE (256 * sizeof(uint32_t))
-
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
@@ -269,16 +265,16 @@ static void CloseScaler( filter_t *p_filter )
 /*****************************************************************************
  * Helpers
  *****************************************************************************/
-static void FixParameters( enum AVPixelFormat *pi_fmt, bool *pb_has_a, bool *pb_swap_uv, vlc_fourcc_t fmt )
+static void FixParameters( enum AVPixelFormat *pi_fmt, bool *pb_has_a, vlc_fourcc_t fmt )
 {
     switch( fmt )
     {
     case VLC_CODEC_YUV422A:
-        *pi_fmt = AV_PIX_FMT_YUV422P;
+        *pi_fmt = AV_PIX_FMT_YUVA422P;
         *pb_has_a = true;
         break;
     case VLC_CODEC_YUV420A:
-        *pi_fmt = AV_PIX_FMT_YUV420P;
+        *pi_fmt = AV_PIX_FMT_YUVA420P;
         *pb_has_a = true;
         break;
     case VLC_CODEC_YUVA:
@@ -286,28 +282,20 @@ static void FixParameters( enum AVPixelFormat *pi_fmt, bool *pb_has_a, bool *pb_
         *pb_has_a = true;
         break;
     case VLC_CODEC_RGBA:
-        *pi_fmt = AV_PIX_FMT_BGR32;
+        *pi_fmt = AV_PIX_FMT_RGBA;
         *pb_has_a = true;
         break;
     case VLC_CODEC_ARGB:
-        *pi_fmt = AV_PIX_FMT_BGR32_1;
+        *pi_fmt = AV_PIX_FMT_ARGB;
         *pb_has_a = true;
         break;
     case VLC_CODEC_BGRA:
-        *pi_fmt = AV_PIX_FMT_RGB32;
+        *pi_fmt = AV_PIX_FMT_BGRA;
         *pb_has_a = true;
         break;
     case VLC_CODEC_ABGR:
-        *pi_fmt = AV_PIX_FMT_RGB32_1;
+        *pi_fmt = AV_PIX_FMT_ABGR;
         *pb_has_a = true;
-        break;
-    case VLC_CODEC_YV12:
-        *pi_fmt = AV_PIX_FMT_YUV420P;
-        *pb_swap_uv = true;
-        break;
-    case VLC_CODEC_YV9:
-        *pi_fmt = AV_PIX_FMT_YUV410P;
-        *pb_swap_uv = true;
         break;
     default:
         break;
@@ -319,8 +307,8 @@ static int GetParameters( ScalerConfiguration *p_cfg,
                           const video_format_t *p_fmto,
                           int i_sws_flags_default )
 {
-    enum AVPixelFormat i_fmti = AV_PIX_FMT_NONE;
-    enum AVPixelFormat i_fmto = AV_PIX_FMT_NONE;
+    enum AVPixelFormat i_fmti;
+    enum AVPixelFormat i_fmto;
 
     bool b_has_ai = false;
     bool b_has_ao = false;
@@ -328,8 +316,8 @@ static int GetParameters( ScalerConfiguration *p_cfg,
     bool b_swap_uvi = false;
     bool b_swap_uvo = false;
 
-    GetFfmpegChroma( &i_fmti, p_fmti );
-    GetFfmpegChroma( &i_fmto, p_fmto );
+    i_fmti = FindFfmpegChroma( p_fmti->i_chroma, &b_swap_uvi );
+    i_fmto = FindFfmpegChroma( p_fmto->i_chroma, &b_swap_uvo );
 
     if( p_fmti->i_chroma == p_fmto->i_chroma )
     {
@@ -340,8 +328,8 @@ static int GetParameters( ScalerConfiguration *p_cfg,
         }
     }
 
-    FixParameters( &i_fmti, &b_has_ai, &b_swap_uvi, p_fmti->i_chroma );
-    FixParameters( &i_fmto, &b_has_ao, &b_swap_uvo, p_fmto->i_chroma );
+    FixParameters( &i_fmti, &b_has_ai, p_fmti->i_chroma );
+    FixParameters( &i_fmto, &b_has_ao, p_fmto->i_chroma );
 
 #if !defined (__ANDROID__) && !defined(TARGET_OS_IPHONE)
     /* FIXME TODO removed when ffmpeg is fixed
@@ -417,6 +405,9 @@ static int Init( filter_t *p_filter )
     p_sys->desc_in = vlc_fourcc_GetChromaDescription( p_fmti->i_chroma );
     p_sys->desc_out = vlc_fourcc_GetChromaDescription( p_fmto->i_chroma );
     if( p_sys->desc_in == NULL || p_sys->desc_out == NULL )
+        return VLC_EGENERIC;
+
+    if( p_sys->desc_in->plane_count == 0 || p_sys->desc_out->plane_count == 0 )
         return VLC_EGENERIC;
 
     /* swscale does not like too small width */
@@ -628,10 +619,33 @@ static void Convert( filter_t *p_filter, struct SwsContext *ctx,
                p_src, i_plane_count, b_swap_uvi );
     if( p_filter->fmt_in.video.i_chroma == VLC_CODEC_RGBP )
     {
-        memset( palette, 0, sizeof(palette) );
         if( p_filter->fmt_in.video.p_palette )
-            memcpy( palette, p_filter->fmt_in.video.p_palette->palette,
-                    __MIN( sizeof(video_palette_t), AVPALETTE_SIZE ) );
+        {
+            const video_palette_t *p_palette = p_filter->fmt_in.video.p_palette;
+            static_assert(sizeof(p_palette->palette) == AVPALETTE_SIZE,
+                          "Palette size mismatch between vlc and libavutil");
+            uint8_t *dstp = palette;
+            for(int i=0; i<p_palette->i_entries; i++)
+            {
+                // we want ARGB in host endianess from RGBA in byte order
+#ifdef WORDS_BIGENDIAN
+                dstp[0] = p_palette->palette[i][3];
+                dstp[1] = p_palette->palette[i][0];
+                dstp[2] = p_palette->palette[i][1];
+                dstp[3] = p_palette->palette[i][2];
+#else
+                dstp[0] = p_palette->palette[i][2];
+                dstp[1] = p_palette->palette[i][1];
+                dstp[2] = p_palette->palette[i][0];
+                dstp[3] = p_palette->palette[i][3];
+#endif
+                dstp += sizeof(p_palette->palette[0]);
+            }
+        }
+        else
+        {
+            memset( &palette, 0, sizeof(palette) );
+        }
         src[1] = palette;
         src_stride[1] = 4;
     }

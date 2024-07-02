@@ -65,9 +65,13 @@ libvlc_instance_t * libvlc_new( int argc, const char *const *argv )
     if (unlikely (p_libvlc_int == NULL))
         goto error;
 
-    if (libvlc_InternalInit( p_libvlc_int, argc + 1, my_argv ))
+    const int ret = libvlc_InternalInit( p_libvlc_int, argc + 1, my_argv );
+    if (ret != VLC_SUCCESS)
     {
         libvlc_InternalDestroy( p_libvlc_int );
+        const char *error = (ret == VLC_EGENERIC) ? _( "Generic VLC error" )
+                                                  : vlc_strerror_c( -ret );
+        libvlc_printerr( "%s", error );
         goto error;
     }
 
@@ -82,11 +86,12 @@ error:
     return NULL;
 }
 
-void libvlc_retain( libvlc_instance_t *p_instance )
+libvlc_instance_t *libvlc_retain( libvlc_instance_t *p_instance )
 {
     assert( p_instance != NULL );
 
     vlc_atomic_rc_inc( &p_instance->ref_count );
+    return p_instance;
 }
 
 void libvlc_release( libvlc_instance_t *p_instance )
@@ -99,13 +104,6 @@ void libvlc_release( libvlc_instance_t *p_instance )
         free( p_instance );
         libvlc_threads_deinit ();
     }
-}
-
-void libvlc_set_exit_handler( libvlc_instance_t *p_i, void (*cb) (void *),
-                              void *data )
-{
-    libvlc_int_t *p_libvlc = p_i->p_libvlc_int;
-    libvlc_SetExitHandler( p_libvlc, cb, data );
 }
 
 void libvlc_set_user_agent (libvlc_instance_t *p_i,
@@ -186,10 +184,12 @@ static libvlc_module_description_t *module_description_list_get(
         const char* shortname = module_GetShortName( p_module );
         const char* longname = module_GetLongName( p_module );
         const char* help = module_get_help( p_module );
+        const char* help_html = module_get_help_html( p_module );
         p_actual->psz_name = name ? strdup( name ) : NULL;
         p_actual->psz_shortname = shortname ? strdup( shortname ) : NULL;
         p_actual->psz_longname = longname ? strdup( longname ) : NULL;
         p_actual->psz_help = help ? strdup( help ) : NULL;
+        p_actual->psz_help_html = help_html ? strdup( help_html ) : NULL;
 
         p_actual->p_next = NULL;
         if ( p_previous )
@@ -213,6 +213,7 @@ void libvlc_module_description_list_release( libvlc_module_description_t *p_list
         free( p_actual->psz_shortname );
         free( p_actual->psz_longname );
         free( p_actual->psz_help );
+        free( p_actual->psz_help_html );
         p_before = p_actual;
         p_actual = p_before->p_next;
         free( p_before );

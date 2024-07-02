@@ -18,8 +18,9 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
+import QtQuick
 
+import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
 
 import "qrc:///widgets/" as Widgets
@@ -44,22 +45,18 @@ VideoAll {
     model: MLVideoModel {
         id: modelVideo
 
-        ml: MediaLib
+        searchPattern: MainCtx.search.pattern
+        sortOrder: MainCtx.sort.order
+        sortCriteria: MainCtx.sort.criteria
 
-        parentId: initialId
+        ml: MediaLib
     }
 
     contextMenu: Util.MLContextMenu { model: modelVideo; showPlayAsAudioAction: true }
 
-    header: Widgets.SubtitleLabel {
-        width: root.width
+    header: Widgets.ViewHeader {
+        view: root
 
-        // NOTE: We want this to be properly aligned with the grid items.
-        leftPadding: root.contentMargin
-
-        bottomPadding: VLCStyle.margin_normal
-
-        text: root.title
-        color: root.colorContext.fg.primary
+        text: view.title
     }
 }

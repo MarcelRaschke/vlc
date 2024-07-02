@@ -30,6 +30,9 @@
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
+#ifdef _WIN32
+# include <windows.h>
+#endif
 
 #include <vlc_common.h>
 #include <vlc_atomic.h>
@@ -72,6 +75,16 @@ void vlc_frame_CopyProperties(vlc_frame_t *restrict dst, const vlc_frame_t *src)
     dst->i_length  = src->i_length;
 }
 
+vlc_frame_t *vlc_frame_New(const struct vlc_frame_callbacks *cbs,
+                           void *buf, size_t size)
+{
+    vlc_frame_t *f = malloc(sizeof (*f));
+    if (unlikely(f == NULL))
+        return NULL;
+
+    return vlc_frame_Init(f, cbs, buf, size);
+}
+
 vlc_frame_t *vlc_frame_Init(vlc_frame_t *restrict f, const struct vlc_frame_callbacks *cbs,
                             void *buf, size_t size)
 {
@@ -91,18 +104,6 @@ vlc_frame_t *vlc_frame_Init(vlc_frame_t *restrict f, const struct vlc_frame_call
     return f;
 }
 
-static void vlc_frame_generic_Release (vlc_frame_t *frame)
-{
-    /* That is always true for frames allocated with vlc_frame_Alloc(). */
-    assert (frame->p_start == (unsigned char *)(frame + 1));
-    free (frame);
-}
-
-static const struct vlc_frame_callbacks vlc_frame_generic_cbs =
-{
-    vlc_frame_generic_Release,
-};
-
 /** Initial memory alignment of data frame.
  * @note This must be a multiple of sizeof(void*) and a power of two.
  * libavcodec AVX optimizations require at least 32-bytes. */
@@ -119,22 +120,34 @@ vlc_frame_t *vlc_frame_Alloc (size_t size)
         return NULL;
     }
 
-    /* 2 * VLC_FRAME_PADDING: pre + post padding */
-    const size_t alloc = sizeof (vlc_frame_t) + VLC_FRAME_ALIGN + (2 * VLC_FRAME_PADDING)
-                       + size;
-    if (unlikely(alloc <= size))
-        return NULL;
-
-    vlc_frame_t *f = malloc (alloc);
-    if (unlikely(f == NULL))
-        return NULL;
-
-    vlc_frame_Init(f, &vlc_frame_generic_cbs, f + 1, alloc - sizeof (*f));
     static_assert ((VLC_FRAME_PADDING % VLC_FRAME_ALIGN) == 0,
                    "VLC_FRAME_PADDING must be a multiple of VLC_FRAME_ALIGN");
-    f->p_buffer += VLC_FRAME_PADDING + VLC_FRAME_ALIGN - 1;
-    f->p_buffer = (void *)(((uintptr_t)f->p_buffer) & ~(VLC_FRAME_ALIGN - 1));
-    f->i_buffer = size;
+
+    /* 2 * VLC_FRAME_PADDING: pre + post padding */
+    size_t capacity = (2 * VLC_FRAME_PADDING) + size;
+    unsigned char *buf;
+#ifdef HAVE_ALIGNED_ALLOC
+    capacity += (-size) % VLC_FRAME_ALIGN;
+    buf = aligned_alloc(VLC_FRAME_ALIGN, capacity);
+#else
+    capacity += VLC_FRAME_ALIGN;
+    buf = malloc(capacity);
+#endif
+    if (unlikely(buf == NULL))
+        return NULL;
+
+    vlc_frame_t *f = vlc_frame_heap_Alloc(buf, capacity);
+    if (likely(f != NULL)) {
+#ifndef HAVE_ALIGNED_ALLOC
+        /* Alignment */
+        buf += (-(uintptr_t)(void *)buf) % (uintptr_t)VLC_FRAME_ALIGN;
+#endif
+        /* Header reserve */
+        buf += VLC_FRAME_PADDING;
+        f->p_buffer = buf;
+        f->i_buffer = size;
+    }
+
     return f;
 }
 
@@ -261,14 +274,10 @@ static const struct vlc_frame_callbacks vlc_frame_heap_cbs =
 
 vlc_frame_t *vlc_frame_heap_Alloc (void *addr, size_t length)
 {
-    vlc_frame_t *frame = malloc (sizeof (*frame));
-    if (frame == NULL)
-    {
-        free (addr);
-        return NULL;
-    }
-
-    return vlc_frame_Init(frame, &vlc_frame_heap_cbs, addr, length);
+    vlc_frame_t *frame = vlc_frame_New(&vlc_frame_heap_cbs, addr, length);
+    if (unlikely(frame == NULL))
+        free(addr);
+    return frame;
 }
 
 #ifdef HAVE_MMAP
@@ -293,18 +302,14 @@ vlc_frame_t *vlc_frame_mmap_Alloc (void *addr, size_t length)
     long page_mask = sysconf(_SC_PAGESIZE) - 1;
     size_t left = ((uintptr_t)addr) & page_mask;
     size_t right = (-length) & page_mask;
-
-    vlc_frame_t *frame = malloc (sizeof (*frame));
-    if (frame == NULL)
-    {
-        munmap (addr, length);
-        return NULL;
-    }
-
-    vlc_frame_Init(frame, &vlc_frame_mmap_cbs,
-               ((char *)addr) - left, left + length + right);
-    frame->p_buffer = addr;
-    frame->i_buffer = length;
+    vlc_frame_t *frame = vlc_frame_New(&vlc_frame_mmap_cbs,
+                                       ((char *)addr) - left,
+                                       left + length + right);
+    if (likely(frame != NULL)) {
+        frame->p_buffer = addr;
+        frame->i_buffer = length;
+    } else
+        munmap(addr, length);
     return frame;
 }
 #else
@@ -367,14 +372,11 @@ static const struct vlc_frame_callbacks vlc_frame_shm_cbs =
 
 vlc_frame_t *vlc_frame_shm_Alloc (void *addr, size_t length)
 {
-    vlc_frame_t *frame = malloc (sizeof (*frame));
+    vlc_frame_t *frame = vlc_frame_New(&vlc_frame_shm_cbs, (uint8_t *)addr,
+                                       length);
     if (unlikely(frame == NULL))
-    {
-        shmdt (addr);
-        return NULL;
-    }
-
-    return vlc_frame_Init(frame, &vlc_frame_shm_cbs, (uint8_t *)addr, length);
+        shmdt(addr);
+    return frame;
 }
 #else
 vlc_frame_t *vlc_frame_shm_Alloc (void *addr, size_t length)
@@ -452,7 +454,7 @@ vlc_frame_t *vlc_frame_File(int fd, bool write)
         HANDLE hMap;
         DWORD prot = write ? PAGE_READWRITE : PAGE_READONLY;
         DWORD access = FILE_MAP_READ | (write ? FILE_MAP_WRITE : 0);
-#ifdef VLC_WINSTORE_APP
+#if !WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
         hMap = CreateFileMappingFromApp(handle, NULL, prot, length, NULL);
         if (hMap != INVALID_HANDLE_VALUE)
             addr = MapViewOfFileFromApp(hMap, access, 0, length);
@@ -521,8 +523,8 @@ vlc_frame_t *vlc_frame_File(int fd, bool write)
         vlc_frame_Release (frame);
         frame = NULL;
         errno = EIO;
-        goto done;
     }
+done:
 #else // !_WIN32
     for (size_t i = 0; i < length;)
     {
@@ -536,7 +538,6 @@ vlc_frame_t *vlc_frame_File(int fd, bool write)
         i += len;
     }
 #endif // !_WIN32
-done:
     vlc_cleanup_pop ();
     return frame;
 }

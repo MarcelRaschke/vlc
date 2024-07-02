@@ -1,6 +1,6 @@
 # jpeg
 
-JPEG_VERSION := 2.0.8-esr
+JPEG_VERSION := 3.0.3
 JPEG_URL := $(GITHUB)/libjpeg-turbo/libjpeg-turbo/archive/refs/tags/$(JPEG_VERSION).tar.gz
 
 $(TARBALLS)/libjpeg-turbo-$(JPEG_VERSION).tar.gz:
@@ -16,7 +16,8 @@ JPEG_CONF:= -DENABLE_SHARED=OFF -DWITH_TURBOJPEG=OFF
 
 .jpeg: jpeg toolchain.cmake
 	$(CMAKECLEAN)
-	$(HOSTVARS) $(CMAKE) $(JPEG_CONF)
+	$(HOSTVARS_CMAKE) $(CMAKE) $(JPEG_CONF)
 	+$(CMAKEBUILD)
-	$(CMAKEINSTALL)
+	$(CMAKEINSTALL) --component lib
+	$(CMAKEINSTALL) --component include
 	touch $@

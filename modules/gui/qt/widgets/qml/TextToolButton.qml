@@ -15,8 +15,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as T
+import QtQuick
+import QtQuick.Templates as T
 
 import org.videolan.vlc 0.1
 
@@ -27,8 +27,10 @@ T.ToolButton {
 
     font.pixelSize: VLCStyle.fontSize_normal
 
-    implicitWidth: contentItem.implicitWidth + leftPadding + rightPadding
-    implicitHeight: contentItem.implicitHeight + topPadding + bottomPadding
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            implicitContentWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             implicitContentHeight + topPadding + bottomPadding)
 
     padding: VLCStyle.margin_xxsmall
 
@@ -36,7 +38,11 @@ T.ToolButton {
 
     Keys.priority: Keys.AfterItem
 
-    Keys.onPressed: Navigation.defaultKeyAction(event)
+    Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
+
+    // Accessible
+
+    Accessible.onPressAction: control.clicked()
 
     readonly property ColorContext colorContext : ColorContext {
         id: theme
@@ -54,12 +60,14 @@ T.ToolButton {
         color: theme.fg.primary
         verticalAlignment: Text.AlignVCenter
         horizontalAlignment: Text.AlignHCenter
+
+        //button text is already exposed
+        Accessible.ignored: true
     }
 
     background: AnimatedBackground {
-        animate: theme.initialized
-        active: visualFocus
-        backgroundColor: theme.bg.primary
-        activeBorderColor: theme.visualFocus
+        enabled: theme.initialized
+        color: theme.bg.primary
+        border.color: visualFocus ? theme.visualFocus : "transparent"
     }
 }

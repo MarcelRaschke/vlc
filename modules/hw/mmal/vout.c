@@ -144,6 +144,13 @@ typedef struct vout_display_sys_t {
 } vout_display_sys_t;
 
 
+// At the moment we cope with any mono-planar RGBA thing
+// We could cope with many other things but they currently don't occur
+const vlc_fourcc_t hw_mmal_vzc_subpicture_chromas[] = {
+    VLC_CODEC_RGBA, VLC_CODEC_BGRA, VLC_CODEC_ARGB, VLC_CODEC_ABGR, 0
+};
+
+
 // ISP setup
 
 static bool want_copy(const video_format_t * const fmt)
@@ -532,29 +539,18 @@ static int configure_display(vout_display_t *vd, const video_format_t *fmt)
     MMAL_DISPLAYREGION_T display_region;
     MMAL_STATUS_T status;
 
-    if (!fmt)
-    {
-        msg_Err(vd, "Missing cfg & fmt");
-        return -EINVAL;
-    }
-
     isp_check(vd, sys);
 
-    if (fmt) {
-        sys->input->format->es->video.par.num = fmt->i_sar_num;
-        sys->input->format->es->video.par.den = fmt->i_sar_den;
+    sys->input->format->es->video.par.num = fmt->i_sar_num;
+    sys->input->format->es->video.par.den = fmt->i_sar_den;
 
-        status = mmal_port_format_commit(sys->input);
-        if (status != MMAL_SUCCESS) {
-            msg_Err(vd, "Failed to commit format for input port %s (status=%"PRIx32" %s)",
-                            sys->input->name, status, mmal_status_to_string(status));
-            return -EINVAL;
-        }
-        place_dest(vd, fmt);
-    } else {
-        fmt = vd->source;
-        place_dest(vd, vd->source);
+    status = mmal_port_format_commit(sys->input);
+    if (status != MMAL_SUCCESS) {
+        msg_Err(vd, "Failed to commit format for input port %s (status=%"PRIx32" %s)",
+                        sys->input->name, status, mmal_status_to_string(status));
+        return -EINVAL;
     }
+    place_dest(vd, fmt);
 
     display_region.hdr.id = MMAL_PARAMETER_DISPLAYREGION;
     display_region.hdr.size = sizeof(MMAL_DISPLAYREGION_T);
@@ -693,16 +689,12 @@ static int vd_control(vout_display_t *vd, int query)
         case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
         case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
         case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
+        case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
         {
             if (configure_display(vd, vd->source) >= 0)
                 ret = VLC_SUCCESS;
             break;
         }
-
-        case VOUT_DISPLAY_CHANGE_ZOOM:
-            msg_Warn(vd, "Unsupported control query %d", query);
-            ret = VLC_SUCCESS;
-            break;
 
         default:
             msg_Warn(vd, "Unknown control query %d", query);
@@ -734,7 +726,7 @@ static void vd_manage(vout_display_t *vd)
 
 
 static int attach_subpics(vout_display_t * const vd, vout_display_sys_t * const sys,
-                          subpicture_t * const subpicture)
+                          const vlc_render_subpicture * const spic)
 {
     unsigned int n = 0;
 
@@ -748,34 +740,35 @@ static int attach_subpics(vout_display_t * const vd, vout_display_sys_t * const 
     }
 
     // Attempt to import the subpics
-    for (subpicture_t * spic = subpicture; spic != NULL; spic = spic->p_next)
-    {
-        for (subpicture_region_t *sreg = spic->p_region; sreg != NULL; sreg = sreg->p_next) {
-            picture_t *const src = sreg->p_picture;
+    const struct subpicture_region_rendered *r;
+    vlc_vector_foreach(r, &spic->regions) {
+        picture_t *const src = r->p_picture;
 
-            // At this point I think the subtitles are being placed in the
-            // coord space of the cfg rectangle
-            if ((sys->subpic_bufs[n] = hw_mmal_vzc_buf_from_pic(sys->vzc,
-                src,
-                (MMAL_RECT_T){.width = vd->cfg->display.width, .height=vd->cfg->display.height},
-                sreg->i_x, sreg->i_y,
-                sreg->i_alpha,
-                n == 0)) == NULL)
-            {
-                msg_Err(vd, "Failed to allocate vzc buffer for subpic");
-                return VLC_ENOMEM;
-            }
-
-            if (++n == SUBS_MAX)
-                return VLC_SUCCESS;
+        // At this point I think the subtitles are being placed in the
+        // coord space of the cfg rectangle
+        if ((sys->subpic_bufs[n] = hw_mmal_vzc_buf_from_pic(sys->vzc,
+            src,
+            (MMAL_RECT_T){.width = vd->cfg->display.width, .height=vd->cfg->display.height},
+            r->place.x,
+            r->place.y,
+            r->place.width,
+            r->place.height,
+            r->i_alpha,
+            n == 0)) == NULL)
+        {
+            msg_Err(vd, "Failed to allocate vzc buffer for subpic");
+            return VLC_ENOMEM;
         }
+
+        if (++n == SUBS_MAX)
+            return VLC_SUCCESS;
     }
     return VLC_SUCCESS;
 }
 
 
 static void vd_prepare(vout_display_t *vd, picture_t *p_pic,
-                       subpicture_t *subpicture, vlc_tick_t date)
+                       const vlc_render_subpicture *subpicture, vlc_tick_t date)
 {
     VLC_UNUSED(date);
     vout_display_sys_t * const sys = vd->sys;
@@ -1130,6 +1123,7 @@ static int OpenMmalVout(vout_display_t *vd,
         else
             msg_Dbg(vd, "Display device: %s, qt=%d id=%d display=%d", display_name,
                     qt_num, display_id, sys->display_id);
+        free(display_name);
     }
 
     status = mmal_component_create(MMAL_COMPONENT_DEFAULT_VIDEO_RENDERER, &sys->component);
@@ -1259,7 +1253,7 @@ static int OpenMmalVout(vout_display_t *vd,
     fmtp->i_chroma = req_chroma(fmtp);
 
     vd->info = (vout_display_info_t){
-        .subpicture_chromas = hw_mmal_vzc_subpicture_chromas
+        .subpicture_chromas = hw_mmal_vzc_subpicture_chromas,
     };
 
     vd->ops = &ops;
@@ -1271,4 +1265,3 @@ fail:
 
     return ret;
 }
-

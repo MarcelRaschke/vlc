@@ -136,6 +136,15 @@ void FormatNamespace::Parse(vlc_fourcc_t fcc, const std::vector<std::string> &el
                 fmt.i_level = std::stoi(elements.at(1), nullptr, 16);
             }
             break;
+        case MP4RA("avs1"):
+            es_format_Change(&fmt, VIDEO_ES, VLC_CODEC_CAVS);
+            break;
+        case MP4RA("avs2"):
+            es_format_Change(&fmt, VIDEO_ES, VLC_CODEC_CAVS2);
+            break;
+        case MP4RA("avs3"):
+            es_format_Change(&fmt, VIDEO_ES, VLC_CODEC_CAVS3);
+            break;
         case MP4RA("vp09"):
         case MP4RA("vp08"):
             es_format_Change(&fmt, VIDEO_ES,
@@ -147,6 +156,12 @@ void FormatNamespace::Parse(vlc_fourcc_t fcc, const std::vector<std::string> &el
                 fmt.i_profile = std::stoi(elements.at(0), nullptr, 16);
                 fmt.i_level = std::stoi(elements.at(1), nullptr, 16);
             }
+            break;
+        case MP4RA("vvc1"):
+        case MP4RA("vvi1"):
+            es_format_Change(&fmt, VIDEO_ES, VLC_CODEC_VVC);
+            if(elements.size() > 0)
+                fmt.i_profile = std::stoi(elements.at(0), nullptr, 16);
             break;
         case MSFCC("AVC1"):
         case MSFCC("AVCB"):

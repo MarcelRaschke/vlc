@@ -19,29 +19,28 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.medialib 0.1
 
 DragItem {
     id: root
 
-    /* required */ property MLModel mlModel: null
+    required property MLBaseModel mlModel
 
-    // string => role for medialib id, data[id] will be pass to Medialib::mlInputItem for QmlInputItem
+    // string => role for medialib id, data[id] will be pass to Medialib::mlInputItem for SharedInputItem
     property string mlIDRole: "id"
 
-    function getSelectedInputItem(cb) {
-        console.assert(mlIDRole)
-        var inputIdList = root.indexesData.map(function(obj){
-            return obj[root.mlIDRole]
-        })
-        MediaLib.mlInputItem(inputIdList, cb)
+    onRequestData: (indexes, resolve, reject) =>  {
+        if (indexesFlat)
+            mlModel.getDataFlat(indexes, resolve)
+        else
+            mlModel.getData(indexes, resolve)
     }
 
-    onRequestData: {
-        mlModel.getData(indexes, function (data) {
-            root.setData(identifier, data)
-        })
+    onRequestInputItems: (indexes, data, resolve, reject) => {
+        console.assert(mlIDRole)
+        const inputIdList = data.map(o => o[root.mlIDRole])
+        MediaLib.mlInputItem(inputIdList, resolve)
     }
 }

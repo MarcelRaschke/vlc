@@ -3,11 +3,6 @@ vlc_modules += {
     'sources' : files('cache_read.c')
 }
 
-vlc_modules += {
-    'name' : 'cache_block',
-    'sources' : files('cache_block.c')
-}
-
 if host_system != 'windows' and not have_tvos
   vlc_modules += {
       'name' : 'decomp',
@@ -16,11 +11,11 @@ if host_system != 'windows' and not have_tvos
   }
 endif
 
-if z_lib.found()
+if z_dep.found()
   vlc_modules += {
       'name' : 'inflate',
       'sources' : files('inflate.c'),
-      'dependencies' : [z_lib]
+      'dependencies' : [z_dep]
   }
 endif
 

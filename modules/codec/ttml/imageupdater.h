@@ -73,27 +73,21 @@ static void TTML_ImageSpuAppendRegion(ttml_image_updater_sys_t *p_sys,
     p_sys->pp_append = &p_new->p_next;
 }
 
-static int TTML_ImageSpuValidate(subpicture_t *p_spu,
-                                 bool b_src_changed, const video_format_t *p_fmt_src,
-                                 bool b_dst_changed, const video_format_t *p_fmt_dst,
-                                 vlc_tick_t ts)
-{
-    VLC_UNUSED(p_spu);
-    VLC_UNUSED(b_src_changed); VLC_UNUSED(p_fmt_src);
-    VLC_UNUSED(p_fmt_dst);
-    VLC_UNUSED(ts);
-    return b_dst_changed ? VLC_EGENERIC: VLC_SUCCESS;
-}
-
 static void TTML_ImageSpuUpdate(subpicture_t *p_spu,
-                                const video_format_t *p_fmt_src,
-                                const video_format_t *p_fmt_dst,
+                                const video_format_t *prev_src, const video_format_t *p_fmt_src,
+                                const video_format_t *prev_dst, const video_format_t *p_fmt_dst,
                                 vlc_tick_t i_ts)
 {
-    VLC_UNUSED(p_fmt_src); VLC_UNUSED(p_fmt_dst);
+    VLC_UNUSED(p_fmt_src);
     VLC_UNUSED(i_ts);
-    ttml_image_updater_sys_t *p_sys = p_spu->updater.p_sys;
-    subpicture_region_t **pp_last_region = &p_spu->p_region;
+    VLC_UNUSED(prev_src);
+    ttml_image_updater_sys_t *p_sys = p_spu->updater.sys;
+
+    if (p_fmt_dst->i_visible_width  == prev_dst->i_visible_width &&
+        p_fmt_dst->i_visible_height == prev_dst->i_visible_height)
+        return;
+
+    vlc_spu_regions_Clear( &p_spu->regions );
 
     /* !WARN: SMPTE-TT image profile requires no scaling, and even it
               would, it does not store the necessary original pic size */
@@ -101,17 +95,11 @@ static void TTML_ImageSpuUpdate(subpicture_t *p_spu,
     for(ttml_image_updater_region_t *p_updtregion = p_sys->p_regions;
                                      p_updtregion; p_updtregion = p_updtregion->p_next)
     {
-        subpicture_region_t *r = subpicture_region_New(&p_updtregion->p_pic->format);
-        if (!r)
+        subpicture_region_t *r = subpicture_region_ForPicture(NULL, p_updtregion->p_pic);
+        if (unlikely(r == NULL))
             return;
-        picture_Release(r->p_picture);
-        r->p_picture = picture_Clone(p_updtregion->p_pic);
-        if(!r->p_picture)
-        {
-            subpicture_region_Delete(r);
-            return;
-        }
 
+        r->b_absolute = true;
         r->i_align = SUBPICTURE_ALIGN_LEFT|SUBPICTURE_ALIGN_TOP;
 
         if( p_updtregion->i_flags & ORIGIN_X_IS_RATIO )
@@ -124,14 +112,13 @@ static void TTML_ImageSpuUpdate(subpicture_t *p_spu,
         else
             r->i_y = p_updtregion->origin.y;
 
-        *pp_last_region = r;
-        pp_last_region = &r->p_next;
+        vlc_spu_regions_push(&p_spu->regions, r);
     }
 }
 
 static void TTML_ImageSpuDestroy(subpicture_t *p_spu)
 {
-    ttml_image_updater_sys_t *p_sys = p_spu->updater.p_sys;
+    ttml_image_updater_sys_t *p_sys = p_spu->updater.sys;
     while(p_sys->p_regions)
     {
         ttml_image_updater_region_t *p_next = p_sys->p_regions->p_next;
@@ -146,11 +133,16 @@ static inline subpicture_t *decoder_NewTTML_ImageSpu(decoder_t *p_dec)
     ttml_image_updater_sys_t *p_sys = calloc(1, sizeof(*p_sys));
     if(!p_sys)
         return NULL;
+
+    static const struct vlc_spu_updater_ops spu_ops =
+    {
+        .update   = TTML_ImageSpuUpdate,
+        .destroy  = TTML_ImageSpuDestroy,
+    };
+
     subpicture_updater_t updater = {
-        .pf_validate = TTML_ImageSpuValidate,
-        .pf_update   = TTML_ImageSpuUpdate,
-        .pf_destroy  = TTML_ImageSpuDestroy,
-        .p_sys       = p_sys,
+        .sys = p_sys,
+        .ops = &spu_ops,
     };
     p_sys->p_regions = NULL;
     p_sys->pp_append = &p_sys->p_regions;

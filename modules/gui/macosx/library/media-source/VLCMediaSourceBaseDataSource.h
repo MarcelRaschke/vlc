@@ -22,15 +22,17 @@
 
 #import <Cocoa/Cocoa.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 typedef NS_ENUM(NSInteger, VLCMediaSourceMode) {
     VLCMediaSourceModeLAN,
     VLCMediaSourceModeInternet,
 };
 
-NS_ASSUME_NONNULL_BEGIN
-
 @class VLCInputNodePathControl;
 @class VLCMediaSourceDataSource;
+
+extern NSString * const VLCMediaSourceBaseDataSourceNodeChanged;
 
 @interface VLCMediaSourceBaseDataSource : NSObject <NSCollectionViewDataSource,
                                                     NSCollectionViewDelegate,
@@ -41,9 +43,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readwrite) NSCollectionView *collectionView;
 @property (readwrite) NSScrollView *collectionViewScrollView;
 @property (readwrite) NSTableView *tableView;
-@property (readwrite) NSSegmentedControl *gridVsListSegmentedControl;
+@property (readwrite) NSScrollView *tableViewScrollView;
 @property (readwrite) NSButton *homeButton;
 @property (readwrite) VLCInputNodePathControl *pathControl;
+@property (readwrite) NSVisualEffectView *pathControlVisualEffectView;
 @property (readwrite, nonatomic) VLCMediaSourceMode mediaSourceMode;
 @property (readwrite, nonatomic) VLCMediaSourceDataSource *childDataSource;
 
@@ -51,7 +54,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)reloadViews;
 - (void)homeButtonAction:(id)sender;
 - (void)pathControlAction:(id)sender;
-- (void)setGridOrListMode:(id)sender;
 
 @end
 

@@ -131,6 +131,7 @@ typedef struct decoder_sys_t
             struct android_picture_ctx apic_ctxs[MAX_PIC];
             void *p_surface, *p_jsurface;
             unsigned i_angle;
+            unsigned i_input_offset_x, i_input_offset_y;
             unsigned i_input_width, i_input_height;
             unsigned i_input_visible_width, i_input_visible_height;
             unsigned int i_stride, i_slice_height;
@@ -269,14 +270,16 @@ static void HXXXInitSize(decoder_t *p_dec, bool *p_size_changed)
     {
         decoder_sys_t *p_sys = p_dec->p_sys;
         struct hxxx_helper *hh = &p_sys->video.hh;
-        unsigned i_w, i_h, i_vw, i_vh;
-        if(hxxx_helper_get_current_picture_size(hh, &i_w, &i_h, &i_vw, &i_vh)
+        unsigned i_ox, i_oy, i_w, i_h, i_vw, i_vh;
+        if(hxxx_helper_get_current_picture_size(hh, &i_ox, &i_oy, &i_w, &i_h, &i_vw, &i_vh)
            == VLC_SUCCESS)
         {
             *p_size_changed = (i_w != p_sys->video.i_input_width
                             || i_h != p_sys->video.i_input_height
                             || i_vw != p_sys->video.i_input_visible_width
                             || i_vh != p_sys->video.i_input_visible_height);
+            p_sys->video.i_input_offset_x = i_ox;
+            p_sys->video.i_input_offset_y = i_oy;
             p_sys->video.i_input_width = i_w;
             p_sys->video.i_input_height = i_h;
             p_sys->video.i_input_visible_width = i_vw;
@@ -470,6 +473,7 @@ static int StartMediaCodec(decoder_t *p_dec)
         if (p_sys->b_adaptive)
             msg_Dbg(p_dec, "mediacodec configured for adaptative playback");
         args.video.b_adaptive_playback = p_sys->b_adaptive;
+        args.video.b_low_latency = var_InheritBool(p_dec, "low-delay");
     }
     else
     {
@@ -660,19 +664,15 @@ CreateVideoContext(decoder_t *p_dec)
     assert(dec_dev->opaque);
     AWindowHandler *awh = dec_dev->opaque;
 
-    const bool has_subtitle_surface =
-        AWindowHandler_getANativeWindow(awh, AWindow_Subtitles) != NULL;
-
     /* Force OpenGL interop (via AWindow_SurfaceTexture) if there is a
      * projection or an orientation to handle, if the Surface owner is not able
-     * to modify its layout, or if there is no external subtitle surfaces. */
+     * to modify its layout. */
 
     p_sys->video.surfacetexture = NULL;
     bool use_surfacetexture =
         p_dec->fmt_out.video.projection_mode != PROJECTION_MODE_RECTANGULAR
      || (!p_sys->api.b_support_rotation && p_dec->fmt_out.video.orientation != ORIENT_NORMAL)
-     || !AWindowHandler_canSetVideoLayout(awh)
-     || !has_subtitle_surface;
+     || !AWindowHandler_canSetVideoLayout(awh);
 
     if (!use_surfacetexture)
     {
@@ -808,8 +808,14 @@ static int OpenDecoder(vlc_object_t *p_this, pf_MediaCodecApi_init pf_init)
             break;
         case VLC_CODEC_WMV3: mime = "video/x-ms-wmv"; break;
         case VLC_CODEC_VC1:  mime = "video/wvc1"; break;
-        case VLC_CODEC_VP8:  mime = "video/x-vnd.on2.vp8"; break;
-        case VLC_CODEC_VP9:  mime = "video/x-vnd.on2.vp9"; break;
+        case VLC_CODEC_VP8:
+            if (p_dec->fmt_in->i_level != 0 && p_dec->fmt_in->i_level != -1) // contains alpha extradata
+                return VLC_ENOTSUP;
+            mime = "video/x-vnd.on2.vp8"; break;
+        case VLC_CODEC_VP9:
+            if (p_dec->fmt_in->i_level != 0 && p_dec->fmt_in->i_level != -1) // contains alpha extradata
+                return VLC_ENOTSUP;
+            mime = "video/x-vnd.on2.vp9"; break;
         }
     }
     else
@@ -1157,7 +1163,7 @@ static int Video_ProcessOutput(decoder_t *p_dec, mc_api_out *p_out,
                               NULL, NULL, &chroma_div);
             CopyOmxPicture(p_sys->video.i_pixel_format, p_pic,
                            p_sys->video.i_slice_height, p_sys->video.i_stride,
-                           (uint8_t *)p_out->buf.p_ptr, chroma_div, NULL);
+                           (uint8_t *)p_out->buf.p_ptr, chroma_div);
 
             if (p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false))
             {
@@ -1172,14 +1178,18 @@ static int Video_ProcessOutput(decoder_t *p_dec, mc_api_out *p_out,
         assert(p_out->type == MC_OUT_TYPE_CONF);
         p_sys->video.i_pixel_format = p_out->conf.video.pixel_format;
 
-        const char *name = "unknown";
+        const char *name;
         if (!p_sys->api.b_direct_rendering
-         && !GetVlcChromaFormat(p_sys->video.i_pixel_format,
-                                &p_dec->fmt_out.i_codec, &name))
+         && (p_dec->fmt_out.i_codec =
+             GetVlcChromaFormat(p_sys->video.i_pixel_format)) == 0)
         {
             msg_Err(p_dec, "color-format not recognized");
             return -1;
         }
+
+        name = vlc_fourcc_GetDescription( VIDEO_ES,p_dec->fmt_out.i_codec );
+        if (name == NULL)
+            name = "unknown";
 
         msg_Err(p_dec, "output: %d %s, %dx%d stride %d %d, crop %d %d %d %d",
                 p_sys->video.i_pixel_format, name,

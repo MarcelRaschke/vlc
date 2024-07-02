@@ -28,9 +28,9 @@
 
 #include "simple_preferences.hpp"
 #include "preferences_widgets.hpp"
+#include "dialogs/dialogs_provider.hpp"
 #include "maininterface/mainctx.hpp"
 #include "util/color_scheme_model.hpp"
-#include "util/qvlcapp.hpp"
 #include "util/proxycolumnmodel.hpp"
 #include "medialibrary/mlrecentsmodel.hpp"
 
@@ -61,8 +61,9 @@
 #include <QFileDialog>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
+#include <QRegularExpression>
 
-#include <assert.h>
+#include <cassert>
 #include <math.h>
 
 #define ICON_HEIGHT 48
@@ -245,42 +246,40 @@ SPrefsCatList::SPrefsCatList( qt_intf_t *_p_intf, QWidget *_parent ) :
        See QT bugs 131 & 816 and QAbstractButton's source code. */
     QSignalMapper *mapper = new QSignalMapper( layout );
     connect( mapper, QSIGNALMAPPER_MAPPEDINT_SIGNAL, this, &SPrefsCatList::switchPanel );
-
-    QPixmap scaled;
     qreal dpr = devicePixelRatioF();
 
-#define ADD_CATEGORY( button, label, ltooltip, icon, numb )                 \
-    QToolButton * button = new QToolButton( this );                         \
-    /* Scale icon to non native size outside of toolbutton to avoid widget size */\
-    /* computation using native size */\
-    scaled = QPixmap( icon )\
-             .scaledToHeight( ICON_HEIGHT * dpr, Qt::SmoothTransformation );\
-    scaled.setDevicePixelRatio( dpr ); \
-    button->setIcon( scaled );                \
-    button->setText( label );                                               \
-    button->setToolTip( ltooltip );                                         \
-    button->setToolButtonStyle( Qt::ToolButtonTextUnderIcon );              \
-    button->setIconSize( QSize( ICON_WIDTH, ICON_HEIGHT ) );          \
-    button->setMinimumWidth( 40 + ICON_WIDTH );\
-    button->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Minimum); \
-    button->setAutoRaise( true );                                           \
-    button->setCheckable( true );                                           \
-    button->setAutoExclusive( true );                                       \
-    connect( button, &QToolButton::clicked, mapper, QOverload<>::of(&QSignalMapper::map) ); \
-    mapper->setMapping( button, numb );                                     \
-    layout->addWidget( button );
+    auto addCategory = [&]( QString label, QString ltooltip, QString icon, int numb) {
+        QToolButton * button = new QToolButton( this );
+        /* Scale icon to non native size outside of toolbutton to avoid widget size */
+        /* computation using native size */
+        QPixmap scaled = QPixmap( icon )
+              .scaledToHeight( ICON_HEIGHT * dpr, Qt::SmoothTransformation );
+        scaled.setDevicePixelRatio( dpr );
+        button->setIcon( scaled );
+        button->setText( label );
+        button->setToolTip( ltooltip );
+        button->setToolButtonStyle( Qt::ToolButtonTextUnderIcon );
+        button->setIconSize( QSize( ICON_WIDTH, ICON_HEIGHT ) );
+        button->setMinimumWidth( 40 + ICON_WIDTH );
+        button->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Minimum);
+        button->setAutoRaise( true );
+        button->setCheckable( true );
+        button->setAutoExclusive( true );
+        connect( button, &QToolButton::clicked, mapper, QOverload<>::of(&QSignalMapper::map) );
+        mapper->setMapping( button, numb );
+        layout->addWidget( button );
+    };
 
-    ADD_CATEGORY( SPrefsInterface, qfut(INTF_TITLE), qfut(INTF_TOOLTIP), ":/prefsmenu/spref_interface.png" , 0 );
-    ADD_CATEGORY( SPrefsAudio, qfut(AUDIO_TITLE), qfut(AUDIO_TOOLTIP), ":/prefsmenu/spref_audio.png", 1 );
-    ADD_CATEGORY( SPrefsVideo, qfut(VIDEO_TITLE), qfut(VIDEO_TOOLTIP), ":/prefsmenu/spref_video.png", 2 );
-    ADD_CATEGORY( SPrefsSubtitles, qfut(SUBPIC_TITLE), qfut(SUBPIC_TOOLTIP), ":/prefsmenu/spref_subtitles.png", 3 );
-    ADD_CATEGORY( SPrefsInputAndCodecs, qfut(INPUT_TITLE), qfut(INPUT_TOOLTIP), ":/prefsmenu/spref_input.png", 4 );
-    ADD_CATEGORY( SPrefsHotkeys, qfut(HOTKEYS_TITLE), qfut(HOTKEYS_TOOLTIP), ":/prefsmenu/spref_hotkeys.png", 5 );
-    ADD_CATEGORY( SPrefsMediaLibrary, qfut(ML_TITLE), qfut(ML_TOOLTIP), ":/prefsmenu/spref_medialibrary.png", 6 );
+    addCategory( qfut(INTF_TITLE), qfut(INTF_TOOLTIP), ":/prefsmenu/spref_interface.png" , SPrefsInterface );
+    addCategory( qfut(AUDIO_TITLE), qfut(AUDIO_TOOLTIP), ":/prefsmenu/spref_audio.png", SPrefsAudio );
+    addCategory( qfut(VIDEO_TITLE), qfut(VIDEO_TOOLTIP), ":/prefsmenu/spref_video.png", SPrefsVideo );
+    addCategory( qfut(SUBPIC_TITLE), qfut(SUBPIC_TOOLTIP), ":/prefsmenu/spref_subtitles.png", SPrefsSubtitles );
+    addCategory( qfut(INPUT_TITLE), qfut(INPUT_TOOLTIP), ":/prefsmenu/spref_input.png", SPrefsInputAndCodecs );
+    addCategory( qfut(HOTKEYS_TITLE), qfut(HOTKEYS_TOOLTIP), ":/prefsmenu/spref_hotkeys.png", SPrefsHotkeys );
+    if ( vlc_ml_instance_get( p_intf ) != nullptr )
+        addCategory( qfut(ML_TITLE), qfut(ML_TOOLTIP), ":/prefsmenu/spref_medialibrary.png", SPrefsMediaLibrary );
 
-#undef ADD_CATEGORY
-
-    SPrefsInterface->setChecked( true );
+    qobject_cast<QToolButton*>(mapper->mapping(SPrefsInterface))->setChecked(true);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing( 1 );
 
@@ -297,6 +296,74 @@ void SPrefsCatList::switchPanel( int i )
 /*********************************************************************
  * The Panels
  *********************************************************************/
+
+template<typename ControlType, typename WidgetType>
+void SPrefsPanel::configGeneric(const char* option, QLabel* label, WidgetType* control)
+{
+    module_config_t* p_config =  config_FindConfig( option );
+    if( p_config )
+    {
+        auto configcontrol =  new ControlType(p_config, label, control );
+        controls.append( configcontrol );
+    }
+    else
+    {
+        control->setEnabled( false );
+        if( label )
+            label->setEnabled( false );
+    }
+}
+
+template<typename ControlType, typename WidgetType>
+void SPrefsPanel::configGenericNoUi(const char* option, QLabel* label, WidgetType* control)
+{
+    module_config_t* p_config =  config_FindConfig( option );
+    if( p_config )
+    {
+        auto configcontrol =  new ControlType(p_config, label, control );
+        controls.append( configcontrol );
+    }
+    else
+    {
+        control->setVisible( false );
+        if( label )
+            label->setEnabled( false );
+    }
+}
+
+template<typename ControlType>
+void SPrefsPanel::configGenericFile(const char* option, QLabel* label, QLineEdit* control, QPushButton* button)
+{
+    module_config_t* p_config =  config_FindConfig( option );
+    if( p_config )
+    {
+        auto configcontrol =  new ControlType(p_config, label, control, button );
+        controls.append( configcontrol );
+    }
+    else
+    {
+        control->setEnabled( false );
+        if( label )
+            label->setEnabled( false );
+        if( button )
+            button->setEnabled( false );
+    }
+}
+
+void SPrefsPanel::configBool(const char* option, QAbstractButton* control)
+{
+    module_config_t* p_config =  config_FindConfig( option );
+    if( p_config )
+    {
+        auto configcontrol =  new BoolConfigControl(p_config, nullptr, control );
+        controls.append( configcontrol );
+    }
+    else
+    {
+        control->setEnabled( false );
+    }
+}
+
 SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
                           int _number ) : QWidget( _parent ), p_intf( _p_intf )
 {
@@ -305,69 +372,6 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
     number = _number;
     lang = NULL;
     radioGroup = NULL;
-
-#define CONFIG_GENERIC( option, type, label, qcontrol )                   \
-            p_config =  config_FindConfig( option );                      \
-            if( p_config )                                                \
-            {                                                             \
-                control =  new type ## ConfigControl(                     \
-                           p_config, label, ui.qcontrol );                \
-                controls.append( control );                               \
-            }                                                             \
-            else {                                                        \
-                QWidget *label_ = label;                                  \
-                ui.qcontrol->setEnabled( false );                         \
-                if( label_ ) label_->setEnabled( false );                 \
-            }
-
-#define CONFIG_BOOL( option, qcontrol )                           \
-            p_config =  config_FindConfig( option );                      \
-            if( p_config )                                                \
-            {                                                             \
-                control =  new BoolConfigControl(                         \
-                           p_config, NULL, ui.qcontrol );                 \
-                controls.append( control );                               \
-            }                                                             \
-            else { ui.qcontrol->setEnabled( false ); }
-
-#define CONFIG_GENERIC_NO_UI( option, type, label, qcontrol )             \
-            p_config =  config_FindConfig( option );                      \
-            if( p_config )                                                \
-            {                                                             \
-                control =  new type ## ConfigControl(                     \
-                           p_config, label, qcontrol );                   \
-                controls.append( control );                               \
-            }                                                             \
-            else {                                                        \
-                QWidget *widget = label;                                  \
-                qcontrol->setVisible( false );                            \
-                if( widget ) widget->setEnabled( false );                 \
-            }
-
-#define CONFIG_GENERIC_FILE( option, type, label, qcontrol, qbutton )     \
-            p_config =  config_FindConfig( option );                      \
-            if( p_config )                                                \
-            {                                                             \
-                control =  new type ## ConfigControl(                     \
-                           p_config, label, qcontrol, qbutton );          \
-                controls.append( control );                               \
-            }                                                             \
-            else {                                                        \
-                qcontrol->setEnabled( false );                            \
-                if( label ) label->setEnabled( false );                   \
-                if( qbutton ) qbutton->setEnabled( false );               \
-            }
-
-#define START_SPREFS_CAT( name , label )    \
-        case SPrefs ## name:                \
-        {                                   \
-            Ui::SPrefs ## name ui;      \
-            ui.setupUi( panel );            \
-            panel_label->setText( label );
-
-#define END_SPREFS_CAT      \
-            break;          \
-        }
 
     QVBoxLayout *panel_layout = new QVBoxLayout();
     QWidget *panel = new QWidget();
@@ -392,19 +396,21 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
         /******************************
          * VIDEO Panel Implementation *
          ******************************/
-        START_SPREFS_CAT( Video, qtr("Video Settings") );
-            CONFIG_BOOL( "video", enableVideo );
+        case SPrefsVideo:
+        {
+            auto& ui = m_videoUI;
+            ui.setupUi( panel );
+            panel_label->setText( qtr("Video Settings") );
+
+            configBool( "video", ui.enableVideo );
             ui.videoZone->setEnabled( ui.enableVideo->isChecked() );
             connect( ui.enableVideo, &QCheckBox::toggled,
                      ui.videoZone, &QWidget::setEnabled );
 
-            CONFIG_BOOL( "fullscreen", fullscreen );
-            CONFIG_BOOL( "video-deco", windowDecorations );
-            CONFIG_GENERIC( "vout", StringList, ui.voutLabel, outputModule );
+            configBool( "fullscreen", ui.fullscreen );
+            configBool( "video-deco", ui.windowDecorations );
+            configGeneric<StringListConfigControl>("vout", ui.voutLabel, ui.outputModule);
 
-            optionWidgets["videoOutCoB"] = ui.outputModule;
-
-            optionWidgets["fullscreenScreenB"] = ui.fullscreenScreenBox;
             ui.fullscreenScreenBox->addItem( qtr("Automatic"), -1 );
             int i_screenCount = 0;
             foreach( QScreen* screen, QGuiApplication::screens() )
@@ -423,125 +429,106 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
             }
 
 #ifdef _WIN32
-            CONFIG_BOOL( "directx-hw-yuv", hwYUVBox );
+            configBool( "directx-hw-yuv", ui.hwYUVBox );
 #else
             ui.directXBox->setVisible( false );
 #endif
 
 #ifdef __OS2__
-            CONFIG_BOOL( "kva-fixt23", kvaFixT23 );
-            CONFIG_GENERIC( "kva-video-mode", StringList, ui.kvaVideoModeLabel,
-                            kvaVideoMode );
+            configBool( "kva-fixt23", ui.kvaFixT23 );
+            configGeneric<StringListConfigControl>( "kva-video-mode", ui.kvaVideoModeLabel,
+                            ui.kvaVideoMode );
 #else
             ui.kvaBox->setVisible( false );
 #endif
 
-            CONFIG_GENERIC( "deinterlace", IntegerList, ui.deinterLabel, deinterlaceBox );
-            CONFIG_GENERIC( "deinterlace-mode", StringList, ui.deinterModeLabel, deinterlaceModeBox );
-            CONFIG_GENERIC( "aspect-ratio", String, ui.arLabel, arLine );
+            configGeneric<IntegerListConfigControl>( "deinterlace",  ui.deinterLabel, ui.deinterlaceBox );
+            configGeneric<StringListConfigControl>( "deinterlace-mode", ui.deinterModeLabel, ui.deinterlaceModeBox );
+            configGeneric<StringConfigControl>( "aspect-ratio", ui.arLabel, ui.arLine );
 
-            CONFIG_GENERIC_FILE( "snapshot-path", Directory, ui.dirLabel,
+            configGenericFile<DirectoryConfigControl>( "snapshot-path",  ui.dirLabel,
                                  ui.snapshotsDirectory, ui.snapshotsDirectoryBrowse );
-            CONFIG_GENERIC( "snapshot-prefix", String, ui.prefixLabel, snapshotsPrefix );
-            CONFIG_BOOL( "snapshot-sequential",
-                            snapshotsSequentialNumbering );
-            CONFIG_GENERIC( "snapshot-format", StringList, ui.arLabel,
-                            snapshotsFormat );
-        END_SPREFS_CAT;
+            configGeneric<StringConfigControl>( "snapshot-prefix", ui.prefixLabel, ui.snapshotsPrefix );
+            configBool( "snapshot-sequential", ui.snapshotsSequentialNumbering );
+            configGeneric<StringListConfigControl>( "snapshot-format", ui.arLabel, ui.snapshotsFormat );
+
+            break;
+        }
 
         /******************************
          * AUDIO Panel Implementation *
          ******************************/
-        START_SPREFS_CAT( Audio, qtr("Audio Settings") );
+        case SPrefsAudio:
+        {
+            auto& ui = m_audioUI;
+            ui.setupUi( panel );
+            panel_label->setText( qtr("Audio Settings") );
 
-            CONFIG_BOOL( "audio", enableAudio );
+            configBool( "audio", ui.enableAudio );
             ui.audioZone->setEnabled( ui.enableAudio->isChecked() );
             connect( ui.enableAudio, &QCheckBox::toggled,
                      ui.audioZone, &QWidget::setEnabled );
 
-#define audioCommon( name ) \
-            QLabel * name ## Label = new QLabel( qtr( "Device:" ) ); \
-            name ## Label->setMinimumSize(QSize(250, 0)); \
-            outputAudioLayout->addWidget( name ## Label, outputAudioLayout->rowCount(), 0, 1, 1 ); \
-
-#define audioControl( name) \
-            audioCommon( name ) \
-            QComboBox * name ## Device = new QComboBox; \
-            name ## Label->setBuddy( name ## Device ); \
-            name ## Device->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Preferred  );\
-            outputAudioLayout->addWidget( name ## Device, outputAudioLayout->rowCount() - 1, 1, 1, -1 );
-
-#define audioControl2( name) \
-            audioCommon( name ) \
-            QHBoxLayout * name ## hboxLayout = new QHBoxLayout; \
-            QLineEdit * name ## Device = new QLineEdit; \
-            name ## Label->setBuddy( name ## Device ); \
-            name ## hboxLayout->addWidget( name ## Device ); \
-            QPushButton * name ## Browse = new QPushButton( qtr( "Browse..." ) ); \
-            name ## hboxLayout->addWidget( name ## Browse ); \
-            outputAudioLayout->addLayout( name ## hboxLayout, outputAudioLayout->rowCount() - 1, 1, 1, 1, Qt::AlignLeft );
-
             /* Build if necessary */
             QGridLayout * outputAudioLayout = qobject_cast<QGridLayout *>(ui.outputAudioBox->layout());
-#ifdef _WIN32
-            audioControl( DirectX );
-            optionWidgets["directxL" ] = DirectXLabel;
-            optionWidgets["directxW" ] = DirectXDevice;
-            CONFIG_GENERIC_NO_UI( "directx-audio-device", StringList,
-                    DirectXLabel, DirectXDevice );
 
-            audioControl( Waveout );
-            optionWidgets["waveoutL" ] = WaveoutLabel;
-            optionWidgets["waveoutW" ] = WaveoutDevice;
-            CONFIG_GENERIC_NO_UI( "waveout-audio-device", StringList,
-                    WaveoutLabel, WaveoutDevice );
+            auto audioControl = [this, outputAudioLayout](QString key, const char* property) {
+                QLabel* label = new QLabel( qtr( "Device:" ) );
+                label->setMinimumSize(QSize(250, 0));
+                outputAudioLayout->addWidget( label, outputAudioLayout->rowCount(), 0, 1, 1 );
 
-#elif defined( __OS2__ )
-            audioControl( kai );
-            optionWidgets["kaiL"] = kaiLabel;
-            optionWidgets["kaiW"] = kaiDevice;
-            CONFIG_GENERIC_NO_UI( "kai-audio-device", StringList, kaiLabel,
-                    kaiDevice );
-#else
-            if( module_exists( "alsa" ) )
-            {
-                audioControl( alsa );
-                optionWidgets["alsaL"] = alsaLabel;
-                optionWidgets["alsaW"] = alsaDevice;
-                CONFIG_GENERIC_NO_UI( "alsa-audio-device" , StringList, alsaLabel,
-                                alsaDevice );
-            }
-            if( module_exists( "oss" ) )
-            {
-                audioControl2( OSS );
-                optionWidgets["ossL"] = OSSLabel;
-                optionWidgets["ossW"] = OSSDevice;
-                optionWidgets["ossB"] = OSSBrowse;
-                CONFIG_GENERIC_FILE( "oss-audio-device" , File, OSSLabel, OSSDevice,
-                                 OSSBrowse );
-            }
+                QComboBox* device = new QComboBox;
+                label->setBuddy( device );
+                device->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Preferred  );
+                outputAudioLayout->addWidget( device, outputAudioLayout->rowCount() - 1, 1, 1, -1 );
+
+                audioControlGroups[key] = AudioControlGroup(label, device);
+                configGenericNoUi<StringListConfigControl>(property, label, device);
+            };
+
+//audioControlFile is only used for oss
+#if !defined(_WIN32) && !defined( __OS2__ )
+            auto audioControlFile = [this, outputAudioLayout](QString key, const char* property) {
+                QLabel* label = new QLabel( qtr( "Device:" ) );
+                label->setMinimumSize(QSize(250, 0));
+                outputAudioLayout->addWidget( label, outputAudioLayout->rowCount(), 0, 1, 1 );
+
+                QHBoxLayout* hboxLayout = new QHBoxLayout;
+                QLineEdit* device = new QLineEdit;
+                label->setBuddy( device ); \
+                hboxLayout->addWidget( device ); \
+                QPushButton * browse = new QPushButton( qtr( "Browse..." ) );
+                hboxLayout->addWidget( browse );
+                outputAudioLayout->addLayout( hboxLayout, outputAudioLayout->rowCount() - 1, 1, 1, 1, Qt::AlignLeft );
+
+                audioControlGroups[key] = AudioControlGroup(label, device, browse);
+                configGenericFile<FileConfigControl>(property, label, device, browse);
+            };
 #endif
 
 #ifdef _WIN32
-            audioControl( MMDevice );
-            optionWidgets["mmdeviceL" ] = MMDeviceLabel;
-            optionWidgets["mmdeviceW" ] = MMDeviceDevice;
-            CONFIG_GENERIC_NO_UI( "mmdevice-audio-device", StringList,
-                                  MMDeviceLabel, MMDeviceDevice );
+            audioControl("directx", "directx-audio-device" );
+            audioControl("waveout", "waveout-audio-device" );
 
-            CONFIG_GENERIC( "mmdevice-passthrough", IntegerList,
-                            ui.mmdevicePassthroughLabel, mmdevicePassthroughBox );
-            optionWidgets["mmdevicePassthroughL"] = ui.mmdevicePassthroughLabel;
-            optionWidgets["mmdevicePassthroughB"] = ui.mmdevicePassthroughBox;
+#elif defined( __OS2__ )
+            audioControl("kai", "kai-audio-device" );
+#else
+            if( module_exists( "alsa" ) )
+                audioControl("alsa", "alsa-audio-device" );
+
+            if( module_exists( "oss" ) )
+                audioControlFile("oss", "oss-audio-device" );
+#endif
+
+#ifdef _WIN32
+            audioControl("mmdevice", "mmdevice-audio-device" );
+
+            configGeneric<IntegerListConfigControl>( "mmdevice-passthrough",
+                                                     ui.mmdevicePassthroughLabel, ui.mmdevicePassthroughBox );
 #else
             ui.mmdevicePassthroughLabel->setVisible( false );
             ui.mmdevicePassthroughBox->setVisible( false );
 #endif
-
-
-#undef audioControl2
-#undef audioControl
-#undef audioCommon
 
             int i_max_volume = config_GetInt( "qt-max-volume" );
 
@@ -556,49 +543,41 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
             connect( ui.resetVolumeCheckbox, &QCheckBox::toggled,
                      ui.defaultVolume_zone, &QWidget::setEnabled );
 
-            CONFIG_GENERIC( "audio-language" , String , ui.langLabel,
-                            preferredAudioLanguage );
+            configGeneric<StringConfigControl>( "audio-language" , ui.langLabel, ui.preferredAudioLanguage );
 
-            CONFIG_BOOL( "spdif", spdifBox );
+            configBool( "spdif", ui.spdifBox );
 
             if( !module_exists( "normvol" ) )
                 ui.volNormBox->setEnabled( false );
             else
             {
-                CONFIG_GENERIC( "norm-max-level" , Float, nullptr, volNormSpin );
+                configGeneric<FloatConfigControl>( "norm-max-level" , nullptr, ui.volNormSpin );
             }
-            CONFIG_GENERIC( "audio-replay-gain-mode", StringList, ui.replayLabel,
-                            replayCombo );
-            CONFIG_GENERIC( "audio-visual" , StringList, ui.visuLabel,
-                            visualisation);
-            CONFIG_BOOL( "audio-time-stretch", autoscaleBox );
+            configGeneric<StringListConfigControl>( "audio-replay-gain-mode", ui.replayLabel,
+                            ui.replayCombo );
+            configGeneric<StringListConfigControl>( "audio-visual" , ui.visuLabel,
+                            ui.visualisation);
+            configBool( "audio-time-stretch", ui.autoscaleBox );
 
             /* Audio Output Specifics */
-            CONFIG_GENERIC( "aout", StringList, ui.outputLabel, outputModule );
+            configGeneric<StringListConfigControl>( "aout", ui.outputLabel, ui.outputModule );
 
             connect( ui.outputModule, QOverload<int>::of(&QComboBox::currentIndexChanged),
                      this, &SPrefsPanel::updateAudioOptions );
 
             /* File output exists on all platforms */
-            CONFIG_GENERIC_FILE( "audiofile-file", File, ui.fileLabel,
+            configGenericFile<FileConfigControl>( "audiofile-file",  ui.fileLabel,
                                  ui.fileName, ui.fileBrowseButton );
 
-            optionWidgets["fileW"] = ui.fileControl;
-            optionWidgets["audioOutCoB"] = ui.outputModule;
-            optionWidgets["normalizerChB"] = ui.volNormBox;
-            optionWidgets["volLW"] = ui.volumeValue;
-            optionWidgets["spdifChB"] = ui.spdifBox;
-            optionWidgets["defaultVolume"] = ui.defaultVolume;
-            optionWidgets["resetVolumeCheckbox"] = ui.resetVolumeCheckbox;
             updateAudioOptions( ui.outputModule->currentIndex() );
 
             /* LastFM */
             if( module_exists( "audioscrobbler" ) )
             {
-                CONFIG_GENERIC( "lastfm-username", String, ui.lastfm_user_label,
-                        lastfm_user_edit );
-                CONFIG_GENERIC( "lastfm-password", String, ui.lastfm_pass_label,
-                        lastfm_pass_edit );
+                configGeneric<StringConfigControl>( "lastfm-username", ui.lastfm_user_label,
+                        ui.lastfm_user_edit );
+                configGeneric<StringConfigControl>( "lastfm-password", ui.lastfm_pass_label,
+                        ui.lastfm_pass_edit );
 
                 if( config_ExistIntf( "audioscrobbler" ) )
                     ui.lastfm->setChecked( true );
@@ -620,13 +599,7 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
             connect( ui.volNormBox, &QCheckBox::toggled, ui.volNormSpin, &QDoubleSpinBox::setEnabled );
 
             char* psz = config_GetPsz( "audio-filter" );
-            qs_filter = qfu( psz ).split( ':',
-                                          #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
-                                              Qt::SkipEmptyParts
-                                          #else
-                                              QString::SkipEmptyParts
-                                          #endif
-                                        );
+            qs_filter = qfu( psz ).split( ':', Qt::SkipEmptyParts );
 
             free( psz );
 
@@ -637,12 +610,17 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
             /* Volume Label */
             updateAudioVolume( ui.defaultVolume->value() ); // First time init
 
-        END_SPREFS_CAT;
+            break;
+        }
 
         /*****************************************
          * INPUT AND CODECS Panel Implementation *
          *****************************************/
-        START_SPREFS_CAT( InputAndCodecs, qtr("Input & Codecs Settings") );
+        case SPrefsInputAndCodecs:
+        {
+            auto& ui = m_inputCodecUI;
+            ui.setupUi( panel );
+            panel_label->setText( qtr("Input & Codecs Settings") );
 
             /* Disk Devices */
             {
@@ -673,36 +651,34 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
                     << "dvd*" << "scd*" << "sr*" << "sg*" << "cd*";
             ui.DVDDeviceComboBox->addItems( QDir( "/dev/" )
                     .entryList( DVDDeviceComboBoxStringList, QDir::System )
-                    .replaceInStrings( QRegExp("^"), "/dev/" )
+                    .replaceInStrings( QRegularExpression(QStringLiteral("^")), "/dev/" )
             );
 #endif
-            CONFIG_GENERIC( "dvd", String, ui.DVDLabel,
-                            DVDDeviceComboBox->lineEdit() );
-            CONFIG_GENERIC_FILE( "input-record-path", Directory, ui.recordLabel,
+            configGeneric<StringConfigControl>( "dvd", ui.DVDLabel,
+                            ui.DVDDeviceComboBox->lineEdit() );
+            configGenericFile<DirectoryConfigControl>( "input-record-path",  ui.recordLabel,
                                  ui.recordPath, ui.recordBrowse );
 
-            CONFIG_GENERIC( "http-proxy", String , ui.httpProxyLabel, proxy );
-            CONFIG_GENERIC( "postproc-q", Integer, ui.ppLabel, PostProcLevel );
-            CONFIG_GENERIC( "avi-index", IntegerList, ui.aviLabel, AviRepair );
+            configGeneric<StringConfigControl>( "http-proxy", ui.httpProxyLabel, ui.proxy );
+            configGeneric<IntegerConfigControl>( "postproc-q", ui.ppLabel, ui.PostProcLevel );
+            configGeneric<IntegerListConfigControl>( "avi-index", ui.aviLabel, ui.AviRepair );
 
             /* live555 module prefs */
-            CONFIG_BOOL( "rtsp-tcp", live555TransportRTSP_TCPRadio );
+            configBool( "rtsp-tcp", ui.live555TransportRTSP_TCPRadio );
             if ( !module_exists( "live555" ) )
             {
                 ui.live555TransportRTSP_TCPRadio->hide();
                 ui.live555TransportHTTPRadio->hide();
                 ui.live555TransportLabel->hide();
             }
-            CONFIG_GENERIC( "dec-dev", StringList, ui.hwAccelLabel, hwAccelModule );
-            CONFIG_BOOL( "input-fast-seek", fastSeekBox );
-            optionWidgets["inputLE"] = ui.DVDDeviceComboBox;
-            optionWidgets["cachingCoB"] = ui.cachingCombo;
-            CONFIG_GENERIC( "avcodec-skiploopfilter", IntegerList, ui.filterLabel, loopFilterBox );
-            CONFIG_GENERIC( "sout-x264-tune", StringList, ui.x264Label, tuneBox );
-            CONFIG_GENERIC( "sout-x264-preset", StringList, ui.x264Label, presetBox );
-            CONFIG_GENERIC( "sout-x264-profile", StringList, ui.x264profileLabel, profileBox );
-            CONFIG_GENERIC( "sout-x264-level", String, ui.x264profileLabel, levelBox );
-            CONFIG_BOOL( "mkv-preload-local-dir", mkvPreloadBox );
+            configGeneric<StringListConfigControl>( "dec-dev", ui.hwAccelLabel, ui.hwAccelModule );
+            configBool( "input-fast-seek", ui.fastSeekBox );
+            configGeneric<IntegerListConfigControl>( "avcodec-skiploopfilter", ui.filterLabel, ui.loopFilterBox );
+            configGeneric<StringListConfigControl>( "sout-x264-tune", ui.x264Label, ui.tuneBox );
+            configGeneric<StringListConfigControl>( "sout-x264-preset", ui.x264Label, ui.presetBox );
+            configGeneric<StringListConfigControl>( "sout-x264-profile", ui.x264profileLabel, ui.profileBox );
+            configGeneric<StringConfigControl>( "sout-x264-level", ui.x264profileLabel, ui.levelBox );
+            configBool( "mkv-preload-local-dir", ui.mkvPreloadBox );
 
             /* Caching */
             /* Add the things to the ComboBox */
@@ -728,12 +704,17 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
                     ui.cachingCombo->findData( QVariant( i_cache ) ) );
 #undef TestCaC
 
-        END_SPREFS_CAT;
+            break;
+        }
 
         /**********************************
          * INTERFACE Panel Implementation *
          **********************************/
-        START_SPREFS_CAT( Interface, qtr("Interface Settings") );
+        case SPrefsInterface:
+        {
+            auto& ui = m_interfaceUI;
+            ui.setupUi( panel );
+            panel_label->setText( qtr("Interface Settings") );
 
 #ifndef _WIN32
             ui.langBox->hide();
@@ -751,7 +732,7 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
                 DWORD len = 256;
                 if( RegQueryValueEx( h_key, TEXT("Lang"), NULL, NULL, (LPBYTE) &szData, &len ) == ERROR_SUCCESS ) {
                     langReg = FromWide( szData );
-                    ui.langCombo->setCurrentIndex( ui.langCombo->findData(langReg) );
+                    ui.langCombo->setCurrentIndex( ui.langCombo->findData(qfu(langReg)) );
                 }
             }
             free( langReg);
@@ -772,8 +753,8 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
 
             if( !module_exists( "skins2" ) )
             {
-                ui.LooknfeelSelection->hide();
-                ui.mainPreview->hide();
+                ui.skins->hide();
+                ui.skinImage->hide();
             }
             else
             {
@@ -783,70 +764,70 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
                 {
                     if( strstr( psz_intf, "skin" ) )
                         ui.skins->setChecked( true );
-                } else {
-                    /* defaults to qt */
-                    ui.qt->setChecked( true );
                 }
                 free( psz_intf );
             }
 
-            optionWidgets["skinRB"] = ui.skins;
-            optionWidgets["qtRB"] = ui.qt;
 #if !defined( _WIN32)
             fillStylesCombo( ui.stylesCombo, getSettings()->value( "MainWindow/QtStyle", "" ).toString() );
             m_resetters.push_back( std::make_unique<PropertyResetter>( ui.stylesCombo, "currentIndex" ) );
 
             connect( ui.stylesCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                      this, &SPrefsPanel::changeStyle );
-            optionWidgets["styleCB"] = ui.stylesCombo;
 #else
             ui.stylesCombo->hide();
             ui.stylesLabel->hide();
 #endif
             radioGroup = new QButtonGroup(this);
-            radioGroup->addButton( ui.qt, 0 );
-            radioGroup->addButton( ui.skins, 1 );
-#if QT_VERSION >= QT_VERSION_CHECK(5,15,0)
-            connect( radioGroup, &QButtonGroup::idClicked,
-                     ui.styleStackedWidget, &QStackedWidget::setCurrentIndex );
-#else
-            connect( radioGroup, QOverload<int>::of(&QButtonGroup::buttonClicked),
-                     ui.styleStackedWidget, &QStackedWidget::setCurrentIndex );
-#endif
-            ui.styleStackedWidget->setCurrentIndex( radioGroup->checkedId() );
+            radioGroup->addButton( ui.modernButton, 0 );
+            radioGroup->addButton( ui.classicButton, 1 );
+            radioGroup->addButton( ui.skins, 2 );
 
-            connect( ui.minimalviewBox, &QCheckBox::toggled,
-                     ui.mainPreview, &InterfacePreviewWidget::setNormalPreview );
-            CONFIG_BOOL( "qt-minimal-view", minimalviewBox );
-            ui.mainPreview->setNormalPreview( ui.minimalviewBox->isChecked() );
-            ui.skinsPreview->setPreview( InterfacePreviewWidget::SKINS );
+            configBool( "qt-minimal-view", ui.minimalviewBox );
 
-            CONFIG_BOOL( "embedded-video", embedVideo );
-            CONFIG_BOOL( "qt-video-autoresize", resizingBox );
+            /*Update layout radio buttons based on the checkState of the following checkboxes*/
+            connect(ui.menuBarCheck, &QCheckBox::stateChanged, this, &SPrefsPanel::updateLayoutSelection);
+            connect(ui.pinVideoControlsCheckbox, &QCheckBox::stateChanged, this, &SPrefsPanel::updateLayoutSelection);
+            connect(ui.titleBarCheckBox, &QCheckBox::stateChanged, this, &SPrefsPanel::updateLayoutSelection);
+
+            /*Clicking on image will check the corresponding layout radio button*/
+            layoutImages = new QButtonGroup( this );
+            layoutImages->addButton( ui.modernImage, 0 );
+            layoutImages->addButton( ui.classicImage, 1 );
+            layoutImages->addButton( ui.skinImage, 2 );
+
+            connect( layoutImages, qOverload<QAbstractButton*>( &QButtonGroup::buttonClicked ), this, &SPrefsPanel::imageLayoutClick );
+
+            /* Set checkboxes depending on the layout selected*/
+            connect(radioGroup, &QButtonGroup::idClicked, this, &SPrefsPanel::handleLayoutChange);
+            connect(layoutImages, &QButtonGroup::idClicked, this, &SPrefsPanel::handleLayoutChange);
+
+            configBool( "embedded-video", ui.embedVideo );
+            configBool( "qt-video-autoresize", ui.resizingBox );
             connect( ui.embedVideo, &QCheckBox::toggled, ui.resizingBox, &QCheckBox::setEnabled );
             ui.resizingBox->setEnabled( ui.embedVideo->isChecked() );
 
-            CONFIG_BOOL( "qt-fs-controller", fsController );
-            CONFIG_BOOL( "qt-system-tray", systrayBox );
-            CONFIG_GENERIC( "qt-notification", IntegerList, ui.notificationComboLabel,
-                                                      notificationCombo );
+            configBool( "qt-fs-controller", ui.fsController );
+            configBool( "qt-system-tray", ui.systrayBox );
+            configGeneric<IntegerListConfigControl>( "qt-notification", ui.notificationComboLabel,
+                                                      ui.notificationCombo );
             connect( ui.systrayBox, &QCheckBox::toggled, [=]( bool checked ) {
                 ui.notificationCombo->setEnabled( checked );
                 ui.notificationComboLabel->setEnabled( checked );
             } );
             ui.notificationCombo->setEnabled( ui.systrayBox->isChecked() );
 
-            CONFIG_BOOL( "qt-pause-minimized", pauseMinimizedBox );
-            CONFIG_BOOL( "playlist-tree", treePlaylist );
-            CONFIG_BOOL( "play-and-pause", playPauseBox );
-            CONFIG_GENERIC_FILE( "skins2-last", File, ui.skinFileLabel,
+            configBool( "qt-pause-minimized", ui.pauseMinimizedBox );
+            configBool( "playlist-tree", ui.treePlaylist );
+            configBool( "play-and-pause", ui.playPauseBox );
+            configGenericFile<FileConfigControl>( "skins2-last",  ui.skinFileLabel,
                                  ui.fileSkin, ui.skinBrowse );
 
-            CONFIG_BOOL( "metadata-network-access", MetadataNetworkAccessMode );
-            CONFIG_BOOL( "qt-menubar", menuBarCheck );
+            configBool( "metadata-network-access", ui.MetadataNetworkAccessMode );
+            configBool( "qt-menubar", ui.menuBarCheck );
 
 
-            CONFIG_BOOL( "qt-pin-controls", pinVideoControlsCheckbox );
+            configBool( "qt-pin-controls", ui.pinVideoControlsCheckbox );
             m_resetters.push_back(std::make_unique<PropertyResetter>(ui.pinVideoControlsCheckbox, "checked"));
             QObject::connect( ui.pinVideoControlsCheckbox, &QCheckBox::stateChanged, p_intf->p_mi, &MainCtx::setPinVideoControls );
 
@@ -886,16 +867,16 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
             QObject::connect( ui.intfScaleFactorSpinBox, QOverload<int>::of(&QSpinBox::valueChanged)
                               , p_intf->p_mi , updateIntfUserScaleFactorFromControls );
 
-#if QT_CLIENT_SIDE_DECORATION_AVAILABLE
-            CONFIG_BOOL( "qt-titlebar", titleBarCheckBox );
-#else
-            ui.titleBarCheckBox->hide();
-#endif
+            DialogsProvider *provider = DialogsProvider::getInstance();
+
+            QObject::connect( ui.toolbarEditor, &QAbstractButton::clicked, provider, &DialogsProvider::showToolbarEditorDialog);
+
+            configBool( "qt-titlebar", ui.titleBarCheckBox );
 
             /* UPDATE options */
 #ifdef UPDATE_CHECK
-            CONFIG_BOOL( "qt-updates-notif", updatesBox );
-            CONFIG_GENERIC( "qt-updates-days", Integer, nullptr, updatesDays );
+            configBool( "qt-updates-notif", ui.updatesBox );
+            configGeneric<IntegerConfigControl>( "qt-updates-days", nullptr, ui.updatesDays );
             ui.updatesDays->setEnabled( ui.updatesBox->isChecked() );
             connect( ui.updatesBox, &QCheckBox::toggled,
                      ui.updatesDays, &QSpinBox::setEnabled );
@@ -914,15 +895,15 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
             else
 #endif
             {
-                CONFIG_BOOL( "one-instance", OneInterfaceMode );
-                CONFIG_BOOL( "playlist-enqueue", EnqueueOneInterfaceMode );
+                configBool( "one-instance", ui.OneInterfaceMode );
+                configBool( "playlist-enqueue", ui.EnqueueOneInterfaceMode );
                 ui.EnqueueOneInterfaceMode->setEnabled( ui.OneInterfaceMode->isChecked() );
                 connect( ui.OneInterfaceMode, &QCheckBox::toggled,
                          ui.EnqueueOneInterfaceMode, &QCheckBox::setEnabled );
-                CONFIG_BOOL( "one-instance-when-started-from-file", oneInstanceFromFile );
+                configBool( "one-instance-when-started-from-file", ui.oneInstanceFromFile );
             }
 
-            CONFIG_GENERIC( "qt-auto-raise", IntegerList, ui.autoRaiseLabel, autoRaiseComboBox );
+            configGeneric<IntegerListConfigControl>( "qt-auto-raise", ui.autoRaiseLabel, ui.autoRaiseComboBox );
 
             /* RECENTLY PLAYED options */
 
@@ -936,8 +917,8 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
 
             if ( hasMedialibrary )
             {
-                CONFIG_GENERIC( "restore-playback-pos", IntegerList, ui.continuePlaybackLabel, continuePlaybackComboBox );
-                CONFIG_BOOL( "save-recentplay", saveRecentlyPlayed );
+                configGeneric<IntegerListConfigControl>( "restore-playback-pos", ui.continuePlaybackLabel, ui.continuePlaybackComboBox );
+                configBool( "save-recentplay", ui.saveRecentlyPlayed );
 
                 ui.clearRecentSpacer->changeSize( 1, 1, QSizePolicy::Expanding, QSizePolicy::Minimum );
                 MLRecentsModel *recentsModel = new MLRecentsModel( ui.clearRecent );
@@ -945,39 +926,43 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
                 connect( ui.clearRecent, &QPushButton::clicked, recentsModel, &MLRecentsModel::clearHistory );
             }
 
-
-        END_SPREFS_CAT;
+            break;
+        }
 
         /**********************************
          * SUBTITLES Panel Implementation *
          **********************************/
-        START_SPREFS_CAT( Subtitles,
-                            qtr("Subtitle & On Screen Display Settings") );
-            CONFIG_BOOL( "osd", OSDBox);
-            CONFIG_BOOL( "video-title-show", OSDTitleBox);
-            CONFIG_GENERIC( "video-title-position", IntegerList,
-                            ui.OSDTitlePosLabel, OSDTitlePos );
+        case SPrefsSubtitles:
+        {
+            auto& ui = m_subtitlesUI;
+            ui.setupUi( panel );
+            panel_label->setText( qtr("Subtitle & On Screen Display Settings") );
 
-            CONFIG_BOOL( "spu", spuActiveBox);
+            configBool( "osd", ui.OSDBox);
+            configBool( "video-title-show", ui.OSDTitleBox);
+            configGeneric<IntegerListConfigControl>( "video-title-position",
+                            ui.OSDTitlePosLabel, ui.OSDTitlePos );
+
+            configBool( "spu", ui.spuActiveBox);
             ui.spuZone->setEnabled( ui.spuActiveBox->isChecked() );
             connect( ui.spuActiveBox, &QCheckBox::toggled, ui.spuZone, &QWidget::setEnabled );
 
-            CONFIG_GENERIC( "subsdec-encoding", StringList, ui.encodLabel,
-                            encoding );
-            CONFIG_GENERIC( "sub-language", String, ui.subLangLabel,
-                            preferredLanguage );
+            configGeneric<StringListConfigControl>( "subsdec-encoding", ui.encodLabel,
+                            ui.encoding );
+            configGeneric<StringConfigControl>( "sub-language", ui.subLangLabel,
+                            ui.preferredLanguage );
 
-            CONFIG_GENERIC( "freetype-rel-fontsize", IntegerList,
-                            ui.fontSizeLabel, fontSize );
+            configGeneric<IntegerListConfigControl>( "freetype-rel-fontsize",
+                            ui.fontSizeLabel, ui.fontSize );
 
-            CONFIG_GENERIC( "freetype-font", Font, ui.fontLabel, font );
-            CONFIG_GENERIC( "freetype-color", Color, ui.fontColorLabel, fontColor );
-            CONFIG_GENERIC( "freetype-outline-thickness", IntegerList,
-                            ui.fontEffectLabel, effect );
-            CONFIG_GENERIC( "freetype-outline-color", Color, ui.outlineColorLabel,
-                            outlineColor );
+            configGeneric<FontConfigControl>( "freetype-font", ui.fontLabel, ui.font );
+            configGeneric<ColorConfigControl>( "freetype-color", ui.fontColorLabel, ui.fontColor );
+            configGeneric<IntegerListConfigControl>( "freetype-outline-thickness",
+                            ui.fontEffectLabel, ui.effect );
+            configGeneric<ColorConfigControl>( "freetype-outline-color", ui.outlineColorLabel,
+                            ui.outlineColor );
 
-            CONFIG_GENERIC( "sub-margin", Integer, ui.subsPosLabel, subsPosition );
+            configGeneric<IntegerConfigControl>( "sub-margin", ui.subsPosLabel, ui.subsPosition );
 
             if( module_exists( "freetype" ) )
             {
@@ -989,13 +974,12 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
                 ui.shadowCheck->setEnabled( false );
                 ui.backgroundCheck->setEnabled( false );
             }
-            optionWidgets["shadowCB"] = ui.shadowCheck;
-            optionWidgets["backgroundCB"] = ui.backgroundCheck;
 
-            CONFIG_GENERIC( "secondary-sub-alignment", IntegerList,
-                            ui.secondarySubsAlignmentLabel, secondarySubsAlignment );
-            CONFIG_GENERIC( "secondary-sub-margin", Integer, ui.secondarySubsPosLabel, secondarySubsPosition );
-        END_SPREFS_CAT;
+            configGeneric<IntegerListConfigControl>( "secondary-sub-alignment",
+                            ui.secondarySubsAlignmentLabel, ui.secondarySubsAlignment );
+            configGeneric<IntegerConfigControl>( "secondary-sub-margin", ui.secondarySubsPosLabel, ui.secondarySubsPosition );
+            break;
+        }
 
         /********************************
          * HOTKEYS Panel Implementation *
@@ -1039,7 +1023,11 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
         /**************************************
          * MEDIA LIBRARY Panel Implementation *
          **************************************/
-        START_SPREFS_CAT( MediaLibrary , qtr("Media Library Settings") );
+        case SPrefsMediaLibrary:
+        {
+            auto& ui = m_medialibUI;
+            ui.setupUi( panel );
+            panel_label->setText( qtr("Media Library Settings") );
 
             if ( vlc_ml_instance_get( p_intf ) != NULL )
             {
@@ -1061,7 +1049,8 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
                 ui.mlGroupBox->hide( );
             }
 
-        END_SPREFS_CAT;
+            break;
+        }
     }
 
     panel_layout->addWidget( panel_label );
@@ -1074,49 +1063,41 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
     panel_layout->addWidget( scroller );
 
     setLayout( panel_layout );
-
-#undef END_SPREFS_CAT
-#undef START_SPREFS_CAT
-#undef CONFIG_GENERIC_FILE
-#undef CONFIG_GENERIC_NO_UI
-#undef CONFIG_GENERIC
-#undef CONFIG_BOOL
 }
 
 
 void SPrefsPanel::updateAudioOptions( int number )
 {
-    QString value = qobject_cast<QComboBox *>(optionWidgets["audioOutCoB"])
-                                            ->itemData( number ).toString();
+
+    auto setAudioDeviceVisible = [this](QString key, bool visible) {
+        const AudioControlGroup& ctrl = audioControlGroups[key];
+        if (ctrl.widget)
+            ctrl.widget->setVisible( visible );
+        if (ctrl.label)
+            ctrl.label->setVisible( visible );
+        if (ctrl.button)
+            ctrl.button->setVisible( visible );
+    };
+
+    QString value = m_audioUI.outputModule->itemData( number ).toString();
 #ifdef _WIN32
     /* Since MMDevice is most likely to be used by default, we show MMDevice
      * options by default */
     const bool mmDeviceEnabled = value == "mmdevice" || value == "any";
-    optionWidgets["mmdevicePassthroughL"]->setVisible( mmDeviceEnabled );
-    optionWidgets["mmdevicePassthroughB"]->setVisible( mmDeviceEnabled );
-    optionWidgets["mmdeviceW"]->setVisible( mmDeviceEnabled );
-    optionWidgets["mmdeviceL"]->setVisible( mmDeviceEnabled );
+    m_audioUI.mmdevicePassthroughLabel->setVisible( mmDeviceEnabled );
+    m_audioUI.mmdevicePassthroughBox->setVisible( mmDeviceEnabled );
+    setAudioDeviceVisible("mmdevice", mmDeviceEnabled);
 
-    optionWidgets["waveoutW"]->setVisible( ( value == "waveout" ) );
-    optionWidgets["waveoutL"]->setVisible( ( value == "waveout" ) );
+    setAudioDeviceVisible("waveout", value == "waveout");
 #elif defined( __OS2__ )
-    optionWidgets["kaiL"]->setVisible( ( value == "kai" ) );
-    optionWidgets["kaiW"]->setVisible( ( value == "kai" ) );
+    setAudioDeviceVisible("kai", value == "kai");
 #else
-    /* optionWidgets["ossW] can be NULL */
-    if( optionWidgets["ossW"] ) {
-        optionWidgets["ossW"]->setVisible( ( value == "oss" ) );
-        optionWidgets["ossL"]->setVisible( ( value == "oss" ) );
-        optionWidgets["ossB"]->setVisible( ( value == "oss" ) );
-    }
-    /* optionWidgets["alsaW] can be NULL */
-    if( optionWidgets["alsaW"] ) {
-        optionWidgets["alsaW"]->setVisible( ( value == "alsa" ) );
-        optionWidgets["alsaL"]->setVisible( ( value == "alsa" ) );
-    }
+    setAudioDeviceVisible("oss", value == "oss");
+    setAudioDeviceVisible("alsa", value == "alsa");
+
 #endif
-    optionWidgets["fileW"]->setVisible( ( value == "afile" ) );
-    optionWidgets["spdifChB"]->setVisible( ( value == "alsa" || value == "oss" || value == "auhal" ||
+    m_audioUI.fileControl->setVisible( ( value == "afile" ) );
+    m_audioUI.spdifBox->setVisible( ( value == "alsa" || value == "oss" || value == "auhal" ||
                                              value == "waveout" ) );
 
     int volume = getDefaultAudioVolume(qtu(value));
@@ -1125,15 +1106,11 @@ void SPrefsPanel::updateAudioOptions( int number )
     if (volume >= 0)
         save = config_GetInt("volume-save");
 
-    QCheckBox *resetVolumeCheckBox =
-        qobject_cast<QCheckBox *>(optionWidgets["resetVolumeCheckbox"]);
-    resetVolumeCheckBox->setChecked(!save);
-    resetVolumeCheckBox->setEnabled(volume >= 0);
+    m_audioUI.resetVolumeCheckbox->setChecked(!save);
+    m_audioUI.resetVolumeCheckbox->setEnabled(volume >= 0);
 
-    QSlider *defaultVolume =
-        qobject_cast<QSlider *>(optionWidgets["defaultVolume"]);
-    defaultVolume->setValue((volume >= 0) ? volume : 100);
-    defaultVolume->setEnabled(volume >= 0);
+    m_audioUI.defaultVolume->setValue((volume >= 0) ? volume : 100);
+    m_audioUI.defaultVolume->setEnabled(volume >= 0);
 }
 
 
@@ -1146,10 +1123,63 @@ SPrefsPanel::~SPrefsPanel()
     free( lang );
 }
 
+/* Checks the layout radio button corresponding the image clicked */
+void SPrefsPanel::imageLayoutClick( QAbstractButton* btn )
+{
+    QAbstractButton* layoutBtn = radioGroup->buttons().at( layoutImages->id( btn ) );
+    assert( layoutBtn );
+    layoutBtn->setChecked( true );
+}
+
+/* Change configurations depending on the layout selected and set check states of radioGroup */
+void SPrefsPanel::handleLayoutChange( int id )
+{
+    auto ui = m_interfaceUI;
+    if (id == 0) {
+        // Modern layout selected
+        ui.styleStackedWidget->setCurrentIndex(0);
+        ui.menuBarCheck->setChecked(false);
+        ui.titleBarCheckBox->setChecked(false);
+        ui.pinVideoControlsCheckbox->setChecked(false);
+    }
+    else if (id == 1) {
+        // Classic layout selected
+        ui.styleStackedWidget->setCurrentIndex(0);
+        ui.menuBarCheck->setChecked(true);
+        ui.titleBarCheckBox->setChecked(true);
+        ui.pinVideoControlsCheckbox->setChecked(true);
+    }
+    else if (id == 2) {
+        ui.styleStackedWidget->setCurrentIndex(1);
+    }
+}
+
+void SPrefsPanel::updateLayoutSelection()
+{
+    auto ui = m_interfaceUI;
+    bool isModern = !ui.menuBarCheck->isChecked()
+                    && !ui.titleBarCheckBox->isChecked()
+                    && !ui.pinVideoControlsCheckbox->isChecked();
+
+    ui.modernButton->setChecked(isModern);
+
+    bool isClassic = ui.menuBarCheck->isChecked()
+                     && ui.titleBarCheckBox->isChecked()
+                     && ui.pinVideoControlsCheckbox->isChecked();
+
+    ui.classicButton->setChecked(isClassic);
+
+    if (!isModern && !isClassic) {
+        radioGroup->setExclusive(false);
+        ui.modernButton->setChecked(false);
+        ui.classicButton->setChecked(false);
+        radioGroup->setExclusive(true);
+    }
+}
+
 void SPrefsPanel::updateAudioVolume( int volume )
 {
-    qobject_cast<QSpinBox *>(optionWidgets["volLW"])
-        ->setValue( volume );
+    m_audioUI.volumeValue->setValue( volume );
 }
 
 
@@ -1160,7 +1190,7 @@ void SPrefsPanel::apply()
 
     /* Generic save for ever panel */
     QList<ConfigControl *>::const_iterator i;
-    for( i = controls.begin() ; i != controls.end() ; ++i )
+    for( i = controls.cbegin() ; i != controls.cend() ; ++i )
     {
         ConfigControl *c = qobject_cast<ConfigControl *>(*i);
         c->doApply();
@@ -1171,8 +1201,7 @@ void SPrefsPanel::apply()
     case SPrefsInputAndCodecs:
     {
         /* Device default selection */
-        QByteArray devicepath =
-            qobject_cast<QComboBox *>(optionWidgets["inputLE"])->currentText().toUtf8();
+        QByteArray devicepath = m_inputCodecUI.DVDDeviceComboBox->currentText().toUtf8();
         if( devicepath.size() > 0 )
         {
             config_PutPsz( "dvd", devicepath );
@@ -1183,7 +1212,7 @@ void SPrefsPanel::apply()
 
 #define CaC( name, factor ) config_PutInt( name, i_comboValue * factor )
         /* Caching */
-        QComboBox *cachingCombo = qobject_cast<QComboBox *>(optionWidgets["cachingCoB"]);
+        QComboBox *cachingCombo = m_inputCodecUI.cachingCombo;
         int i_comboValue = cachingCombo->itemData( cachingCombo->currentIndex() ).toInt();
         if( i_comboValue )
         {
@@ -1199,13 +1228,15 @@ void SPrefsPanel::apply()
     /* Interfaces */
     case SPrefsInterface:
     {
-        if( qobject_cast<QRadioButton *>(optionWidgets["skinRB"])->isChecked() )
+        if( m_interfaceUI.skins->isChecked() )
             config_PutPsz( "intf", "skins2,any" );
         else
-        //if( qobject_cast<QRadioButton *>(optionWidgets[qtRB])->isChecked() )
+        //if( m_interfaceUI.qt->isChecked() )
             config_PutPsz( "intf", "" );
-        if( auto stylesCombo = qobject_cast<QComboBox *>(optionWidgets["styleCB"]) )
-            getSettings()->setValue( "MainWindow/QtStyle", getQStyleKey(  stylesCombo , "" ) );
+#if !defined( _WIN32)
+        getSettings()->setValue( "MainWindow/QtStyle", getQStyleKey(  m_interfaceUI.stylesCombo , "" ) );
+#endif
+
 #ifdef _WIN32
     saveLang();
 #endif
@@ -1214,15 +1245,14 @@ void SPrefsPanel::apply()
 
     case SPrefsVideo:
     {
-        int i_fullscreenScreen =  qobject_cast<QComboBox *>(optionWidgets["fullscreenScreenB"])->currentData().toInt();
+        int i_fullscreenScreen =   m_videoUI.fullscreenScreenBox->currentData().toInt();
         config_PutInt( "qt-fullscreen-screennumber", i_fullscreenScreen );
         break;
     }
 
     case SPrefsAudio:
     {
-        bool b_checked =
-            qobject_cast<QCheckBox *>(optionWidgets["normalizerChB"])->isChecked();
+        bool b_checked = m_audioUI.volNormBox->isChecked();
         if( b_checked && !qs_filter.contains( "normvol" ) )
             qs_filter.append( "normvol" );
         if( !b_checked && qs_filter.contains( "normvol" ) )
@@ -1231,10 +1261,8 @@ void SPrefsPanel::apply()
         config_PutPsz( "audio-filter", qtu( qs_filter.join( ":" ) ) );
 
         /* Default volume */
-        int i_volume =
-            qobject_cast<QSlider *>(optionWidgets["defaultVolume"])->value();
-        bool b_reset_volume =
-            qobject_cast<QCheckBox *>(optionWidgets["resetVolumeCheckbox"])->isChecked();
+        int i_volume = m_audioUI.defaultVolume->value();
+        bool b_reset_volume = m_audioUI.resetVolumeCheckbox->isChecked();
         char *psz_aout = config_GetPsz( "aout" );
 
         float f_gain = powf( i_volume / 100.f, 3 );
@@ -1272,7 +1300,7 @@ void SPrefsPanel::apply()
     }
     case SPrefsSubtitles:
     {
-        bool b_checked = qobject_cast<QCheckBox *>(optionWidgets["shadowCB"])->isChecked();
+        bool b_checked = m_subtitlesUI.shadowCheck->isChecked();
         if( b_checked && config_GetInt( "freetype-shadow-opacity" ) == 0 ) {
             config_PutInt( "freetype-shadow-opacity", 128 );
         }
@@ -1280,7 +1308,7 @@ void SPrefsPanel::apply()
             config_PutInt( "freetype-shadow-opacity", 0 );
         }
 
-        b_checked = qobject_cast<QCheckBox *>(optionWidgets["backgroundCB"])->isChecked();
+        b_checked = m_subtitlesUI.backgroundCheck->isChecked();
         if( b_checked && config_GetInt( "freetype-background-opacity" ) == 0 ) {
             config_PutInt( "freetype-background-opacity", 128 );
         }
@@ -1314,8 +1342,8 @@ void SPrefsPanel::lastfm_Changed( int i_state )
 
 void SPrefsPanel::changeStyle()
 {
-    QApplication::setStyle( getQStyleKey( qobject_cast<QComboBox *>( optionWidgets["styleCB"] )
-                                          , p_intf->p_app->defaultStyle() ) );
+    QApplication::setStyle( getQStyleKey( m_interfaceUI.stylesCombo
+                                        , qApp->property("initialStyle").toString() ) );
 
     /* force refresh on all widgets */
     QWidgetList widgets = QApplication::allWidgets();
@@ -1405,7 +1433,7 @@ void SPrefsPanel::assoDialog()
 {
     HRESULT hr;
 
-    hr = CoInitializeEx( NULL, COINIT_APARTMENTTHREADED );
+    hr = CoInitializeEx( NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE );
     if( SUCCEEDED(hr) )
     {
         void *p;

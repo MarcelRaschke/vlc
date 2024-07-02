@@ -15,81 +15,61 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
-import QtQuick.Layouts 1.11
-import QtGraphicalEffects 1.0
+import QtQuick
 
 import org.videolan.vlc 0.1
 
-import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 
-T.Pane {
+ControlBar {
     id: root
 
-    height: 0
+    visible: animation.running || (state === "inViewport")
 
-    implicitWidth: Math.max(background ? background.implicitWidth : 0, contentItem.implicitWidth + leftPadding + rightPadding)
-    implicitHeight: Math.max(background ? background.implicitHeight : 0, contentItem.implicitHeight + topPadding + bottomPadding)
+    anchors.bottomMargin: (state === "outViewport") ? -_delayedImplicitHeight : 0
 
-    visible: false
+    state: (Player.playingState === Player.PLAYING_STATE_STOPPED) ? "outViewport"
+                                                                  : "inViewport"
 
-    state: (Player.playingState === Player.PLAYING_STATE_STOPPED) ? ""
-                                                                  : "expanded"
+    textPosition: (MainCtx.pinVideoControls) ? ControlBar.TimeTextPosition.LeftRightSlider
+                                             : ControlBar.TimeTextPosition.Hide
 
-    states: State {
-        name: "expanded"
+    sliderHeight: (MainCtx.pinVideoControls) ? VLCStyle.heightBar_xxsmall
+                                             : VLCStyle.dp(3, VLCStyle.scale)
 
-        PropertyChanges {
-            target: root
-            visible: true
-            height: implicitHeight
+    bookmarksHeight: (MainCtx.pinVideoControls) ? VLCStyle.controlBarBookmarksHeight
+                                                : VLCStyle.icon_xsmall * 0.7
+
+    identifier: PlayerControlbarModel.Miniplayer
+
+    property real _delayedImplicitHeight
+
+    onImplicitHeightChanged: {
+        if (!animation.running) {
+            // Animation should not be based on the implicit height change
+            // but rather the visibility state:
+            behavior.enabled = false
+            Qt.callLater(() => { behavior.enabled = true })
         }
     }
 
-    transitions: Transition {
-        from: ""; to: "expanded"
-        reversible: true
-
-        SequentialAnimation {
-            // visible should change first, in order for inner layouts to calculate implicitHeight correctly
-            PropertyAction { property: "visible" }
-            NumberAnimation { property: "height"; easing.type: Easing.InOutSine; duration: VLCStyle.duration_long; }
-        }
+    Binding on _delayedImplicitHeight {
+        // eliminate intermediate adjustments until implicit height is calculated fully
+        // we can not delay on component load because we do not want twitching
+        // NOTE: The delay here can be removed, as long as a direct height is set
+        //       for the whole control instead of implicit height.
+        delayed: behavior.enabled
+        value: root.implicitHeight
     }
 
-    readonly property ColorContext colorContext: ColorContext {
-        id: theme
-        colorSet: ColorContext.Window
-    }
-
-    // this MouseArea prevents mouse events to be sent below miniplayer
-    MouseArea {
-        anchors.fill: parent
-        hoverEnabled: true
-        acceptedButtons: Qt.AllButtons
-    }
-
-    background: Rectangle {
-        color: theme.bg.primary
-    }
-
-    contentItem: ControlBar {
-        focus: true
-        textPosition: ControlBar.TimeTextPosition.Hide
-        sliderHeight: VLCStyle.dp(3, VLCStyle.scale)
-        bookmarksHeight: VLCStyle.icon_xsmall * 0.7
-        identifier: PlayerControlbarModel.Miniplayer
-        Navigation.parentItem: root
-
-        Keys.onPressed: {
-            Navigation.defaultKeyAction(event)
-
-            if (!event.accepted) {
-                MainCtx.sendHotkey(event.key, event.modifiers)
-            }
+    Behavior on anchors.bottomMargin {
+        id: behavior
+        enabled: false
+        NumberAnimation {
+            id: animation
+            easing.type: Easing.InOutSine
+            duration: VLCStyle.duration_long
         }
     }
 }
+

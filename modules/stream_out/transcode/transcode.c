@@ -32,6 +32,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 #include <vlc_spu.h>
@@ -92,7 +93,7 @@
     "Target bitrate of the transcoded audio stream." )
 #define ARATE_TEXT N_("Audio sample rate")
 #define ARATE_LONGTEXT N_( \
- "Sample rate of the transcoded audio stream (11250, 22500, 44100 or 48000).")
+ "Sample rate of the transcoded audio stream (11025, 22050, 44100 or 48000).")
 #define ALANG_TEXT N_("Audio language")
 #define ALANG_LONGTEXT N_( \
     "This is the language of the audio stream.")
@@ -141,9 +142,14 @@ static const char *const ppsz_deinterlace_type[] =
 {
     "deinterlace", "ffmpeg-deinterlace"
 };
+static const int channel_layout_values[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, };
+
+static const char *const channel_layout_texts[] = {
+  "default", "mono", "stereo", "2.1", "4.0", "5.0", "5.1", "7.0", "7.1", "8.1",
+};
 
 static int  Open ( vlc_object_t * );
-static void Close( vlc_object_t * );
+static void Close( sout_stream_t * );
 
 #define SOUT_CFG_PREFIX "sout-transcode-"
 
@@ -152,7 +158,7 @@ vlc_module_begin ()
     set_description( N_("Transcode stream output") )
     set_capability( "sout filter", 50 )
     add_shortcut( "transcode" )
-    set_callbacks( Open, Close )
+    set_callback( Open )
     set_subcategory( SUBCAT_SOUT_STREAM )
     set_section( N_("Video"), NULL )
     add_module(SOUT_CFG_PREFIX "venc", "video encoder", "none",
@@ -192,7 +198,7 @@ vlc_module_begin ()
                 ALANG_LONGTEXT )
     add_integer( SOUT_CFG_PREFIX "channels", 0, ACHANS_TEXT,
                  ACHANS_LONGTEXT )
-        change_integer_range( 0, 9 )
+        change_integer_list( channel_layout_values, channel_layout_texts)
     add_integer( SOUT_CFG_PREFIX "samplerate", 0, ARATE_TEXT,
                  ARATE_LONGTEXT )
         change_integer_range( 0, 48000 )
@@ -232,7 +238,7 @@ static const char *const ppsz_sout_options[] = {
 /*****************************************************************************
  * Exported prototypes
  *****************************************************************************/
-static void *Add( sout_stream_t *, const es_format_t * );
+static void *Add( sout_stream_t *, const es_format_t *, const char * );
 static void  Del( sout_stream_t *, void * );
 static int   Send( sout_stream_t *, void *, block_t * );
 static void  SetPCR(sout_stream_t *, vlc_tick_t );
@@ -253,11 +259,9 @@ static void SetAudioEncoderConfig( sout_stream_t *p_stream, transcode_encoder_co
     p_cfg->i_codec = 0;
     if( psz_string && *psz_string )
     {
-        char fcc[5] = "    \0";
-        memcpy( fcc, psz_string, __MIN( strlen( psz_string ), 4 ) );
-        p_cfg->i_codec = vlc_fourcc_GetCodecFromString( AUDIO_ES, fcc );
+        p_cfg->i_codec = vlc_fourcc_GetCodecFromString( AUDIO_ES, psz_string );
         msg_Dbg( p_stream, "Checking codec mapping for %s got %4.4s ",
-                            fcc, (char*)&p_cfg->i_codec);
+                            psz_string, (char*)&p_cfg->i_codec);
     }
     free( psz_string );
 
@@ -303,11 +307,9 @@ static void SetVideoEncoderConfig( sout_stream_t *p_stream, transcode_encoder_co
     psz_string = var_GetString( p_stream, SOUT_CFG_PREFIX "vcodec" );
     if( psz_string && *psz_string )
     {
-        char fcc[5] = "    \0";
-        memcpy( fcc, psz_string, __MIN( strlen( psz_string ), 4 ) );
-        p_cfg->i_codec = vlc_fourcc_GetCodecFromString( VIDEO_ES, fcc );
+        p_cfg->i_codec = vlc_fourcc_GetCodecFromString( VIDEO_ES, psz_string );
         msg_Dbg( p_stream, "Checking video codec mapping for %s got %4.4s ",
-                 fcc, (char*)&p_cfg->i_codec);
+                 psz_string, (char*)&p_cfg->i_codec);
     }
     free( psz_string );
 
@@ -345,10 +347,8 @@ static void SetSPUEncoderConfig( sout_stream_t *p_stream, transcode_encoder_conf
     psz_string = var_GetString( p_stream, SOUT_CFG_PREFIX "scodec" );
     if( psz_string && *psz_string )
     {
-        char fcc[5] = "    \0";
-        memcpy( fcc, psz_string, __MIN( strlen( psz_string ), 4 ) );
-        p_cfg->i_codec = vlc_fourcc_GetCodecFromString( SPU_ES, fcc );
-        msg_Dbg( p_stream, "Checking spu codec mapping for %s got %4.4s ", fcc, (char*)&p_cfg->i_codec);
+        p_cfg->i_codec = vlc_fourcc_GetCodecFromString( SPU_ES, psz_string );
+        msg_Dbg( p_stream, "Checking spu codec mapping for %s got %4.4s ", psz_string, (char*)&p_cfg->i_codec);
     }
     free( psz_string );
 
@@ -363,18 +363,40 @@ static int Control( sout_stream_t *p_stream, int i_query, va_list args )
         case SOUT_STREAM_ID_SPU_HIGHLIGHT:
         {
             sout_stream_id_sys_t *id = (sout_stream_id_sys_t *) va_arg(args, void *);
-            void *spu_hl = va_arg(args, void *);
+            const vlc_spu_highlight_t *spu_hl = va_arg(args, const vlc_spu_highlight_t *);
             if( id->downstream_id )
                 return sout_StreamControl( p_stream->p_next, i_query,
                                            id->downstream_id, spu_hl );
             break;
         }
+	case SOUT_STREAM_IS_SYNCHRONOUS:
+        {
+            return sout_StreamControl(p_stream->p_next, i_query, va_arg(args, bool *));
+        }
     }
     return VLC_EGENERIC;
 }
 
+static void Flush( sout_stream_t *p_stream, void *_id)
+{
+    VLC_UNUSED(p_stream);
+    sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
+    enum es_format_category_e i_cat = id->b_transcode && id->p_decoder != NULL ?
+                                      id->p_decoder->fmt_in->i_cat : UNKNOWN_ES;
+    if( i_cat == VIDEO_ES )
+    {
+        transcode_video_flush(id);
+    }
+}
+
 static const struct sout_stream_operations ops = {
-    Add, Del, Send, Control, NULL, SetPCR,
+    .add = Add,
+    .del = Del,
+    .send = Send,
+    .control = Control,
+    .flush = Flush,
+    .set_pcr = SetPCR,
+    .close = Close,
 };
 
 /*****************************************************************************
@@ -489,9 +511,8 @@ static int Open( vlc_object_t *p_this )
 /*****************************************************************************
  * Close:
  *****************************************************************************/
-static void Close( vlc_object_t * p_this )
+static void Close( sout_stream_t *p_stream )
 {
-    sout_stream_t       *p_stream = (sout_stream_t*)p_this;
     sout_stream_sys_t   *p_sys = p_stream->p_sys;
 
     transcode_encoder_config_clean( &p_sys->venc_cfg );
@@ -565,7 +586,8 @@ static int ValidateDrift( void *cbdata, vlc_tick_t i_drift )
 
 static void *transcode_downstream_Add( sout_stream_t *p_stream,
                                        const es_format_t *fmt_orig,
-                                       const es_format_t *fmt)
+                                       const es_format_t *fmt,
+                                       const char *es_id )
 {
     sout_stream_sys_t *p_sys = p_stream->p_sys;
 
@@ -586,12 +608,13 @@ static void *transcode_downstream_Add( sout_stream_t *p_stream,
     if( tmp.i_group != fmt_orig->i_group )
         tmp.i_group = fmt_orig->i_group;
 
-    void *downstream = sout_StreamIdAdd( p_stream->p_next, &tmp );
+    void *downstream = sout_StreamIdAdd( p_stream->p_next, &tmp, es_id );
     es_format_Clean( &tmp );
     return downstream;
 }
 
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *
+Add( sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id )
 {
     sout_stream_sys_t *p_sys = p_stream->p_sys;
     sout_stream_id_sys_t *id;
@@ -613,6 +636,8 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
     decoder_Init( id->p_decoder, &p_owner->fmt_in, p_fmt );
 
     es_format_SetMeta( &id->p_decoder->fmt_out, id->p_decoder->fmt_in );
+
+    id->es_id = es_id;
 
     switch( p_fmt->i_cat )
     {
@@ -667,7 +692,7 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
     {
         msg_Dbg( p_stream, "not transcoding a stream (fcc=`%4.4s')",
                  (char*)&p_fmt->i_codec );
-        id->downstream_id = transcode_downstream_Add( p_stream, p_fmt, p_fmt );
+        id->downstream_id = transcode_downstream_Add( p_stream, p_fmt, p_fmt, es_id );
         id->b_transcode = false;
 
         success = id->downstream_id;
@@ -773,8 +798,6 @@ static int Send( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
     sout_stream_sys_t *sys = p_stream->p_sys;
     if( p_buffer != NULL && sys->pcr_forwarding_enabled )
     {
-        assert( p_buffer->p_next == NULL );
-
         if( !sys->pcr_sync_has_input )
             sys->pcr_sync_has_input = true;
 

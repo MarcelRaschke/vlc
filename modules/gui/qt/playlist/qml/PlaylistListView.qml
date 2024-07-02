@@ -15,35 +15,48 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
-import QtQuick.Layouts 1.11
-import QtQml.Models 2.2
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
+import QtQuick.Layouts
+import QtQml.Models
 
 import org.videolan.vlc 0.1
-import org.videolan.compat 0.1
 
 import "qrc:///widgets/" as Widgets
+import "qrc:///util" as Util
 import "qrc:///util/Helpers.js" as Helpers
 import "qrc:///style/"
 
-Control {
+T.Pane {
     id: root
 
-    property alias model: listView.model
+    property var model: PlaylistListModel {
+        playlist: MainPlaylistController.playlist
+    }
+    readonly property ListSelectionModel selectionModel: listView?.selectionModel ?? null
 
     property bool useAcrylic: true
 
-    readonly property real minimumWidth: noContentInfoColumn.implicitWidth +
+    readonly property real minimumWidth: contentItem.Layout.minimumWidth +
                                          leftPadding +
                                          rightPadding +
                                          2 * (VLCStyle.margin_xsmall)
 
-    topPadding: VLCStyle.margin_normal
-    bottomPadding: VLCStyle.margin_normal
+    readonly property ListView listView: contentItem.listView
 
-    onActiveFocusChanged: if (activeFocus) listView.forceActiveFocus(focusReason)
+    property alias contextMenu: contextMenu
+
+    property alias dragItem: dragItem
+
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            contentWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             contentHeight + topPadding + bottomPadding)
+
+    verticalPadding: VLCStyle.margin_normal
+
+    Accessible.name: qsTr("Playqueue")
 
     readonly property ColorContext colorContext: ColorContext {
         id: theme
@@ -54,118 +67,56 @@ Control {
         enabled: root.enabled
     }
 
-    property int mode: PlaylistListView.Mode.Normal
-
-    enum Mode {
-        Normal,
-        Select, // Keyboard item selection mode, activated through PlaylistOverlayMenu
-        Move // Keyboard item move mode, activated through PlaylistOverlayMenu
-    }
-
     function isDropAcceptable(drop, index) {
-        if (drop.hasUrls)
-            return true // external drop (i.e. from filesystem)
-
-        if (Helpers.isValidInstanceOf(drop.source, Widgets.DragItem)) {
-            // internal drop (inter-view or intra-playlist)
-            var selection = drop.source.selection
-            if (!!selection) {
-                var length = selection.length
-                var firstIndex = selection[0]
-                var lastIndex = selection[length - 1]
-                var consecutive = true
-                if (length > 1) {
-                    for (var i = 0; i < length - 1; ++i) {
-                        if (selection[i + 1] - selection[i] !== 1) {
-                            consecutive = false
-                            break
-                        }
-                    }
-                }
-                return !consecutive || (index > lastIndex + 1 || index < firstIndex)
-            } else {
-                return true
-            }
-        }
-
-        return false
+        if (drop.source === dragItem)
+            return Helpers.itemsMovable(selectionModel.sortedSelectedIndexesFlat, index)
+        else if (Helpers.isValidInstanceOf(drop.source, Widgets.DragItem))
+            return true
+        else if (drop.hasUrls)
+            return true
+        else
+            return false
     }
 
     function acceptDrop(index, drop) {
-        var item = drop.source;
+        const item = drop.source;
 
         // NOTE: Move implementation.
-        if (dragItem == item) {
-            model.moveItemsPre(model.getSelection(), index);
-
+        if (dragItem === item) {
+            model.moveItemsPre(root.selectionModel.sortedSelectedIndexesFlat, index);
+            listView.forceActiveFocus();
         // NOTE: Dropping medialibrary content into the queue.
         } else if (Helpers.isValidInstanceOf(item, Widgets.DragItem)) {
-            item.getSelectedInputItem(function(inputItems) {
-                if (!Array.isArray(inputItems) || inputItems.length === 0) {
-                    console.warn("can't convert items to input items");
-                    return
-                }
-                mainPlaylistController.insert(index, inputItems, false)
-            })
-
+            return item.getSelectedInputItem().then((inputItems) => {
+                    if (!Helpers.isArray(inputItems) || inputItems.length === 0) {
+                        console.warn("can't convert items to input items");
+                        return
+                    }
+                    MainPlaylistController.insert(index, inputItems, false)
+                }).then(() => { listView.forceActiveFocus(); })
         // NOTE: Dropping an external item (i.e. filesystem) into the queue.
         } else if (drop.hasUrls) {
-            var urlList = [];
+            const urlList = [];
 
-            for (var url in drop.urls)
+            for (let url in drop.urls)
                 urlList.push(drop.urls[url]);
 
-            mainPlaylistController.insert(index, urlList, false);
+            MainPlaylistController.insert(index, urlList, false);
 
             // NOTE This is required otherwise backend may handle the drop as well yielding double addition.
             drop.accept(Qt.IgnoreAction);
+            listView.forceActiveFocus();
         }
 
-        listView.forceActiveFocus();
-    }
-
-    Loader {
-        id: overlayMenu
-        anchors.fill: parent
-        z: 1
-
-        active: MainCtx.playlistDocked
-
-        focus: shown ? item.focus : false
-
-        onFocusChanged: {
-            if (!focus)
-                listView.forceActiveFocus(Qt.BacktabFocusReason)
-        }
-
-        readonly property bool shown: (status === Loader.Ready) ? item.visible : false
-
-        function open() {
-            if (status === Loader.Ready)
-                item.open()
-        }
-
-        sourceComponent: PlaylistOverlayMenu {
-            isRight: true
-            rightPadding: VLCStyle.margin_xsmall + VLCStyle.applicationHorizontalMargin
-            bottomPadding: VLCStyle.margin_large + root.bottomPadding
-        }
+        return Promise.resolve()
     }
 
     Widgets.DragItem {
         id: dragItem
 
-        parent: (typeof g_mainDisplay !== 'undefined') ? g_mainDisplay : root
-
-        property var selection: null // make this indexes alias?
-
-        indexes: selection
-
-        onRequestData: {
-            selection = root.model.getSelection()
-            indexes = selection
-            setData(identifier, indexes.map(function (index) {
-                var item = root.model.itemAt(index)
+        onRequestData: (indexes, resolve, reject) => {
+            resolve(indexes.map((index) => {
+                const item = root.model.itemAt(index)
                 return {
                     "title": item.title,
                     "cover": (!!item.artwork && item.artwork.toString() !== "") ? item.artwork : VLCStyle.noArtAlbumCover
@@ -173,15 +124,18 @@ Control {
             }))
         }
 
-        function getSelectedInputItem(cb) {
-            cb(root.model.getItemsForIndexes(root.model.getSelection()))
+        onRequestInputItems: (indexes, data, resolve, reject) => {
+            resolve(root.model.getItemsForIndexes(root.selectionModel.selectedIndexesFlat))
         }
     }
 
     PlaylistContextMenu {
         id: contextMenu
         model: root.model
-        controler: mainPlaylistController
+        selectionModel: root.selectionModel
+        controler: MainPlaylistController
+
+        onJumpToCurrentPlaying: listView.positionViewAtIndex( MainPlaylistController.currentIndex, ItemView.Center)
     }
 
     background: Widgets.AcrylicBackground {
@@ -190,53 +144,51 @@ Control {
     }
 
     contentItem: ColumnLayout {
-        spacing: 0
+        spacing: VLCStyle.margin_xxsmall
 
-        ColumnLayout {
-            id: headerTextLayout
+        Layout.minimumWidth: noContentInfoColumn.implicitWidth
 
+        readonly property ListView listView: listView
+
+        Column {
+            Layout.fillHeight: false
             Layout.fillWidth: true
             Layout.leftMargin: VLCStyle.margin_normal
 
             spacing: VLCStyle.margin_xxxsmall
 
             Widgets.SubtitleLabel {
-                text: I18n.qtr("Playqueue")
+                text: qsTr("Playqueue")
                 color: theme.fg.primary
                 font.weight: Font.Bold
                 font.pixelSize: VLCStyle.dp(24, VLCStyle.scale)
             }
 
             Widgets.CaptionLabel {
-                color: (root.mode === PlaylistListView.Mode.Select || root.mode === PlaylistListView.Mode.Move)
-                       ? theme.accent : theme.fg.secondary
+                color: theme.fg.secondary
                 visible: model.count !== 0
-                text: {
-                    switch (root.mode) {
-                    case PlaylistListView.Mode.Select:
-                        return I18n.qtr("Selected tracks: %1").arg(model.selectedCount)
-                    case PlaylistListView.Mode.Move:
-                        return I18n.qtr("Moving tracks: %1").arg(model.selectedCount)
-                    case PlaylistListView.Mode.Normal:
-                    default:
-                        return I18n.qtr("%1 elements, %2").arg(model.count).arg(model.duration.formatLong())
-                    }
-                }
+                text: qsTr("%1 elements, %2").arg(model.count).arg(model.duration.formatLong())
             }
+        }
+
+        Item {
+            // Spacer
+
+            implicitHeight: VLCStyle.margin_xsmall
         }
 
         RowLayout {
             visible: model.count !== 0
 
-            Layout.topMargin: VLCStyle.margin_normal
-            Layout.bottomMargin: VLCStyle.margin_xxsmall
+            Layout.fillHeight: false
             Layout.leftMargin: VLCStyle.margin_normal
-            Layout.rightMargin: Math.max(listView.scrollBarWidth, VLCStyle.margin_normal)
+            Layout.rightMargin: Math.max(listView.ScrollBar.vertical.width, VLCStyle.margin_normal)
 
             spacing: VLCStyle.margin_large
 
             Widgets.IconLabel {
-                Layout.preferredWidth: VLCStyle.icon_playlistHeader
+                // playlist cover column
+                Layout.preferredWidth: VLCStyle.icon_playlistArt
 
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
@@ -244,14 +196,26 @@ Control {
                 font.pixelSize: VLCStyle.icon_playlistHeader
 
                 color: theme.fg.secondary
+
+                Accessible.role: Accessible.ColumnHeader
+                Accessible.name: qsTr("Cover")
+                Accessible.ignored: false
             }
 
-            Widgets.CaptionLabel {
+            //Use Text here as we're redefining its Accessible.role
+            Text {
                 Layout.fillWidth: true
 
+                elide: Text.ElideRight
+                font.pixelSize: VLCStyle.fontSize_normal
+                textFormat: Text.PlainText
+
                 verticalAlignment: Text.AlignVCenter
-                text: I18n.qtr("Title")
+                text: qsTr("Title")
                 color: theme.fg.secondary
+
+                Accessible.role: Accessible.ColumnHeader
+                Accessible.name: text
             }
 
             Widgets.IconLabel {
@@ -262,6 +226,10 @@ Control {
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
                 font.pixelSize: VLCStyle.icon_playlistHeader
+
+                Accessible.role: Accessible.ColumnHeader
+                Accessible.name: qsTr("Duration")
+                Accessible.ignored: false
 
                 TextMetrics {
                     id: durationMetric
@@ -283,47 +251,60 @@ Control {
 
             clip: true // else out of view items will overlap with surronding items
 
-            model: PlaylistListModel {
-                playlistId: MainCtx.mainPlaylist
+            model: root.model
+
+            Binding on fadingEdge.enableBeginningFade {
+                when: (autoScroller.scrollingDirection === Util.ViewDragAutoScrollHandler.Direction.Backward)
+                value: false
             }
 
-            dragAutoScrollDragItem: dragItem
+            Binding on fadingEdge.enableEndFade {
+                when: (autoScroller.scrollingDirection === Util.ViewDragAutoScrollHandler.Direction.Forward)
+                value: false
+            }
 
-            // NOTE: We want a gentle fade at the beginning / end of the playqueue.
-            enableFade: true
+            fadingEdge.backgroundColor: (root.background && (root.background.color.a >= 1.0)) ? root.background.color
+                                                                                             : "transparent"
 
-            backgroundColor: root.background.usingAcrylic ? "transparent"
-                                                          : listView.colorContext.bg.primary
+            contentWidth: width
 
             property int shiftIndex: -1
             property Item itemContainsDrag: null
 
-            onDeselectAll: {
-                root.model.deselectAll()
-            }
-
-            onShowContextMenu: {
+            onShowContextMenu: (globalPos) => {
                 contextMenu.popup(-1, globalPos)
             }
 
             Connections {
                 target: listView.model
 
-                onRowsInserted: {
+                function onRowsInserted() {
                     if (listView.currentIndex === -1)
                         listView.currentIndex = 0
                 }
 
-                onModelReset: {
+                function onModelReset() {
                     if (listView.currentIndex === -1 && root.model.count > 0)
                         listView.currentIndex = 0
+                }
+            }
+
+            Util.ViewDragAutoScrollHandler {
+                id: autoScroller
+
+                view: listView
+                dragging: !!listView.itemContainsDrag && listView.itemContainsDrag !== listView.footerItem
+                dragPosProvider: function () {
+                    const source = listView.itemContainsDrag
+                    const point = source.drag
+                    return listView.mapFromItem(source, point.x, point.y)
                 }
             }
 
             footer: Item {
                 implicitWidth: parent.width
 
-                BindingCompat on implicitHeight {
+                Binding on implicitHeight {
                     delayed: true
                     value: Math.max(VLCStyle.icon_normal, listView.height - y)
                 }
@@ -331,6 +312,8 @@ Control {
                 property alias firstItemIndicatorVisible: firstItemIndicator.visible
 
                 readonly property bool containsDrag: dropArea.containsDrag
+
+                readonly property point drag: Qt.point(dropArea.drag.x, dropArea.drag.y)
 
                 onContainsDragChanged: {
                     if (root.model.count > 0) {
@@ -353,18 +336,17 @@ Control {
 
                     color: "transparent"
 
-                    visible: (root.model.count === 0 && dropArea.containsDrag)
+                    visible: (root.model.count === 0 && (dropArea.containsDrag || dropArea.dropOperationOngoing))
 
                     opacity: 0.8
 
-                    T.Label {
+                    Widgets.IconLabel {
                         anchors.centerIn: parent
 
                         text: VLCIcons.add
 
-                        font.pointSize: VLCStyle.fontHeight_xxxlarge
+                        font.pixelSize: VLCStyle.fontHeight_xxxlarge
 
-                        font.family: VLCIcons.fontFamily
                         color: theme.accent
                     }
                 }
@@ -374,15 +356,19 @@ Control {
 
                     anchors.fill: parent
 
-                    onEntered: {
+                    property bool dropOperationOngoing: false
+
+                    onEntered: (drag) => {
                         if(!root.isDropAcceptable(drag, root.model.count)) {
                             drag.accepted = false
                             return
                         }
                     }
 
-                    onDropped: {
+                    onDropped: (drop) => {
+                        dropOperationOngoing = true
                         root.acceptDrop(root.model.count, drop)
+                            .then(() => { dropOperationOngoing = false })
                     }
                 }
             }
@@ -427,25 +413,25 @@ Control {
             delegate: PlaylistDelegate {
                 id: delegate
 
-                width: listView.width
+                width: listView.contentWidth
+                rightPadding: Math.max(listView.ScrollBar.vertical.width, VLCStyle.margin_normal)
+
+                contextMenu: root.contextMenu
+
+                dragItem: root.dragItem
+
+                isDropAcceptable: root.isDropAcceptable
+                acceptDrop: root.acceptDrop
 
                 onContainsDragChanged: listView.updateItemContainsDrag(this, containsDrag)
             }
 
             add: Transition {
-                SequentialAnimation {
-                    PropertyAction {
-                        // TODO: Remove this >= Qt 5.15
-                        property: "opacity"
-                        value: 0.0
-                    }
-
-                    OpacityAnimator {
-                        from: 0.0 // QTBUG-66475
-                        to: 1.0
-                        duration: VLCStyle.duration_long
-                        easing.type: Easing.OutSine
-                    }
+                OpacityAnimator {
+                    from: 0.0
+                    to: 1.0
+                    duration: VLCStyle.duration_long
+                    easing.type: Easing.OutSine
                 }
             }
 
@@ -458,120 +444,15 @@ Control {
                 }
             }
 
-            onSelectAll: root.model.selectAll()
-            onSelectionUpdated: {
-                if (root.mode === PlaylistListView.Mode.Select) {
-                    console.log("update selection select")
-                } else if (root.mode === PlaylistListView.Mode.Move) {
-                    var selectedIndexes = root.model.getSelection()
-                    if (selectedIndexes.length === 0)
-                        return
-                    /* always move relative to the first item of the selection */
-                    var target = selectedIndexes[0];
-                    if (newIndex > oldIndex) {
-                        /* move down */
-                        target++
-                    } else if (newIndex < oldIndex && target > 0) {
-                        /* move up */
-                        target--
-                    }
-
-                    listView.currentIndex = selectedIndexes[0]
-                    /* the target is the position _after_ the move is applied */
-                    root.model.moveItemsPost(selectedIndexes, target)
-                } else { // normal
-                    updateSelection(keyModifiers, oldIndex, newIndex);
-                }
-            }
-
-            Keys.onDeletePressed: onDelete()
-            Keys.onMenuPressed: overlayMenu.open()
+            Keys.onDeletePressed: model.removeItems(selectionModel.selectedIndexesFlat)
 
             Navigation.parentItem: root
-            Navigation.rightAction: function() {
-                overlayMenu.open()
-            }
-            Navigation.leftAction: function() {
-                if (mode === PlaylistListView.Mode.Normal) {
-                    root.Navigation.defaultNavigationLeft()
-                } else {
-                    mode = PlaylistListView.Mode.Normal
-                }
-            }
-            Navigation.cancelAction: function() {
-                if (mode === PlaylistListView.Mode.Normal) {
-                    root.Navigation.defaultNavigationCancel()
-                } else {
-                    mode = PlaylistListView.Mode.Normal
-                }
-            }
 
-            Navigation.upAction: function() {
-                if (mode === PlaylistListView.Mode.Normal)
-                    root.Navigation.defaultNavigationUp()
-            }
-
-            Navigation.downAction: function() {
-                if (mode === PlaylistListView.Mode.Normal)
-                    root.Navigation.defaultNavigationDown()
-            }
-
-            onActionAtIndex: {
+            onActionAtIndex: (index) => {
                 if (index < 0)
                     return
 
-                if (mode === PlaylistListView.Mode.Select)
-                    root.model.toggleSelected(index)
-                else if (mode === PlaylistListView.Mode.Normal)
-                    mainPlaylistController.goTo(index, true)
-            }
-
-            function onDelete() {
-                var selection = root.model.getSelection()
-                if (selection.length === 0)
-                    return
-                root.model.removeItems(selection)
-            }
-
-            function _addRange(from, to) {
-                root.model.setRangeSelected(from, to - from + 1, true)
-            }
-
-            function _delRange(from, to) {
-                root.model.setRangeSelected(from, to - from + 1, false)
-            }
-
-            // copied from SelectableDelegateModel, which is intended to be removed
-            function updateSelection( keymodifiers, oldIndex, newIndex ) {
-                if ((keymodifiers & Qt.ShiftModifier)) {
-                    if ( shiftIndex === oldIndex) {
-                        if ( newIndex > shiftIndex )
-                            _addRange(shiftIndex, newIndex)
-                        else
-                            _addRange(newIndex, shiftIndex)
-                    } else if (shiftIndex <= newIndex && newIndex < oldIndex) {
-                        _delRange(newIndex + 1, oldIndex )
-                    } else if ( shiftIndex < oldIndex && oldIndex < newIndex ) {
-                        _addRange(oldIndex, newIndex)
-                    } else if ( newIndex < shiftIndex && shiftIndex < oldIndex ) {
-                        _delRange(shiftIndex, oldIndex)
-                        _addRange(newIndex, shiftIndex)
-                    } else if ( newIndex < oldIndex && oldIndex < shiftIndex  ) {
-                        _addRange(newIndex, oldIndex)
-                    } else if ( oldIndex <= shiftIndex && shiftIndex < newIndex ) {
-                        _delRange(oldIndex, shiftIndex)
-                        _addRange(shiftIndex, newIndex)
-                    } else if ( oldIndex < newIndex && newIndex <= shiftIndex  ) {
-                        _delRange(oldIndex, newIndex - 1)
-                    }
-                } else {
-                    shiftIndex = newIndex
-                    if (keymodifiers & Qt.ControlModifier) {
-                        root.model.toggleSelected(newIndex)
-                    } else {
-                        root.model.setSelection([newIndex])
-                    }
-                }
+                MainPlaylistController.goTo(index, true)
             }
 
             Column {
@@ -579,9 +460,15 @@ Control {
 
                 anchors.centerIn: parent
 
-                visible: (model.count === 0 && !listView.footerItem.firstItemIndicatorVisible)
+                visible: false
+                enabled: visible
 
                 opacity: (listView.activeFocus) ? 1.0 : 0.4
+
+                Binding on visible {
+                    delayed: true
+                    value: (listView.model.count === 0 && !listView.footerItem.firstItemIndicatorVisible)
+                }
 
                 Widgets.IconLabel {
                     id: label
@@ -606,7 +493,7 @@ Control {
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
 
-                    text: I18n.qtr("No content yet")
+                    text: qsTr("No content yet")
 
                     color: label.color
 
@@ -619,7 +506,7 @@ Control {
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
 
-                    text: I18n.qtr("Drag & Drop some content here!")
+                    text: qsTr("Drag & Drop some content here!")
 
                     color: label.color
 
@@ -631,11 +518,15 @@ Control {
         PlaylistToolbar {
             id: toolbar
 
+            Layout.preferredHeight: VLCStyle.heightBar_normal
+            Layout.fillHeight: false
             Layout.fillWidth: true
+            Layout.leftMargin: VLCStyle.margin_normal
+            Layout.rightMargin: VLCStyle.margin_normal
         }
     }
 
     Keys.priority: Keys.AfterItem
     Keys.forwardTo: listView
-    Keys.onPressed: root.Navigation.defaultKeyAction(event)
+    Keys.onPressed: (event) => root.Navigation.defaultKeyAction(event)
 }

@@ -34,6 +34,10 @@
 /* Max input rate factor (1/4 -> 4) */
 # define AOUT_MAX_INPUT_RATE (4)
 
+#define AOUT_RESTART_FILTERS        0x1
+#define AOUT_RESTART_OUTPUT         (AOUT_RESTART_FILTERS|0x2)
+#define AOUT_RESTART_OUTPUT_DEC     (AOUT_RESTART_OUTPUT|0x4)
+
 enum {
     AOUT_RESAMPLING_NONE=0,
     AOUT_RESAMPLING_UP,
@@ -107,10 +111,27 @@ void aout_volume_Delete(aout_volume_t *);
 audio_output_t *aout_New (vlc_object_t *);
 #define aout_New(a) aout_New(VLC_OBJECT(a))
 
+/**
+ * Starts an audio output stream.
+ *
+ * \param aout the audio output instance to initialize from
+ * \param stream the audio output stream to initialize from
+ * \param fmt the format to request to the output
+ * \param input_profile the audio profile to request from the audio output
+ * \param filter_fmt the format requested from the filters
+ * \param filters_cfg the configuration to load the audio filters from
+ *
+ * \warning The caller must NOT hold the audio output lock.
+ */
 int aout_OutputNew(audio_output_t *aout, vlc_aout_stream *stream,
                    audio_sample_format_t *fmt, int input_profile,
                    audio_sample_format_t *filter_fmt,
                    aout_filters_cfg_t *filters_cfg);
+/**
+ * Stops the audio output stream (undoes aout_OutputNew()).
+ * \note This can only be called after a successful aout_OutputNew().
+ * \warning The caller must NOT hold the audio output lock.
+ */
 void aout_OutputDelete( audio_output_t * p_aout );
 
 vlc_audio_meter_plugin *
@@ -186,7 +207,7 @@ static inline void aout_SetWavePhysicalChannels(audio_sample_format_t *fmt)
  * The clock, that is not mandatory, will be used to create a new slave clock
  * for the filter visualization plugins.
  */
-aout_filters_t *aout_FiltersNewWithClock(vlc_object_t *, const vlc_clock_t *,
+aout_filters_t *aout_FiltersNewWithClock(vlc_object_t *, vlc_clock_t *,
                                          const audio_sample_format_t *,
                                          const audio_sample_format_t *,
                                          const aout_filters_cfg_t *cfg) VLC_USED;

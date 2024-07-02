@@ -32,6 +32,8 @@
 #include <limits.h> /* INT_MAX */
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_image.h>
@@ -63,7 +65,7 @@ typedef struct
     int i_position;           /* Mosaic positioning method */
     bool b_ar;          /* Do we keep the aspect ratio ? */
     bool b_keep;        /* Do we keep the original picture format ? */
-    int i_width, i_height;    /* Mosaic height and width */
+    unsigned i_width, i_height; /* Mosaic height and width */
     int i_cols, i_rows;       /* Mosaic rows and cols */
     int i_align;              /* Mosaic alignment in background video */
     int i_xoffset, i_yoffset; /* Top left corner offset */
@@ -164,7 +166,17 @@ static const int pi_pos_values[] = { 0, 1, 2 };
 static const char *const ppsz_pos_descriptions[] =
     { N_("auto"), N_("fixed"), N_("offsets") };
 
-static const int pi_align_values[] = { 0, 1, 2, 4, 8, 5, 6, 9, 10 };
+static const int pi_align_values[] = {
+    0,
+    SUBPICTURE_ALIGN_LEFT,
+    SUBPICTURE_ALIGN_RIGHT,
+    SUBPICTURE_ALIGN_TOP,
+    SUBPICTURE_ALIGN_BOTTOM,
+    SUBPICTURE_ALIGN_TOP | SUBPICTURE_ALIGN_LEFT,
+    SUBPICTURE_ALIGN_TOP | SUBPICTURE_ALIGN_RIGHT,
+    SUBPICTURE_ALIGN_BOTTOM | SUBPICTURE_ALIGN_LEFT,
+    SUBPICTURE_ALIGN_BOTTOM | SUBPICTURE_ALIGN_RIGHT,
+};
 static const char *const ppsz_align_descriptions[] =
      { N_("Center"), N_("Left"), N_("Right"), N_("Top"), N_("Bottom"),
      N_("Top-Left"), N_("Top-Right"), N_("Bottom-Left"), N_("Bottom-Right") };
@@ -180,9 +192,9 @@ vlc_module_begin ()
     add_integer_with_range( CFG_PREFIX "alpha", 255, 0, 255,
                             ALPHA_TEXT, ALPHA_LONGTEXT )
 
-    add_integer_with_range( CFG_PREFIX "height", 100, 0, INT_MAX,
+    add_integer_with_range( CFG_PREFIX "height", 100, 0, UINT_MAX,
                  HEIGHT_TEXT, HEIGHT_LONGTEXT )
-    add_integer_with_range( CFG_PREFIX "width", 100, 0, INT_MAX,
+    add_integer_with_range( CFG_PREFIX "width", 100, 0, UINT_MAX,
                  WIDTH_TEXT, WIDTH_LONGTEXT )
 
     add_integer_with_range( CFG_PREFIX "align", 5, 0, 10,
@@ -437,7 +449,6 @@ static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
     unsigned int col_inner_width, row_inner_height;
 
     subpicture_region_t *p_region;
-    subpicture_region_t *p_region_prev = NULL;
 
     /* Allocate the subpicture internal data. */
     subpicture_t *p_spu = filter_NewSubpicture( p_filter );
@@ -447,10 +458,9 @@ static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
     /* Initialize subpicture */
     p_spu->i_channel = 0;
     p_spu->i_start  = date;
-    p_spu->i_stop = 0;
+    p_spu->i_stop = VLC_TICK_INVALID;
     p_spu->b_ephemer = true;
     p_spu->i_alpha = p_sys->i_alpha;
-    p_spu->b_absolute = false;
 
     p_spu->i_original_picture_width = p_sys->i_width;
     p_spu->i_original_picture_height = p_sys->i_height;
@@ -585,12 +595,11 @@ static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
         i_row = ( i_real_index / p_sys->i_cols ) % p_sys->i_rows;
         i_col = i_real_index % p_sys->i_cols ;
 
-        video_format_Init( &fmt_in, 0 );
-        video_format_Init( &fmt_out, 0 );
-
         p_converted = vlc_picture_chain_PeekFront( &p_es->pictures );
         if ( !p_sys->b_keep )
         {
+            video_format_Init( &fmt_in, 0 );
+            video_format_Init( &fmt_out, 0 );
             /* Convert the images */
             fmt_in.i_chroma = p_converted->format.i_chroma;
             fmt_in.i_height = p_converted->format.i_height;
@@ -624,35 +633,22 @@ static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
 
             p_converted = image_Convert( p_sys->p_image, p_converted,
                                          &fmt_in, &fmt_out );
+            video_format_Clean( &fmt_in );
+            video_format_Clean( &fmt_out );
             if( !p_converted )
             {
                 msg_Warn( p_filter,
                            "image resizing and chroma conversion failed" );
-                video_format_Clean( &fmt_in );
-                video_format_Clean( &fmt_out );
                 continue;
             }
         }
-        else
-        {
-            fmt_in.i_width = fmt_out.i_width = p_converted->format.i_width;
-            fmt_in.i_height = fmt_out.i_height = p_converted->format.i_height;
-            fmt_in.i_chroma = fmt_out.i_chroma = p_converted->format.i_chroma;
-            fmt_out.i_visible_width = fmt_out.i_width;
-            fmt_out.i_visible_height = fmt_out.i_height;
-        }
 
-        p_region = subpicture_region_New( &fmt_out );
-        /* FIXME the copy is probably not needed anymore */
-        if( p_region )
-            picture_Copy( p_region->p_picture, p_converted );
+        p_region = subpicture_region_ForPicture( NULL, p_converted );
         if( !p_sys->b_keep )
             picture_Release( p_converted );
 
         if( !p_region )
         {
-            video_format_Clean( &fmt_in );
-            video_format_Clean( &fmt_out );
             msg_Err( p_filter, "cannot allocate SPU region" );
             subpicture_Delete( p_spu );
             vlc_global_unlock( VLC_MOSAIC_MUTEX );
@@ -660,6 +656,7 @@ static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
             return NULL;
         }
 
+        p_region->b_absolute = false;
         if( p_es->i_x >= 0 && p_es->i_y >= 0 )
         {
             p_region->i_x = p_es->i_x;
@@ -672,7 +669,7 @@ static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
         }
         else
         {
-            if( fmt_out.i_width > col_inner_width ||
+            if( p_converted->format.i_width > col_inner_width ||
                 p_sys->b_ar || p_sys->b_keep )
             {
                 /* we don't have to center the video since it takes the
@@ -687,10 +684,10 @@ static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
                 p_region->i_x = p_sys->i_xoffset
                         + i_col * ( p_sys->i_width / p_sys->i_cols )
                         + ( i_col * p_sys->i_borderw ) / p_sys->i_cols
-                        + ( col_inner_width - fmt_out.i_width ) / 2;
+                        + ( col_inner_width - p_converted->format.i_width ) / 2;
             }
 
-            if( fmt_out.i_height > row_inner_height
+            if( p_converted->format.i_height > row_inner_height
                 || p_sys->b_ar || p_sys->b_keep )
             {
                 /* we don't have to center the video since it takes the
@@ -705,25 +702,13 @@ static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
                 p_region->i_y = p_sys->i_yoffset
                         + i_row * ( p_sys->i_height / p_sys->i_rows )
                         + ( i_row * p_sys->i_borderh ) / p_sys->i_rows
-                        + ( row_inner_height - fmt_out.i_height ) / 2;
+                        + ( row_inner_height - p_converted->format.i_height ) / 2;
             }
         }
         p_region->i_align = p_sys->i_align;
         p_region->i_alpha = p_es->i_alpha;
 
-        if( p_region_prev == NULL )
-        {
-            p_spu->p_region = p_region;
-        }
-        else
-        {
-            p_region_prev->p_next = p_region;
-        }
-
-        video_format_Clean( &fmt_in );
-        video_format_Clean( &fmt_out );
-
-        p_region_prev = p_region;
+        vlc_spu_regions_push(&p_spu->regions, p_region);
     }
 
     vlc_global_unlock( VLC_MOSAIC_MUTEX );
@@ -762,16 +747,16 @@ static int MosaicCallback( vlc_object_t *p_this, char const *psz_var,
     else if( VAR_IS( "width" ) )
     {
         vlc_mutex_lock( &p_sys->lock );
-        msg_Dbg( p_this, "changing width from %dpx to %dpx",
-                         p_sys->i_width, (int)newval.i_int );
+        msg_Dbg( p_this, "changing width from %upx to %upx",
+                         p_sys->i_width, (unsigned)newval.i_int );
         p_sys->i_width = newval.i_int;
         vlc_mutex_unlock( &p_sys->lock );
     }
     else if( VAR_IS( "xoffset" ) )
     {
         vlc_mutex_lock( &p_sys->lock );
-        msg_Dbg( p_this, "changing x offset from %dpx to %dpx",
-                         p_sys->i_xoffset, (int)newval.i_int );
+        msg_Dbg( p_this, "changing x offset from %upx to %upx",
+                         p_sys->i_xoffset, (unsigned)newval.i_int );
         p_sys->i_xoffset = newval.i_int;
         vlc_mutex_unlock( &p_sys->lock );
     }

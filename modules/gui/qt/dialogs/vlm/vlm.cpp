@@ -458,7 +458,7 @@ VLMAWidget::VLMAWidget( VLMWrapper *_vlm, const QString& _name,
     objLayout->addWidget( time, 1, 3, 1, 2 );*/
 
     QToolButton *modifyButton = new QToolButton;
-    modifyButton->setIcon( QIcon( ":/menu/settings.svg" ) );
+    modifyButton->setIcon( QIcon( ":/menu/ic_fluent_options.svg" ) );
     modifyButton->setToolTip( qtr("Change") );
     objLayout->addWidget( modifyButton, 0, 5 );
 
@@ -504,13 +504,13 @@ VLMBroadcast::VLMBroadcast( VLMWrapper *vlm, const QString& _name,
     b_looped = _looped;
 
     playButton = new QToolButton;
-    playButton->setIcon( QIcon( ":/menu/play.svg" ) );
+    playButton->setIcon( QIcon( ":/menu/ic_fluent_play_filled.svg" ) );
     playButton->setToolTip( qtr("Play") );
     objLayout->addWidget( playButton, 1, 0 );
     b_playing = true;
 
     QToolButton *stopButton = new QToolButton;
-    stopButton->setIcon( QIcon( ":/menu/stop.svg" ) );
+    stopButton->setIcon( QIcon( ":/menu/ic_fluent_stop.svg" ) );
     stopButton->setToolTip( qtr("Stop") );
     objLayout->addWidget( stopButton, 1, 1 );
 
@@ -529,7 +529,7 @@ void VLMBroadcast::update()
 {
     vlm->EditBroadcast( name, input, inputOptions, output, b_enabled, b_looped );
     if( b_looped )
-        loopButton->setIcon( QIcon( ":/menu/repeat_all.svg" ) );
+        loopButton->setIcon( QIcon( ":/menu/ic_fluent_arrow_repeat_all.svg" ) );
     else
         loopButton->setIcon( QIcon( ":/menu/repeat_off.svg" ) );
 }
@@ -539,12 +539,12 @@ void VLMBroadcast::togglePlayPause()
     if( b_playing )
     {
         vlm->ControlBroadcast( name, ControlBroadcastPause );
-        playButton->setIcon( QIcon( ":/menu/pause.svg" ) );
+        playButton->setIcon( QIcon( ":/menu/ic_pause_filled.svg" ) );
     }
     else
     {
         vlm->ControlBroadcast( name, ControlBroadcastPlay );
-        playButton->setIcon( QIcon( ":/menu/play.svg" ) );
+        playButton->setIcon( QIcon( ":/menu/ic_fluent_play_filled.svg" ) );
     }
     b_playing = !b_playing;
 }
@@ -558,7 +558,7 @@ void VLMBroadcast::toggleLoop()
 void VLMBroadcast::stop()
 {
     vlm->ControlBroadcast( name, ControlBroadcastStop );
-    playButton->setIcon( QIcon( ":/menu/play.svg" ) );
+    playButton->setIcon( QIcon( ":/menu/ic_fluent_play_filled.svg" ) );
 }
 
 /****************
@@ -637,13 +637,7 @@ void VLMWrapper::EditBroadcast( const QString& name, const QString& input,
         vlm_ExecuteCommand( p_vlm, qtu( command ), &message );
         vlm_MessageDelete( message );
 
-        QStringList options = inputOptions.split( " :",
-                                                  #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
-                                                      Qt::SkipEmptyParts
-                                                  #else
-                                                      QString::SkipEmptyParts
-                                                  #endif
-                                                );
+        QStringList options = inputOptions.split( " :", Qt::SkipEmptyParts );
 
         for( int i = 0; i < options.count(); i++ )
         {
@@ -735,13 +729,7 @@ void VLMWrapper::EditSchedule( const QString& name, const QString& input,
         vlm_ExecuteCommand( p_vlm, qtu( command ), &message );
         vlm_MessageDelete( message );
 
-        QStringList options = inputOptions.split( " :",
-                                                  #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
-                                                      Qt::SkipEmptyParts
-                                                  #else
-                                                      QString::SkipEmptyParts
-                                                  #endif
-                                                );
+        QStringList options = inputOptions.split( " :", Qt::SkipEmptyParts );
         for( int i = 0; i < options.count(); i++ )
         {
             command = "setup \"" + name + "\" option \"" + options[i].trimmed() + "\"";
@@ -779,14 +767,14 @@ void VLMWrapper::EditSchedule( const QString& name, const QString& input,
 
     if( _scherepeatnumber > 0 )
     {
-       command = "setup \"" + name + "\" repeat \"" + _scherepeatnumber + "\"";
+       command = "setup \"" + name + "\" repeat \"" + QString::number(_scherepeatnumber) + "\"";
        vlm_ExecuteCommand( p_vlm, qtu( command ), &message );
        vlm_MessageDelete( message );
     }
 
     if( _repeatDays > 0 )
     {
-       command = "setup \"" + name + "\" period \"" + _repeatDays + "\"";
+       command = "setup \"" + name + "\" period \"" + QString::number(_repeatDays) + "\"";
        vlm_ExecuteCommand( p_vlm, qtu( command ), &message );
        vlm_MessageDelete( message );
     }

@@ -1,5 +1,5 @@
 # aom
-AOM_VERSION := 3.6.0
+AOM_VERSION := 3.9.1
 AOM_URL := https://storage.googleapis.com/aom-releases/libaom-$(AOM_VERSION).tar.gz
 
 PKGS += aom
@@ -14,14 +14,7 @@ $(TARBALLS)/libaom-$(AOM_VERSION).tar.gz:
 
 aom: libaom-$(AOM_VERSION).tar.gz .sum-aom
 	$(UNPACK)
-ifdef HAVE_ANDROID
-	$(APPLY) $(SRC)/aom/aom-android-pthreads.patch
-	$(APPLY) $(SRC)/aom/aom-android-cpufeatures.patch
-endif
 	$(MOVE)
-ifdef HAVE_ANDROID
-	cp $(ANDROID_NDK)/sources/android/cpufeatures/cpu-features.c $(ANDROID_NDK)/sources/android/cpufeatures/cpu-features.h aom/aom_ports/
-endif
 
 DEPS_aom =
 ifdef HAVE_WIN32
@@ -78,7 +71,7 @@ endif
 .aom: aom toolchain.cmake
 	rm -rf $(PREFIX)/include/aom
 	$(CMAKECLEAN)
-	$(HOSTVARS) $(CMAKE) $(AOM_CONF)
+	$(HOSTVARS_CMAKE) $(CMAKE) $(AOM_CONF)
 	+$(CMAKEBUILD)
 	$(call pkg_static,"$(BUILD_DIRUNPACK)/aom.pc")
 	$(CMAKEINSTALL)

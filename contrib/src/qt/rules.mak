@@ -1,153 +1,113 @@
-# Qt
+# qtbase
 
-QT_VERSION_MAJOR := 5.15
-QT_VERSION := $(QT_VERSION_MAJOR).8
 # Insert potential -betaX suffix here:
-QT_VERSION_FULL := $(QT_VERSION)
-QT_URL := $(QT)/$(QT_VERSION_MAJOR)/$(QT_VERSION_FULL)/submodules/qtbase-everywhere-opensource-src-$(QT_VERSION_FULL).tar.xz
+QTBASE_VERSION_FULL := $(QTBASE_VERSION)
+QTBASE_URL := $(QT)/$(QTBASE_VERSION_FULL)/submodules/qtbase-everywhere-src-$(QTBASE_VERSION_FULL).tar.xz
 
 ifdef HAVE_MACOSX
 #PKGS += qt
 endif
 ifdef HAVE_WIN32
 PKGS += qt
-DEPS_qt = fxc2 $(DEPS_fxc2) d3d9 $(DEPS_d3d9)
-ifneq ($(call mingw_at_least, 8), true)
-DEPS_qt += dcomp $(DEPS_dcomp)
-endif # MINGW 8
-ifdef HAVE_CROSS_COMPILE
-DEPS_qt += wine-headers
 endif
+ifneq ($(findstring qt,$(PKGS)),)
+PKGS_TOOLS += qt-tools
+endif
+PKGS_ALL += qt-tools
+
+DEPS_qt = qt-tools harfbuzz $(DEPS_harfbuzz) jpeg $(DEPS_jpeg) png $(DEPS_png) zlib $(DEPS_zlib) vulkan-headers $(DEPS_vulkan-headers)
+ifdef HAVE_WIN32
+DEPS_qt += d3d12 $(DEPS_d3d12) dcomp $(DEPS_dcomp)
+else
+DEPS_qt += freetype2 $(DEPS_freetype2)
 endif
 
-DEPS_qt += freetype2 $(DEPS_freetype2) harfbuzz $(DEPS_harfbuzz) jpeg $(DEPS_jpeg) png $(DEPS_png) zlib $(DEPS_zlib)
-
-ifeq ($(call need_pkg,"Qt5Core >= 5.11 Qt5Gui Qt5Widgets"),)
+ifeq ($(call need_pkg,"Qt6Core >= $(QTBASE_VERSION_MAJOR) Qt6Gui >= $(QTBASE_VERSION_MAJOR) Qt6Widgets >= $(QTBASE_VERSION_MAJOR)"),)
 PKGS_FOUND += qt
 endif
+ifndef HAVE_CROSS_COMPILE
+PKGS_FOUND += qt-tools
+else ifdef QT_USES_SYSTEM_TOOLS
+PKGS_FOUND += qt-tools
+endif
 
-$(TARBALLS)/qtbase-everywhere-src-$(QT_VERSION_FULL).tar.xz:
-	$(call download_pkg,$(QT_URL),qt)
+$(TARBALLS)/qtbase-everywhere-src-$(QTBASE_VERSION_FULL).tar.xz:
+	$(call download_pkg,$(QTBASE_URL),qt)
 
-.sum-qt: qtbase-everywhere-src-$(QT_VERSION_FULL).tar.xz
+.sum-qt: qtbase-everywhere-src-$(QTBASE_VERSION_FULL).tar.xz
 
-qt: qtbase-everywhere-src-$(QT_VERSION_FULL).tar.xz .sum-qt
+.sum-qt-tools: .sum-qt
+	touch $@
+
+qt: qtbase-everywhere-src-$(QTBASE_VERSION_FULL).tar.xz .sum-qt
 	$(UNPACK)
-	$(APPLY) $(SRC)/qt/0002-Windows-QPA-Disable-systray-notification-sounds.patch
-	$(APPLY) $(SRC)/qt/0001-disable-qt_random_cpu.patch
-	$(APPLY) $(SRC)/qt/0007-ANGLE-remove-static-assert-that-can-t-be-evaluated-b.patch
-	$(APPLY) $(SRC)/qt/0008-ANGLE-disable-ANGLE_STD_ASYNC_WORKERS-when-compiling.patch
-	$(APPLY) $(SRC)/qt/0009-Add-KHRONOS_STATIC-to-allow-static-linking-on-Windows.patch
-	$(APPLY) $(SRC)/qt/0003-allow-cross-compilation-of-angle-with-wine.patch
-	$(APPLY) $(SRC)/qt/qt-fix-gcc11-build.patch
-	# force path replacement in pkg-config output files
-	$(APPLY) $(SRC)/qt/force-pkgconfg-replace.patch
-	# pass all files installed through our installer
-	$(APPLY) $(SRC)/qt/set-mkspecs-properties.patch
-	# fix missing QMAKE_PKGCONFIG_VERSION in Windows targets
-	$(APPLY) $(SRC)/qt/set-mkspecs-version.patch
-	# don't omit -I${includedir} from .pc files when forcing -I$CONTRIB/include
-	$(APPLY) $(SRC)/qt/add-includedir-to-pc-file.patch
-	# fix detection of our harfbuzz on macosx
-	sed -i.orig 's#"-lharfbuzz"#{ "libs": "-framework CoreText -framework CoreGraphics -framework CoreFoundation -lharfbuzz", "condition": "config.darwin" }, "-lharfbuzz"#' "$(UNPACK_DIR)/src/gui/configure.json"
-	# Let us decide the WINVER/_WIN32_WINNT
-	sed -i.orig 's,mingw: DEFINES += WINVER=0x0601,# mingw: DEFINES += WINVER=0x0601,' "$(UNPACK_DIR)/mkspecs/features/qt_build_config.prf"
-	# Prevent all Qt contribs from generating and installing libtool .la files
-	sed -i.orig "/CONFIG/ s/ create_libtool/ -create_libtool/g" $(UNPACK_DIR)/mkspecs/features/qt_module.prf
+	$(APPLY) $(SRC)/qt/0001-Windows-Tray-Icon-Set-NOSOUND.patch
+	$(APPLY) $(SRC)/qt/0003-Revert-QMutex-remove-qmutex_win.cpp.patch
+	$(APPLY) $(SRC)/qt/0004-Expose-QRhiImplementation-in-QRhi.patch
+	$(APPLY) $(SRC)/qt/0005-Do-not-include-D3D12MemAlloc.h-in-header-file.patch
+	$(APPLY) $(SRC)/qt/0006-Try-DCompositionCreateDevice3-first-if-available.patch
+	$(APPLY) $(SRC)/qt/0007-Try-to-satisfy-Windows-7-compatibility.patch
+	$(APPLY) $(SRC)/qt/0001-disable-precompiled-headers-when-forcing-WINVER-inte.patch
 	$(MOVE)
 
-
 ifdef HAVE_WIN32
-QT_OPENGL := -angle
+QTBASE_CONFIG += -DFEATURE_freetype=OFF -DFEATURE_directwrite=ON -DFEATURE_directwrite3=ON
 else
-QT_OPENGL := -opengl desktop
-endif
-
-ifdef HAVE_MACOSX
-QT_SPEC := macx-clang
-endif
-
-ifdef HAVE_LINUX
-ifdef HAVE_CLANG
-QT_SPEC := linux-clang
-else
-QT_SPEC := linux-g++
-endif
-endif
-
-ifdef HAVE_WIN32
-
-ifdef HAVE_CLANG
-QT_SPEC := win32-clang-g++
-else
-QT_SPEC := win32-g++
-endif
-
+QTBASE_CONFIG += -DFEATURE_freetype=ON -DFEATURE_system_freetype=ON
 endif
 
 ifdef HAVE_CROSS_COMPILE
-QT_PLATFORM := -xplatform $(QT_SPEC) -device-option CROSS_COMPILE=$(HOST)-
+# This is necessary to make use of qmake
+QTBASE_CONFIG += -DQT_QMAKE_DEVICE_OPTIONS:STRING=CROSS_COMPILE=$(HOST)-
+endif
+
+ifdef HAVE_WIN32
+QTBASE_CONFIG += -DFEATURE_style_fusion=OFF
+endif
+
+ifdef ENABLE_PDB
+QTBASE_CONFIG += -DCMAKE_BUILD_TYPE=RelWithDebInfo
 else
-ifneq ($(QT_SPEC),)
-QT_PLATFORM := -platform $(QT_SPEC)
-endif
+QTBASE_CONFIG += -DCMAKE_BUILD_TYPE=Release
 endif
 
-QT_CONFIG := -static -opensource -confirm-license $(QT_OPENGL) -no-pkg-config \
-	-no-sql-sqlite -no-gif -no-openssl -no-dbus -no-vulkan -no-sql-odbc -no-pch \
-	-no-feature-concurrent -no-feature-itemmodeltester -no-feature-printer \
-	-no-feature-sqlmodel -no-feature-sql -no-feature-testlib -no-feature-xml \
-	-no-compile-examples -nomake examples -nomake tests \
-	-system-freetype -system-harfbuzz -system-libjpeg -system-libpng -system-zlib \
-	-no-syncqt
+QTBASE_COMMON_CONFIG := -DFEATURE_pkg_config=OFF -DINPUT_openssl=no \
+	-DFEATURE_dbus=OFF -DFEATURE_zstd=OFF -DFEATURE_concurrent=OFF -DFEATURE_androiddeployqt=OFF \
+	-DFEATURE_sql=OFF -DFEATURE_testlib=OFF \
+	-DFEATURE_xml=OFF -DFEATURE_printsupport=OFF -DFEATURE_network=OFF \
+	-DFEATURE_pdf=OFF \
+	-DQT_BUILD_EXAMPLES=OFF
 
-# For now, we only build Qt in release mode. In debug mode, startup is prevented by the internal ANGLE
-# throwing an assertion in debug mode, but only when built with clang. See issue 27476.
-QT_CONFIG += -release
+QTBASE_CONFIG += $(QTBASE_COMMON_CONFIG) \
+    -DFEATURE_gif=OFF \
+	-DFEATURE_harfbuzz=ON -DFEATURE_system_harfbuzz=ON -DFEATURE_jpeg=ON -DFEATURE_system_jpeg=ON \
+	-DFEATURE_png=ON -DFEATURE_system_png=ON -DFEATURE_zlib=ON -DFEATURE_system_zlib=ON \
+	-DFEATURE_movie=OFF -DFEATURE_whatsthis=OFF -DFEATURE_lcdnumber=OFF \
+	-DFEATURE_syntaxhighlighter=OFF -DFEATURE_undoview=OFF -DFEATURE_splashscreen=OFF \
+	-DFEATURE_dockwidget=OFF -DFEATURE_statusbar=OFF -DFEATURE_statustip=OFF \
+	-DFEATURE_keysequenceedit=OFF \
+	-DCMAKE_TOOLCHAIN_FILE=$(abspath toolchain.cmake) $(QT_HOST_PATH)
 
-ifeq ($(V),1)
-QT_CONFIG += -verbose
-endif
+QTBASE_NATIVE_CONFIG := $(QTBASE_COMMON_CONFIG) -DQT_BUILD_TESTS=FALSE \
+	-DFEATURE_accessibility=OFF -DFEATURE_widgets=OFF \
+	-DFEATURE_vnc=OFF -DFEATURE_linuxfb=OFF -DFEATURE_xlib=OFF \
+	-DFEATURE_vulkan=OFF -DFEATURE_imageformatplugin=OFF \
+	-DFEATURE_xkbcommon=OFF -DFEATURE_evdev=OFF -DFEATURE_sessionmanager=OFF -DFEATURE_png=OFF \
+	-DFEATURE_glib=OFF -DFEATURE_icu=OFF \
+	-DFEATURE_texthtmlparser=OFF -DFEATURE_cssparser=OFF -DFEATURE_textodfwriter=OFF -DFEATURE_textmarkdownreader=OFF \
+	-DFEATURE_textmarkdownwriter=OFF -DINPUT_libb2=no -DFEATURE_harfbuzz=OFF -DFEATURE_freetype=OFF -DINPUT_opengl=no
 
-ifdef HAVE_MINGW_W64
-QT_CONFIG += -no-direct2d
-endif
+.qt-tools: BUILD_DIR=$</vlc_native
+.qt-tools: qt
+	$(CMAKECLEAN)
+	$(BUILDVARS) $(CMAKE_NATIVE) $(QTBASE_NATIVE_CONFIG)
+	+$(CMAKEBUILD)
+	$(CMAKEINSTALL)
+	touch $@
 
-QT_ENV_VARS := $(HOSTVARS) DXSDK_DIR=$(PREFIX)/bin
-QT_QINSTALL="$(shell cd $(SRC)/qt/; pwd -P)/install_wrapper.sh"
-
-qmake_toolchain = echo "!host_build {"    > $(1)/.qmake.cache && \
-	echo "  QMAKE_C        = $(CC)"      >> $(1)/.qmake.cache && \
-	echo "  QMAKE_CXX      = $(CXX)"     >> $(1)/.qmake.cache && \
-	echo "  QMAKE_STRIP    = $(STRIP)"  >> $(1)/.qmake.cache && \
-	echo "  QMAKE_CFLAGS   += -isystem $(PREFIX)/include $(CFLAGS)" >> $(1)/.qmake.cache && \
-	echo "  QMAKE_CXXFLAGS += -isystem $(PREFIX)/include $(CXXFLAGS)" >> $(1)/.qmake.cache && \
-	echo "  QMAKE_LFLAGS   += $(LDFLAGS)"  >> $(1)/.qmake.cache && \
-	echo "  QMAKE_INSTALL_FILE = VLC_PREFIX=$(PREFIX) $(QT_QINSTALL)"  >> $(1)/.qmake.cache && \
-	echo "} else {"                        >> $(1)/.qmake.cache && \
-	echo "  QMAKE_C        = $(BUILDCC)"   >> $(1)/.qmake.cache && \
-	echo "  QMAKE_CXX      = $(BUILDCXX)"  >> $(1)/.qmake.cache && \
-	echo "  QMAKE_STRIP    = $(BUILDSTRIP)"  >> $(1)/.qmake.cache && \
-	echo "  QMAKE_CFLAGS   += $(BUILDCFLAGS)"   >> $(1)/.qmake.cache && \
-	echo "  QMAKE_CXXFLAGS += $(BUILDCXXFLAGS)" >> $(1)/.qmake.cache && \
-	echo "  QMAKE_LFLAGS   += $(BUILDLDFLAGS)"  >> $(1)/.qmake.cache && \
-	echo "}"                                           >> $(1)/.qmake.cache && \
-	echo "CONFIG -= debug_and_release" >> $(1)/.qmake.cache && \
-	echo "CONFIG += object_parallel_to_source create_pc force_bootstrap" >> $(1)/.qmake.cache
-
-
-.qt: qt
-	$(call qmake_toolchain, $<)
-	# Configure qt, build and run qmake
-	+cd $< && $(QT_ENV_VARS) ./configure $(QT_PLATFORM) $(QT_CONFIG) -prefix $(PREFIX) -hostprefix $(PREFIX)/lib/qt5 \
-	    $(shell $(SRC)/qt/configure-env.py $(CPPFLAGS) $(LDFLAGS))
-	# Build libraries, widgets, plugins, doc (empty)
-	$(MAKE) -C $<
-	# Install libraries, widgets, plugins, tools, doc (empty)
-	$(MAKE) -C $< install
-
-	#fix host tools headers to avoid collision with target headers
-	mkdir -p $(PREFIX)/lib/qt5/include
-	cp -R $(PREFIX)/include/QtCore $(PREFIX)/lib/qt5/include
-	sed -i.orig -e "s#\$\$QT_MODULE_INCLUDE_BASE#$(PREFIX)/lib/qt5/include#g" $(PREFIX)/lib/qt5/mkspecs/modules/qt_lib_bootstrap_private.pri
+.qt: qt toolchain.cmake
+	$(CMAKECLEAN)
+	$(HOSTVARS_CMAKE) $(CMAKE) $(QTBASE_CONFIG)
+	+$(CMAKEBUILD)
+	$(CMAKEINSTALL)
 	touch $@

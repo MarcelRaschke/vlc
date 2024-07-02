@@ -24,6 +24,8 @@
 #ifndef LIBVLC_MODULES_MACROS_H
 # define LIBVLC_MODULES_MACROS_H 1
 
+#include <stdint.h>
+
 /**
  * \file
  * This file implements plugin (module) macros used to define a vlc module.
@@ -48,6 +50,7 @@ enum vlc_module_properties
     VLC_MODULE_DESCRIPTION,
     VLC_MODULE_HELP,
     VLC_MODULE_TEXTDOMAIN,
+    VLC_MODULE_HELP_HTML,
     /* Insert new VLC_MODULE_* here */
 
     /* DO NOT EVER REMOVE, INSERT OR REPLACE ANY ITEM! It would break the ABI!
@@ -114,21 +117,21 @@ enum vlc_module_properties
 #define CONFIG_SECTION                      0x08 /* Start of new section */
 
 /* Configuration item types */
-#define CONFIG_ITEM_FLOAT                   0x20  /* Float option */
-#define CONFIG_ITEM_INTEGER                 0x40  /* Integer option */
-#define CONFIG_ITEM_RGB                     0x41  /* RGB color option */
-#define CONFIG_ITEM_BOOL                    0x60  /* Bool option */
-#define CONFIG_ITEM_STRING                  0x80  /* String option */
-#define CONFIG_ITEM_PASSWORD                0x81  /* Password option (*) */
-#define CONFIG_ITEM_KEY                     0x82  /* Hot key option */
-#define CONFIG_ITEM_MODULE                  0x84  /* Module option */
-#define CONFIG_ITEM_MODULE_CAT              0x85  /* Module option */
-#define CONFIG_ITEM_MODULE_LIST             0x86  /* Module option */
-#define CONFIG_ITEM_MODULE_LIST_CAT         0x87  /* Module option */
-#define CONFIG_ITEM_LOADFILE                0x8C  /* Read file option */
-#define CONFIG_ITEM_SAVEFILE                0x8D  /* Written file option */
-#define CONFIG_ITEM_DIRECTORY               0x8E  /* Directory option */
-#define CONFIG_ITEM_FONT                    0x8F  /* Font option */
+#define CONFIG_ITEM_FLOAT                   (1 << 5)  /* Float option */
+#define CONFIG_ITEM_INTEGER                 (2 << 5)  /* Integer option */
+#define CONFIG_ITEM_RGB                     (CONFIG_ITEM_INTEGER | 0x01)  /* RGB color option */
+#define CONFIG_ITEM_BOOL                    (3 << 5)  /* Bool option */
+#define CONFIG_ITEM_STRING                  (4 << 5)  /* String option */
+#define CONFIG_ITEM_PASSWORD                (CONFIG_ITEM_STRING | 0x01)  /* Password option (*) */
+#define CONFIG_ITEM_KEY                     (CONFIG_ITEM_STRING | 0x02)  /* Hot key option */
+#define CONFIG_ITEM_MODULE                  (CONFIG_ITEM_STRING | 0x04)  /* Module option */
+#define CONFIG_ITEM_MODULE_CAT              (CONFIG_ITEM_STRING | 0x05)  /* Module option */
+#define CONFIG_ITEM_MODULE_LIST             (CONFIG_ITEM_STRING | 0x06)  /* Module option */
+#define CONFIG_ITEM_MODULE_LIST_CAT         (CONFIG_ITEM_STRING | 0x07)  /* Module option */
+#define CONFIG_ITEM_LOADFILE                (CONFIG_ITEM_STRING | 0x0C)  /* Read file option */
+#define CONFIG_ITEM_SAVEFILE                (CONFIG_ITEM_STRING | 0x0D)  /* Written file option */
+#define CONFIG_ITEM_DIRECTORY               (CONFIG_ITEM_STRING | 0x0E)  /* Directory option */
+#define CONFIG_ITEM_FONT                    (CONFIG_ITEM_STRING | 0x0F)  /* Font option */
 
 /* reduce specific type to type class */
 #define CONFIG_CLASS(x) ((x) & ~0x1F)
@@ -356,6 +359,10 @@ VLC_METADATA_EXPORTS
     if (vlc_module_set (VLC_MODULE_HELP, VLC_CHECKED_TYPE(const char *, help))) \
         goto error;
 
+#define set_help_html( help_html ) \
+    if (vlc_module_set (VLC_MODULE_HELP_HTML, VLC_CHECKED_TYPE(const char *, help_html))) \
+        goto error;
+
 #define set_capability( cap, score ) \
     if (vlc_module_set (VLC_MODULE_CAPABILITY, VLC_CHECKED_TYPE(const char *, cap)) \
      || vlc_module_set (VLC_MODULE_SCORE, VLC_CHECKED_TYPE(int, score))) \
@@ -420,11 +427,6 @@ VLC_METADATA_EXPORTS
 #define set_section( text, longtext ) \
     add_typedesc_inner( CONFIG_SECTION, text, longtext )
 
-#ifndef VLC_DYNAMIC_PLUGIN
-#define add_category_hint(text, longtext) \
-    add_typedesc_inner( CONFIG_HINT_CATEGORY, text, longtext )
-#endif
-
 #define add_string( name, value, text, longtext ) \
     add_string_inner(CONFIG_ITEM_STRING, name, text, longtext, value)
 
@@ -450,17 +452,6 @@ VLC_METADATA_EXPORTS
 #define add_module_list(name, cap, value, text, longtext) \
     add_string_inner(CONFIG_ITEM_MODULE_LIST, name, text, longtext, value) \
     vlc_config_set (VLC_CONFIG_CAPABILITY, VLC_CHECKED_TYPE(const char *, cap));
-
-#ifndef VLC_DYNAMIC_PLUGIN
-#define add_module_cat(name, subcategory, value, text, longtext) \
-    add_string_inner(CONFIG_ITEM_MODULE_CAT, name, text, longtext, value) \
-    change_integer_range (subcategory /* gruik */, 0);
-
-#define add_module_list_cat(name, subcategory, value, text, longtext) \
-    add_string_inner(CONFIG_ITEM_MODULE_LIST_CAT, name, text, longtext, \
-                     value) \
-    change_integer_range (subcategory /* gruik */, 0);
-#endif
 
 #define add_integer( name, value, text, longtext ) \
     add_int_inner(CONFIG_ITEM_INTEGER, name, text, longtext, value)

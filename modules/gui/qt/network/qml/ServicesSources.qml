@@ -15,9 +15,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 
 import org.videolan.vlc 0.1
 
@@ -29,13 +29,29 @@ import "qrc:///style/"
 MainInterface.MainGridView {
     id: root
 
-    readonly property bool isViewMultiView: false
+    //properties
 
-    selectionDelegateModel: selectionModel
-    model: sourcesFilterModel
-    topMargin: VLCStyle.margin_large
+    readonly property bool hasGridListMode: false
+    readonly property bool isSearchable: true
+
+    property var pagePrefix: []
+
+    //signals
+
+    signal browseServiceManage(int reason)
+    signal browseSourceRoot(string sourceName, int reason)
+
+    //settings
+
+    model: sourcesModel
     cellWidth: VLCStyle.gridItem_network_width
     cellHeight: VLCStyle.gridCover_network_height + VLCStyle.margin_xsmall + VLCStyle.fontHeight_normal
+
+    headerDelegate: Widgets.ViewHeader {
+        view: root
+
+        text: qsTr("Services")
+    }
 
     delegate: Widgets.GridItem {
 
@@ -43,7 +59,7 @@ MainInterface.MainGridView {
         property int index: -1
         readonly property bool is_dummy: model.type === NetworkSourcesModel.TYPE_DUMMY
 
-        title: is_dummy ? I18n.qtr("Add a service") : model.long_name
+        title: is_dummy ? qsTr("Add a service") : model.long_name
         subtitle: ""
         pictureWidth: VLCStyle.colWidth(1)
         pictureHeight: VLCStyle.gridCover_network_height
@@ -65,67 +81,54 @@ MainInterface.MainGridView {
                         .accent(this.colorContext.accent)
                         .uri()
                 }
+
                 return model.artwork
-            } else {
-                return SVGColorImage.colorize("qrc:///sd/directory.svg")
-                           .color1(this.colorContext.fg.secondary)
-                           .uri()
             }
+
+            // use fallbackImage
+            return ""
+        }
+
+        fallbackImage: {
+            return SVGColorImage.colorize("qrc:///sd/directory.svg")
+                .color1(this.colorContext.fg.secondary)
+                .uri()
         }
 
         onItemDoubleClicked: {
             if (is_dummy)
-                History.push(["mc", "discover", "services", "services_manage"]);
+                root.browseServiceManage(Qt.MouseFocusReason)
             else
-                History.push(["mc", "discover", "services", "source_root",
-                              { source_name: model.name }]);
-
-            root.setCurrentItemFocus(Qt.MouseFocusReason);
+                root.browseSourceRoot(model.name, Qt.TabFocusReason)
         }
 
-        onItemClicked : {
-            selectionModel.updateSelection(modifier , root.currentIndex, index)
+        onItemClicked : (modifier) => {
+            root.selectionModel.updateSelection(modifier, root.currentIndex, index)
             root.currentIndex = index
             root.forceActiveFocus()
         }
     }
 
-    onActionAtIndex: {
-        var itemData = sourcesFilterModel.getDataAt(index);
+    onActionAtIndex: (index) => {
+        const itemData = sourcesModel.getDataAt(index);
 
         if (itemData.type === NetworkSourcesModel.TYPE_DUMMY)
-            History.push(["mc", "discover", "services", "services_manage"]);
+            browseServiceManage(Qt.TabFocusReason)
         else
-            History.push(["mc", "discover", "services", "source_root",
-                          { source_name: itemData.name }]);
-
-        root.setCurrentItemFocus(Qt.TabFocusReason);
+            browseSourceRoot(itemData.name, Qt.TabFocusReason)
     }
 
-    Navigation.parentItem: root
-
     Navigation.cancelAction: function() {
-        History.previous();
-
-        root.setCurrentItemFocus(Qt.TabFocusReason);
+        History.previous(Qt.BacktabFocusReason)
     }
 
     NetworkSourcesModel {
         id: sourcesModel
 
         ctx: MainCtx
-    }
 
-    Util.SelectableDelegateModel {
-        id: selectionModel
-
-        model: sourcesFilterModel
-    }
-
-    SortFilterProxyModel {
-        id: sourcesFilterModel
-
-        sourceModel: sourcesModel
-        searchRole: "name"
+        searchPattern: MainCtx.search.pattern
+        sortOrder: MainCtx.sort.order
+        sortCriteria: MainCtx.sort.criteria
     }
 }

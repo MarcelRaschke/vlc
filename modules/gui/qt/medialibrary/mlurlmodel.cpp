@@ -19,6 +19,7 @@
 #include "mlurlmodel.hpp"
 
 #include <QDateTime>
+#include <QTimeZone>
 
 MLUrlModel::MLUrlModel(QObject *parent)
     : MLBaseModel(parent)
@@ -39,6 +40,8 @@ QVariant MLUrlModel::itemRoleData(MLItem *item, int role) const
         return QVariant::fromValue( ml_url->getUrl() );
     case URL_LAST_PLAYED_DATE :
         return QVariant::fromValue( ml_url->getLastPlayedDate() );
+    case URL_IS_DELETABLE:
+        return QVariant::fromValue( true );
     default :
         return QVariant();
     }
@@ -49,7 +52,8 @@ QHash<int, QByteArray> MLUrlModel::roleNames() const
     return {
         { URL_ID, "id" },
         { URL_URL, "url" },
-        { URL_LAST_PLAYED_DATE, "last_played_date" }
+        { URL_LAST_PLAYED_DATE, "last_played_date" },
+        { URL_IS_DELETABLE, "isDeletable" },
     };
 }
 
@@ -81,6 +85,27 @@ void MLUrlModel::addAndPlay( const QString &url )
     });
 }
 
+void MLUrlModel::deleteStream( const MLItemId itemId )
+{
+    struct Ctx{
+        bool succeed = false;
+    };
+    m_mediaLib->runOnMLThread<Ctx>(this,
+        //ML thread
+        [itemId](vlc_medialibrary_t* ml, Ctx& ctx){
+            int64_t id = itemId.id;
+            vlc_ml_remove_stream(ml, id);
+            ctx.succeed = true;
+        },
+        //UI Thread
+        [this](quint64, Ctx& ctx){
+            if (!ctx.succeed)
+                return;
+
+            emit resetRequested();
+        });
+}
+
 vlc_ml_sorting_criteria_t MLUrlModel::roleToCriteria(int role) const
 {
     switch (role) {
@@ -109,7 +134,7 @@ MLUrl::MLUrl(const vlc_ml_media_t *_data)
     : MLItem( MLItemId( _data->i_id, VLC_ML_PARENT_UNKNOWN ) )
     , m_url( _data->p_files->i_nb_items > 0 ? _data->p_files->p_items[0].psz_mrl : "" )
     , m_lastPlayedDate(
-          QDateTime::fromSecsSinceEpoch( _data->i_last_played_date ).toString( QLocale::system().dateFormat( QLocale::ShortFormat ) )
+          QDateTime::fromSecsSinceEpoch( _data->i_last_played_date, QTimeZone::systemTimeZone() ).toString( QLocale::system().dateFormat( QLocale::ShortFormat ) )
           )
 {
 }
@@ -131,28 +156,22 @@ QString MLUrl::getLastPlayedDate() const
     return m_lastPlayedDate;
 }
 
-std::unique_ptr<MLBaseModel::BaseLoader>
-MLUrlModel::createLoader() const
+std::unique_ptr<MLListCacheLoader>
+MLUrlModel::createMLLoader() const
 {
-    return std::make_unique<Loader>(*this);
+    return std::make_unique<MLListCacheLoader>(m_mediaLib, std::make_shared<MLUrlModel::Loader>(*this));
 }
 
-size_t MLUrlModel::Loader::count(vlc_medialibrary_t* ml) const
+size_t MLUrlModel::Loader::count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const
 {
-    MLQueryParams params = getParams();
-    auto queryParams = params.toCQueryParams();
-
-    return vlc_ml_count_stream_history( ml, &queryParams );
+    return vlc_ml_count_history( ml, queryParams, VLC_ML_HISTORY_TYPE_NETWORK );
 }
 
 std::vector<std::unique_ptr<MLItem>>
-MLUrlModel::Loader::load(vlc_medialibrary_t* ml, size_t index, size_t count) const
+MLUrlModel::Loader::load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const
 {
-    MLQueryParams params = getParams(index, count);
-    auto queryParams = params.toCQueryParams();
-
     ml_unique_ptr<vlc_ml_media_list_t> media_list;
-    media_list.reset( vlc_ml_list_stream_history(ml, &queryParams) );
+    media_list.reset( vlc_ml_list_history(ml, queryParams, VLC_ML_HISTORY_TYPE_NETWORK) );
     if ( media_list == nullptr )
         return {};
 

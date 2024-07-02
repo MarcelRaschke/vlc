@@ -25,12 +25,14 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_codec.h>
 #include <vlc_messages.h>
 
 #include "../../codec/hxxx_helper.h"
 #include "nvdec_fmt.h"
+#include "nvdec_priv.h"
 #include "hw_pool.h"
 
 #ifndef CU_DEVICE_ATTRIBUTE_TEXTURE_ALIGNMENT
@@ -244,7 +246,6 @@ static int CUtoFMT(video_format_t *fmt, const CUVIDEOFORMAT *p_format)
     // frame rate
     fmt->i_frame_rate = p_format->frame_rate.numerator;
     fmt->i_frame_rate_base = p_format->frame_rate.denominator;
-    fmt->i_bits_per_pixel = i_bpp;
     return VLC_SUCCESS;
 }
 
@@ -783,6 +784,7 @@ static int OpenDecoder(vlc_object_t *p_this)
             result = hxxx_helper_set_extra(&p_sys->hh, p_dec->fmt_in->p_extra,
                                            p_dec->fmt_in->i_extra);
             if (result != VLC_SUCCESS) {
+                msg_Dbg(p_this, "missing/invalid HEVC/H264 extradata");
                 hxxx_helper_clean(&p_sys->hh);
                 goto early_exit;
             }
@@ -807,12 +809,16 @@ static int OpenDecoder(vlc_object_t *p_this)
                     break;
                 }
             }
+            msg_Dbg(p_this, "missing/invalid VC1/WMV3 extradata");
             goto early_exit;
         case VLC_CODEC_MP1V:
         case VLC_CODEC_MP2V:
         case VLC_CODEC_MPGV:
         case VLC_CODEC_MP4V:
+            break;
         case VLC_CODEC_VP8:
+            if (p_dec->fmt_in->i_level != 0 && p_dec->fmt_in->i_level != -1) // contains alpha extradata
+                goto early_exit;
             break;
         case VLC_CODEC_VP9:
             if (p_dec->fmt_in->i_profile != 0 && p_dec->fmt_in->i_profile != 2)
@@ -820,8 +826,11 @@ static int OpenDecoder(vlc_object_t *p_this)
                 msg_Warn(p_dec, "Unsupported VP9 profile %d", p_dec->fmt_in->i_profile);
                 goto early_exit;
             }
+            if (p_dec->fmt_in->i_level != 0 && p_dec->fmt_in->i_level != -1) // contains alpha extradata
+                goto early_exit;
             break;
         default:
+            msg_Dbg(p_this, "Unsupported codec %4.4s", (char*)&p_dec->fmt_in->i_codec);
             goto early_exit;
     }
 
@@ -829,6 +838,7 @@ static int OpenDecoder(vlc_object_t *p_this)
     if (dec_device == NULL) {
         if (p_sys->b_is_hxxx)
             hxxx_helper_clean(&p_sys->hh);
+        msg_Dbg(p_this, "Missing decoder device");
         goto early_exit;
     }
     p_sys->devsys = GetNVDECOpaqueDevice(dec_device);
@@ -884,8 +894,8 @@ static int OpenDecoder(vlc_object_t *p_this)
             goto error;
         cudaChroma = MapChomaIDC(i_chroma_idc);
 
-        unsigned i_w, i_h, i_vw, i_vh;
-        result = hxxx_helper_get_current_picture_size(&p_sys->hh, &i_w, &i_h, &i_vw, &i_vh);
+        unsigned i_ox, i_oy, i_w, i_h, i_vw, i_vh;
+        result = hxxx_helper_get_current_picture_size(&p_sys->hh, &i_ox, &i_oy, &i_w, &i_h, &i_vw, &i_vh);
         if (result != VLC_SUCCESS)
             goto error;
 
@@ -910,6 +920,9 @@ static int OpenDecoder(vlc_object_t *p_this)
 
         p_dec->fmt_out.video.i_width = vlc_align(i_w, OUTPUT_WIDTH_ALIGN);
         p_dec->fmt_out.video.i_height = i_h;
+
+        p_dec->fmt_out.video.i_x_offset = i_ox;
+        p_dec->fmt_out.video.i_y_offset = i_oy;
 
         if (!p_dec->fmt_in->video.i_visible_width || !p_dec->fmt_in->video.i_visible_height)
         {
@@ -963,7 +976,6 @@ static int OpenDecoder(vlc_object_t *p_this)
     p_dec->fmt_out.video.i_sar_num = i_sar_num;
     p_dec->fmt_out.video.i_sar_den = i_sar_den;
 #undef ALIGN
-    p_dec->fmt_out.video.i_bits_per_pixel = i_depth_luma;
     p_dec->fmt_out.video.i_frame_rate = p_dec->fmt_in->video.i_frame_rate;
     p_dec->fmt_out.video.i_frame_rate_base = p_dec->fmt_in->video.i_frame_rate_base;
 

@@ -15,10 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
+import QtQuick.Layouts
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
@@ -35,7 +35,7 @@ WindowDialog {
     minimumHeight: 400
 
     modal: true
-    title: I18n.qtr("Toolbar Editor")
+    title: qsTr("Toolbar Editor")
 
     signal unload()
 
@@ -49,7 +49,7 @@ WindowDialog {
         unload()
     }
 
-    onRejected: {
+    onRejected: (byButton) => {
         // Load saved to discard the changes
         MainCtx.controlbarProfileModel.reload()
         unload()
@@ -69,22 +69,33 @@ WindowDialog {
         ColumnLayout {
             anchors.fill: parent
 
+            spacing: VLCStyle.margin_small
+
             RowLayout {
+                Layout.fillHeight: false
+
+                spacing: VLCStyle.margin_xsmall
+
                 Widgets.MenuLabel {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: implicitWidth
+
                     color: root.colorContext.fg.primary
-                    text: I18n.qtr("Select profile:")
+                    text: qsTr("Select profile:")
                 }
 
                 Widgets.ComboBoxExt {
                     id: comboBox
 
-                    Layout.maximumWidth: (root.width / 2)
+                    Layout.fillWidth: (implicitWidth > Layout.minimumWidth)
+                    Layout.minimumWidth: VLCStyle.combobox_width_large
+                    Layout.minimumHeight: VLCStyle.combobox_height_normal
 
+                    // this is not proper way to do it,
+                    // but ComboBoxExt does not provide
+                    // correct implicit width:
+                    implicitWidth: implicitContentWidth
                     font.pixelSize: VLCStyle.fontSize_normal
-
-                    width: VLCStyle.combobox_width_large
-                    height: VLCStyle.combobox_height_normal
 
                     delegate: ItemDelegate {
                         width: comboBox.width
@@ -102,7 +113,7 @@ WindowDialog {
                     }
 
                     displayText: {
-                        var text
+                        let text
 
                         if (!!MainCtx.controlbarProfileModel.currentModel)
                             text = MainCtx.controlbarProfileModel.currentModel.name
@@ -125,50 +136,44 @@ WindowDialog {
                         MainCtx.controlbarProfileModel.selectedProfile = currentIndex
                     }
 
-                    Accessible.name: I18n.qtr("Profiles")
+                    Accessible.name: qsTr("Profiles")
                 }
 
                 Widgets.IconToolButton {
-                    text: I18n.qtr("New Profile")
-                    iconText: VLCIcons.profile_new
+                    description: qsTr("New Profile")
+                    text: VLCIcons.profile_new
 
                     onClicked: {
-                        var npDialog = DialogsProvider.getTextDialog(null,
-                                                                     I18n.qtr("Profile Name"),
-                                                                     I18n.qtr("Please enter the new profile name:"),
-                                                                     I18n.qtr("Profile %1").arg(comboBox.count + 1))
+                        const npDialog = DialogsProvider.getTextDialog(null,
+                                                                     qsTr("Profile Name"),
+                                                                     qsTr("Please enter the new profile name:"),
+                                                                     qsTr("Profile %1").arg(comboBox.count + 1))
                         if (!npDialog.ok)
                             return
 
                         MainCtx.controlbarProfileModel.cloneSelectedProfile(npDialog.text)
                         MainCtx.controlbarProfileModel.selectedProfile = (MainCtx.controlbarProfileModel.rowCount() - 1)
                     }
-
-                    T.ToolTip.visible: hovered
                 }
 
                 Widgets.IconToolButton {
                     id: useDefaultButton
 
-                    text: I18n.qtr("Use Default")
-                    iconText: VLCIcons.history
+                    description: qsTr("Use Default")
+                    text: VLCIcons.history
 
                     onClicked: {
                         MainCtx.controlbarProfileModel.currentModel.injectDefaults(false)
                     }
-
-                    T.ToolTip.visible: hovered
                 }
 
                 Widgets.IconToolButton {
-                    text: I18n.qtr("Delete the current profile")
-                    iconText: VLCIcons.del
+                    description: qsTr("Delete the current profile")
+                    text: VLCIcons.del
 
                     onClicked: {
                           MainCtx.controlbarProfileModel.deleteSelectedProfile()
                     }
-
-                    T.ToolTip.visible: hovered
                 }
             }
 

@@ -135,14 +135,12 @@ vout_resource_Remove(struct vout_resource *vout_rsc)
 /* */
 static void DestroySout( input_resource_t *p_resource )
 {
-#ifdef ENABLE_SOUT
     if( p_resource->p_sout )
     {
         msg_Dbg( p_resource->p_parent, "destroying stream output" );
         sout_StreamChainDelete( p_resource->p_sout, NULL );
         free(p_resource->psz_sout);
     }
-#endif
     p_resource->p_sout = NULL;
 }
 
@@ -567,7 +565,7 @@ void input_resource_HoldVouts( input_resource_t *p_resource, vout_thread_t ***pp
         goto exit;
 
     *ppp_vout = pp_vout;
-    *pi_vout = count;;
+    *pi_vout = count;
 
     count = 0;
     vlc_list_foreach( vout_rsc, &p_resource->vout_rscs, node )
@@ -595,7 +593,6 @@ sout_stream_t *input_resource_RequestSout( input_resource_t *p_resource, const c
 
     assert(psz_sout != NULL);
     vlc_mutex_lock( &p_resource->lock );
-#ifdef ENABLE_SOUT
     /* Check the validity of the sout */
     if (p_resource->p_sout != NULL
      && strcmp(p_resource->psz_sout, psz_sout) != 0)
@@ -624,9 +621,6 @@ sout_stream_t *input_resource_RequestSout( input_resource_t *p_resource, const c
                 free(p_resource->psz_sout);
         }
     }
-#else
-    sout = NULL;
-#endif
     vlc_mutex_unlock( &p_resource->lock );
     return sout;
 }

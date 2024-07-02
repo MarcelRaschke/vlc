@@ -23,30 +23,28 @@
  * along with this program; if not, write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
+#include <winapifamily.h>
+#undef WINAPI_FAMILY
+#define WINAPI_FAMILY WINAPI_FAMILY_DESKTOP_APP
+
 #ifdef HAVE_CONFIG_H
 # include "config.h"
 #endif
 
 #include <assert.h>
 
-#include <winapifamily.h>
-#if defined(WINAPI_FAMILY)
-# undef WINAPI_FAMILY
-#endif
-#define WINAPI_FAMILY WINAPI_FAMILY_DESKTOP_APP
-
 #include <initguid.h>
 
-#if HAVE_LIBAVCODEC_DXVA2_H
+#if defined(HAVE_LIBAVCODEC_DXVA2_H)
 # include <libavcodec/dxva2.h>
-#elif HAVE_LIBAVCODEC_D3D11VA_H
+#elif defined(HAVE_LIBAVCODEC_D3D11VA_H)
 # include <libavcodec/d3d11va.h>
 #else
 # error bogus libavcodec DXVA support
 #endif
 
 #include "directx_va.h"
-#include <vlc_codecs.h>
+#include <vlc_codecs.h> // GUID_FMT/GUID_PRINT
 
 #include "../../packetizer/h264_nal.h"
 #include "../../packetizer/hevc_nal.h"
@@ -78,9 +76,9 @@ static const int PROF_AV1_HIGH[]    = { FF_PROFILE_AV1_HIGH, FF_PROFILE_AV1_MAIN
 
 #if defined(__MINGW64_VERSION_MAJOR) // mingw-w64 doesn't have all the standard GUIDs
 
-# if HAVE_LIBAVCODEC_DXVA2_H
+# if defined(HAVE_LIBAVCODEC_DXVA2_H)
 // do nothing, we have redirected DXVA_xxx to DXVA2_xxx
-# elif HAVE_LIBAVCODEC_D3D11VA_H && __MINGW64_VERSION_MAJOR > 11
+# elif defined(HAVE_LIBAVCODEC_D3D11VA_H) && __MINGW64_VERSION_MAJOR > 11
 // do nothing, we have redirected DXVA_xxx to D3D11_DECODER_PROFILE_xxx
 # else // !HAVE_LIBAVCODEC_DXVA2_H && !HAVE_LIBAVCODEC_D3D11VA_H
 // define missing GUIDs from D3D11-only builds with old mingw-w64
@@ -297,17 +295,12 @@ static const directx_va_mode_t DXVA_MODES[] = {
 
     /* VPx */
     { "VP8",                                                                          &DXVA_ModeVP8_VLD,                      8, {1, 1}, 0, NULL, 0 },
-#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT( 57, 17, 100 )
     { "VP9 profile 0",                                                                &DXVA_ModeVP9_VLD_Profile0,             8, {1, 1}, AV_CODEC_ID_VP9, PROF_VP9_MAIN, 0 },
     { "VP9 profile 2",                                                                &DXVA_ModeVP9_VLD_10bit_Profile2,       10, {1, 1}, AV_CODEC_ID_VP9, PROF_VP9_10, 0 },
-#else
-    { "VP9 profile 0",                                                                &DXVA_ModeVP9_VLD_Profile0,             8, {1, 1}, 0, NULL, 0 },
-    { "VP9 profile 2",                                                                &DXVA_ModeVP9_VLD_10bit_Profile2,       10, {1, 1}, 0, NULL, 0 },
-#endif
     { "VP9 profile Intel",                                                            &DXVA_ModeVP9_VLD_Intel,                8, {1, 1}, 0, NULL, 0 },
 
     /* AV1 */
-#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT( 58, 112, 103 )
+#if LIBAVCODEC_VERSION_CHECK( 58, 112, 103 )
     { "AV1 Main profile 8",                                                           &DXVA_ModeAV1_VLD_Profile0,             8, {1, 1}, AV_CODEC_ID_AV1, PROF_AV1_MAIN, 0 },
     { "AV1 Main profile 10",                                                          &DXVA_ModeAV1_VLD_Profile0,            10, {1, 1}, AV_CODEC_ID_AV1, PROF_AV1_MAIN, 0 },
     { "AV1 High profile 8",                                                           &DXVA_ModeAV1_VLD_Profile1,             8, {1, 1}, AV_CODEC_ID_AV1, PROF_AV1_HIGH, 0 },

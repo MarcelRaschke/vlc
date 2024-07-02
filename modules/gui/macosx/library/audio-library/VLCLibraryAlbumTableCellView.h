@@ -22,32 +22,38 @@
 
 #import <Cocoa/Cocoa.h>
 
+#import "library/VLCLibraryTableCellViewProtocol.h"
+
 NS_ASSUME_NONNULL_BEGIN
 
 @class VLCImageView;
 @class VLCTrackingView;
-@class VLCMediaLibraryAlbum;
+@class VLCLibraryRepresentedItem;
 
-@interface VLCLibraryAlbumTableCellView : NSTableCellView
+@interface VLCLibraryAlbumTableCellView : NSTableCellView<VLCLibraryTableCellViewProtocol>
 
-extern NSString *VLCAudioLibraryCellIdentifier;
-extern NSString *VLCLibraryAlbumTableCellTableViewColumnIdentifier;
+extern NSString * const VLCAudioLibraryCellIdentifier;
+extern NSString * const VLCLibraryAlbumTableCellTableViewColumnIdentifier;
+
+@property (class, readonly) CGFloat defaultHeight;
 
 + (instancetype)fromNibWithOwner:(id)owner;
-+ (CGFloat)defaultHeight;
 
 @property (readwrite, assign) IBOutlet VLCTrackingView *trackingView;
 @property (readwrite, assign) IBOutlet VLCImageView *representedImageView;
 @property (readwrite, assign) IBOutlet NSTextField *albumNameTextField;
-@property (readwrite, assign) IBOutlet NSTextField *artistNameTextField;
+@property (readwrite, assign) IBOutlet NSButton *artistNameTextButton;
+@property (readwrite, assign) IBOutlet NSButton *genreNameTextButton;
 @property (readwrite, assign) IBOutlet NSTextField *summaryTextField;
 @property (readwrite, assign) IBOutlet NSTextField *yearTextField;
 @property (readwrite, assign) IBOutlet NSButton *playInstantlyButton;
 
 @property (readonly) CGFloat height;
-@property (readwrite, assign, nonatomic) VLCMediaLibraryAlbum *representedAlbum;
+@property (readwrite, assign, nonatomic) VLCLibraryRepresentedItem *representedItem;
 
 - (IBAction)playInstantly:(id)sender;
+- (IBAction)primaryDetailAction:(id)sender;
+- (IBAction)secondaryDetailAction:(id)sender;
 
 @end
 

@@ -21,7 +21,6 @@
  *****************************************************************************/
 
 #import "VLCMainMenu.h"
-#import "main/VLCMain.h"
 
 #import "coreinteraction/VLCVideoFilterHelper.h"
 
@@ -30,6 +29,9 @@
 
 #import "library/VLCLibraryWindow.h"
 #import "library/VLCLibraryWindowController.h"
+#import "library/VLCLibraryWindowSplitViewController.h"
+
+#import "main/VLCMain.h"
 
 #import "menus/renderers/VLCRendererMenuController.h"
 
@@ -48,10 +50,11 @@
 #import "preferences/VLCSimplePrefsController.h"
 
 #import "windows/VLCAboutWindowController.h"
+#import "windows/VLCDetachedAudioWindow.h"
 #import "windows/VLCOpenWindowController.h"
 #import "windows/VLCErrorWindowController.h"
 #import "windows/VLCHelpWindowController.h"
-#import "windows/mainwindow/VLCMainWindowControlsBar.h"
+#import "windows/controlsbar/VLCMainWindowControlsBar.h"
 #import "windows/extensions/VLCExtensionsManager.h"
 #import "windows/convertandsave/VLCConvertAndSaveWindowController.h"
 #import "windows/logging/VLCLogWindowController.h"
@@ -59,6 +62,7 @@
 #import "windows/video/VLCVoutView.h"
 #import "windows/video/VLCVideoOutputProvider.h"
 
+#import <vlc_configuration.h>
 #import <vlc_interface.h>
 
 #ifdef HAVE_SPARKLE
@@ -98,14 +102,10 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
     VLCAboutWindowController *_aboutWindowController;
     VLCHelpWindowController  *_helpWindowController;
     VLCAddonsWindowController *_addonsController;
-    VLCRendererMenuController *_rendererMenuController;
     VLCPlaylistController *_playlistController;
     VLCPlayerController *_playerController;
-    NSTimer *_cancelRendererDiscoveryTimer;
     VLCPlaylistSortingMenuController *_playlistSortingController;
     VLCInformationWindowController *_infoWindowController;
-
-    NSMenu *_playlistTableColumnsContextMenu;
 
     __strong VLCTimeSelectionPanelController *_timeSelectionPanel;
     __strong VLCCustomCropArWindowController *_customARController;
@@ -119,14 +119,14 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
 - (void)dealloc
 {
     msg_Dbg(getIntf(), "Deinitializing main menu");
-    [[NSNotificationCenter defaultCenter] removeObserver: self];
+    [NSNotificationCenter.defaultCenter removeObserver: self];
 
     [self releaseRepresentedObjects:[NSApp mainMenu]];
 }
 
 - (void)awakeFromNib
 {
-    _playlistController = [[VLCMain sharedInstance] playlistController];
+    _playlistController = VLCMain.sharedInstance.playlistController;
     _playerController = _playlistController.playerController;
 
     /* check whether the user runs OSX with a RTL language */
@@ -164,8 +164,9 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
     [self mediaItemChanged:nil];
     [self updateTitleAndChapterMenus:nil];
     [self updateProgramMenu:nil];
+    [self updateLibraryPlaylistMode];
 
-    NSNotificationCenter *notificationCenter = [NSNotificationCenter defaultCenter];
+    NSNotificationCenter *notificationCenter = NSNotificationCenter.defaultCenter;
     [notificationCenter addObserver:self
                            selector:@selector(refreshVoutDeviceMenu:)
                                name:NSApplicationDidChangeScreenParametersNotification
@@ -220,7 +221,7 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
                              object:nil];
     [notificationCenter addObserver:self
                            selector:@selector(mediaItemChanged:)
-                               name:VLCPlaylistCurrentItemChanged
+                               name:VLCPlayerCurrentMediaItemChanged
                              object:nil];
     [notificationCenter addObserver:self
                            selector:@selector(voutListChanged:)
@@ -234,7 +235,7 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
 
     /* setup extensions menu */
     /* Let the ExtensionsManager itself build the menu */
-    VLCExtensionsManager *extMgr = [[VLCMain sharedInstance] extensionsManager];
+    VLCExtensionsManager *extMgr = VLCMain.sharedInstance.extensionsManager;
     [extMgr buildMenu:_extensionsMenu];
     [_extensions setEnabled:([_extensionsMenu numberOfItems] > 0)];
 
@@ -376,7 +377,6 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
     [_findItem setTitle: _NS("Find")];
 
     [_viewMenu setTitle: _NS("View")];
-    [_playlistTableColumns setTitle: _NS("Playlist Table Columns")];
 
     [_controlsMenu setTitle: _NS("Playback")];
     [_play setTitle: _NS("Play")];
@@ -394,6 +394,7 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
     [_random setTitle: _NS("Random")];
     [_repeat setTitle: _NS("Repeat")];
     [_AtoBloop setTitle: _NS("A→B Loop")];
+    [_libraryPlaylistMode setTitle: _NS("Library Playlist Mode")];
     [_sortPlaylist setTitle: _NS("Sort Playlist")];
     [_quitAfterPB setTitle: _NS("Quit after Playback")];
     [_fwd setTitle: _NS("Step Forward")];
@@ -480,6 +481,7 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
     [_videoeffects setTitle: _NS("Video Effects...")];
     [_bookmarks setTitle: _NS("Bookmarks...")];
     [_playlist setTitle: _NS("Playlist...")];
+    [_detachedAudioWindow setTitle: _NS("Detached Audio Window...")];
     [_info setTitle: _NS("Media Information...")];
     [_messages setTitle: _NS("Messages...")];
     [_errorsAndWarnings setTitle: _NS("Errors and Warnings...")];
@@ -628,21 +630,23 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
 {
     [self updateTrackHandlingMenus:aNotification];
 
-    VLCInputItem *inputItem = _playerController.currentMedia;
+    VLCInputItem * const inputItem = _playerController.currentMedia;
 
-    if (inputItem != NULL) {
+    if (inputItem != nil) {
         [self rebuildAoutMenu];
         [self rebuildVoutMenu];
-        inputItem = nil;
-
         [self setRateControlsEnabled:_playerController.rateChangable];
         [self setSubtitleSizeControlsEnabled:YES];
+        self.info.enabled = YES;
     } else {
         [_postprocessing setEnabled:NO];
         [self setAudioSubMenusEnabled:NO];
-        [self setVideoSubmenusEnabled:NO];
+        [self setVideoMenuActiveVideo:NO];
         [self setRateControlsEnabled:NO];
         [self setSubtitleSizeControlsEnabled:NO];
+
+        self.windowMenu.autoenablesItems = NO;
+        self.info.enabled = NO;
     }
 }
 
@@ -709,8 +713,8 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
 
     [self refreshVoutDeviceMenu:nil];
 
-    BOOL activeVideoPlayback = _playerController.activeVideoPlayback;
-    [self setVideoSubmenusEnabled:activeVideoPlayback];
+    const BOOL activeVideoPlayback = _playerController.activeVideoPlayback;
+    [self setVideoMenuActiveVideo:activeVideoPlayback];
 }
 
 - (void)refreshVoutDeviceMenu:(NSNotification *)notification
@@ -745,6 +749,16 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
 {
     [_visual setEnabled: enabled];
     [_channels setEnabled: enabled];
+}
+
+- (void)setVideoMenuActiveVideo:(BOOL)activeVideo
+{
+    if (_videoMenu.autoenablesItems) {
+        _videoMenu.autoenablesItems = NO;
+    }
+
+    _snapshot.enabled = activeVideo;
+    [self setVideoSubmenusEnabled:activeVideo];
 }
 
 - (void)setVideoSubmenusEnabled:(BOOL)enabled
@@ -877,10 +891,10 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
 
 - (IBAction)quitAfterPlayback:(id)sender
 {
-    if (_playerController.actionAfterStop != VLC_PLAYER_MEDIA_STOPPED_EXIT) {
-        _playerController.actionAfterStop = VLC_PLAYER_MEDIA_STOPPED_EXIT;
+    if (_playlistController.actionAfterStop != VLC_PLAYLIST_MEDIA_STOPPED_EXIT) {
+        _playlistController.actionAfterStop = VLC_PLAYLIST_MEDIA_STOPPED_EXIT;
     } else {
-        _playerController.actionAfterStop = VLC_PLAYER_MEDIA_STOPPED_CONTINUE;
+        _playlistController.actionAfterStop = VLC_PLAYLIST_MEDIA_STOPPED_CONTINUE;
     }
 }
 
@@ -921,6 +935,18 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
 - (IBAction)toggleAtoBloop:(id)sender
 {
     [_playerController setABLoop];
+}
+
+- (IBAction)toggleLibraryPlaylistMode:(id)sender
+{
+    _playlistController.libraryPlaylistMode = !_playlistController.libraryPlaylistMode;
+    [self updateLibraryPlaylistMode];
+}
+
+- (void)updateLibraryPlaylistMode
+{
+    const BOOL libraryPlaylistMode = _playlistController.libraryPlaylistMode;
+    _libraryPlaylistMode.state = libraryPlaylistMode ? NSOnState : NSOffState;
 }
 
 - (IBAction)goToSpecificTime:(id)sender
@@ -1321,29 +1347,29 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
 
 - (IBAction)intfOpenFile:(id)sender
 {
-    [[[VLCMain sharedInstance] open] openFileWithAction:^(NSArray *files) {
+    [[VLCMain.sharedInstance open] openFileWithAction:^(NSArray *files) {
         [self->_playlistController addPlaylistItems:files];
     }];
 }
 
 - (IBAction)intfOpenFileGeneric:(id)sender
 {
-    [[[VLCMain sharedInstance] open] openFileGeneric];
+    [[VLCMain.sharedInstance open] openFileGeneric];
 }
 
 - (IBAction)intfOpenDisc:(id)sender
 {
-    [[[VLCMain sharedInstance] open] openDisc];
+    [[VLCMain.sharedInstance open] openDisc];
 }
 
 - (IBAction)intfOpenNet:(id)sender
 {
-    [[[VLCMain sharedInstance] open] openNet];
+    [[VLCMain.sharedInstance open] openNet];
 }
 
 - (IBAction)intfOpenCapture:(id)sender
 {
-    [[[VLCMain sharedInstance] open] openCapture];
+    [[VLCMain.sharedInstance open] openCapture];
 }
 
 - (IBAction)savePlaylist:(id)sender
@@ -1387,32 +1413,32 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
 
 - (IBAction)showConvertAndSave:(id)sender
 {
-    [[[VLCMain sharedInstance] convertAndSaveWindow] showWindow:self];
+    [[VLCMain.sharedInstance convertAndSaveWindow] showWindow:self];
 }
 
 - (IBAction)showVideoEffects:(id)sender
 {
-    [[[VLCMain sharedInstance] videoEffectsPanel] toggleWindow:sender];
+    [[VLCMain.sharedInstance videoEffectsPanel] toggleWindow:sender];
 }
 
 - (IBAction)showTrackSynchronization:(id)sender
 {
-    [[[VLCMain sharedInstance] trackSyncPanel] toggleWindow:sender];
+    [[VLCMain.sharedInstance trackSyncPanel] toggleWindow:sender];
 }
 
 - (IBAction)showAudioEffects:(id)sender
 {
-    [[[VLCMain sharedInstance] audioEffectsPanel] toggleWindow:sender];
+    [[VLCMain.sharedInstance audioEffectsPanel] toggleWindow:sender];
 }
 
 - (IBAction)showBookmarks:(id)sender
 {
-    [[[VLCMain sharedInstance] bookmarks] toggleWindow:sender];
+    [[VLCMain.sharedInstance bookmarks] toggleWindow:sender];
 }
 
 - (IBAction)showPreferences:(id)sender
 {
-    VLCMain *mainInstance = [VLCMain sharedInstance];
+    VLCMain *mainInstance = VLCMain.sharedInstance;
     NSInteger i_level = [[mainInstance voutProvider] currentStatusWindowLevel];
     [[mainInstance simplePreferences] showSimplePrefsWithLevel:i_level];
 }
@@ -1427,22 +1453,23 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
 
 - (IBAction)showErrorsAndWarnings:(id)sender
 {
-    [[[[VLCMain sharedInstance] coreDialogProvider] errorPanel] showWindow:self];
+    [[[VLCMain.sharedInstance coreDialogProvider] errorPanel] showWindow:self];
 }
 
 - (IBAction)showMessagesPanel:(id)showMessagesPanel
 {
-    [[[VLCMain sharedInstance] debugMsgPanel] showWindow:self];
+    [[VLCMain.sharedInstance debugMsgPanel] showWindow:self];
 }
 
 - (IBAction)showMainWindow:(id)sender
 {
-    [[[VLCMain sharedInstance] libraryWindow] makeKeyAndOrderFront:sender];
+    [VLCMain.sharedInstance.libraryWindow makeKeyAndOrderFront:sender];
 }
 
 - (IBAction)showPlaylist:(id)sender
 {
-    [[[[VLCMain sharedInstance] libraryWindowController] window] makeKeyAndOrderFront:sender];
+    [VLCMain.sharedInstance.libraryWindowController.window makeKeyAndOrderFront:sender];
+    [VLCMain.sharedInstance.libraryWindow.splitViewController togglePlaylistSidebar:self];
 }
 
 #pragma mark - Help and Docs
@@ -1475,28 +1502,33 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
 {
     NSURL *url = [NSURL URLWithString: @"https://www.videolan.org/doc/"];
 
-    [[NSWorkspace sharedWorkspace] openURL: url];
+    [NSWorkspace.sharedWorkspace openURL: url];
 }
 
 - (IBAction)openWebsite:(id)sender
 {
     NSURL *url = [NSURL URLWithString: @"https://www.videolan.org/"];
 
-    [[NSWorkspace sharedWorkspace] openURL: url];
+    [NSWorkspace.sharedWorkspace openURL: url];
 }
 
 - (IBAction)openForum:(id)sender
 {
     NSURL *url = [NSURL URLWithString: @"https://forum.videolan.org/"];
 
-    [[NSWorkspace sharedWorkspace] openURL: url];
+    [NSWorkspace.sharedWorkspace openURL: url];
 }
 
 - (IBAction)openDonate:(id)sender
 {
     NSURL *url = [NSURL URLWithString: @"https://www.videolan.org/contribute.html#paypal"];
 
-    [[NSWorkspace sharedWorkspace] openURL: url];
+    [NSWorkspace.sharedWorkspace openURL: url];
+}
+
+- (IBAction)showDetachedAudioWindow:(id)sender
+{
+    [VLCMain.sharedInstance.detachedAudioWindow makeKeyAndOrderFront:self];
 }
 
 - (IBAction)showInformationPanel:(id)sender
@@ -1505,6 +1537,7 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
         _infoWindowController = [[VLCInformationWindowController alloc] init];
         _infoWindowController.mainMenuInstance = YES;
     }
+
     _infoWindowController.representedInputItem = _playlistController.currentlyPlayingInputItem;
     [_infoWindowController toggleWindow:sender];
 }
@@ -1521,7 +1554,7 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
             break;
 
         case VLC_PLAYER_STATE_STOPPED:
-            [self setVideoSubmenusEnabled:NO];
+            [self setVideoMenuActiveVideo:NO];
             [self setAudioSubMenusEnabled:NO];
 
         default:
@@ -1861,50 +1894,33 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
 
 - (void)menuWillOpen:(NSMenu *)menu
 {
-    [_cancelRendererDiscoveryTimer invalidate];
     [_rendererMenuController startRendererDiscoveries];
 
     if (@available(macOS 10.16, *)) {
 
         const int menuItemOffset = 14;
         const int menuItemOffsetWithActiveState = 24;
-        
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (menu == self->_controlsMenu) {
-                BOOL controlsMenuHasActiveState = NO;
-                for (NSMenuItem *viewMenuItem in menu.itemArray) {
-                    if (viewMenuItem.state == NSControlStateValueOn) {
-                        controlsMenuHasActiveState = YES;
-                    }
-                }
 
-                if (controlsMenuHasActiveState) {
-                    self->_rate_view_offset_constraint.constant = menuItemOffsetWithActiveState;
-                } else {
-                    self->_rate_view_offset_constraint.constant = menuItemOffset;
+        if (menu == _controlsMenu) {
+            BOOL controlsMenuHasActiveState = NO;
+            for (NSMenuItem * const viewMenuItem in menu.itemArray) {
+                if (viewMenuItem.state == NSControlStateValueOn) {
+                    controlsMenuHasActiveState = YES;
                 }
             }
 
-            if (menu == self->_subtitlesMenu) {
-                self->_subtitle_bgopacity_view_offset_constraint.constant = menuItemOffset;
-                self->_subtitleSizeViewOffsetConstraint.constant = menuItemOffset;
+            if (controlsMenuHasActiveState) {
+                _rate_view_offset_constraint.constant = menuItemOffsetWithActiveState;
+            } else {
+                _rate_view_offset_constraint.constant = menuItemOffset;
             }
-        });
+        }
+
+        if (menu == _subtitlesMenu) {
+            _subtitle_bgopacity_view_offset_constraint.constant = menuItemOffset;
+            _subtitleSizeViewOffsetConstraint.constant = menuItemOffset;
+        }
     }
-}
-
-- (void)menuDidClose:(NSMenu *)menu
-{
-    _cancelRendererDiscoveryTimer = [NSTimer scheduledTimerWithTimeInterval:20.
-                                                                     target:self
-                                                                   selector:@selector(cancelRendererDiscovery)
-                                                                   userInfo:nil
-                                                                    repeats:NO];
-}
-
-- (void)cancelRendererDiscovery
-{
-    [_rendererMenuController stopRendererDiscoveries];
 }
 
 @end
@@ -1934,7 +1950,7 @@ typedef NS_ENUM(NSInteger, VLCObjectType) {
         enum vlc_playlist_playback_order playbackOrder = [_playlistController playbackOrder];
         [mi setState: playbackOrder == VLC_PLAYLIST_PLAYBACK_ORDER_RANDOM ? NSOnState : NSOffState];
     } else if (mi == _quitAfterPB) {
-        BOOL state = _playerController.actionAfterStop == VLC_PLAYER_MEDIA_STOPPED_EXIT;
+        BOOL state = _playlistController.actionAfterStop == VLC_PLAYLIST_MEDIA_STOPPED_EXIT;
         [mi setState: state ? NSOnState : NSOffState];
     } else if (mi == _fwd || mi == _bwd || mi == _jumpToTime) {
         enabled = _playerController.seekable;

@@ -32,6 +32,7 @@
 
 #define VLC_MODULE_LICENSE VLC_LICENSE_GPL_2_PLUS
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_block.h>
 #include <vlc_sout.h>
@@ -51,6 +52,7 @@ struct sout_stream_id_sys_t
 {
     struct vlc_list node;
     es_format_t fmt;
+    const char *es_id;
     void *id;
 };
 
@@ -70,7 +72,8 @@ static vlc_tick_t get_dts(const block_t *block)
     return block->i_dts;
 }
 
-static void *Add(sout_stream_t *stream, const es_format_t *fmt)
+static void *
+Add(sout_stream_t *stream, const es_format_t *fmt, const char *es_id)
 {
     sout_stream_sys_t *sys = stream->p_sys;
     sout_stream_id_sys_t *id = malloc(sizeof (*id));
@@ -84,8 +87,9 @@ static void *Add(sout_stream_t *stream, const es_format_t *fmt)
         return NULL;
     }
 
+    id->es_id = es_id;
     if (sys->stream != NULL)
-        id->id = sout_StreamIdAdd(sys->stream, &id->fmt);
+        id->id = sout_StreamIdAdd(sys->stream, &id->fmt, id->es_id);
 
     vlc_list_append(&id->node, &sys->ids);
     return id;
@@ -117,8 +121,9 @@ static int AddStream(sout_stream_t *stream, char *chain)
     if (sys->stream == NULL)
         return -1;
 
+    // TODO(Alaric): store es_ids and pass them to the substream chain.
     vlc_list_foreach (id, &sys->ids, node)
-        id->id = sout_StreamIdAdd(sys->stream, &id->fmt);
+        id->id = sout_StreamIdAdd(sys->stream, &id->fmt, id->es_id);
 
     return 0;
 }
@@ -218,8 +223,29 @@ static vlc_tick_t ParseTime(const char *str)
     return -1;
 }
 
+static void Close(sout_stream_t *stream)
+{
+    sout_stream_sys_t *sys = stream->p_sys;
+
+    assert(vlc_list_is_empty(&sys->ids));
+
+    if (sys->stream != NULL)
+        sout_StreamChainDelete(sys->stream, stream->p_next);
+
+    for (sout_cycle_t *cycle = sys->start, *next; cycle != NULL; cycle = next)
+    {
+        next = cycle->next;
+        free(cycle);
+    }
+
+    free(sys);
+}
+
 static const struct sout_stream_operations ops = {
-    Add, Del, Send, NULL, NULL, NULL,
+    .add = Add,
+    .del = Del,
+    .send = Send,
+    .close = Close,
 };
 
 static int Open(vlc_object_t *obj)
@@ -291,34 +317,15 @@ static int Open(vlc_object_t *obj)
     return VLC_SUCCESS;
 }
 
-static void Close(vlc_object_t *obj)
-{
-    sout_stream_t *stream = (sout_stream_t *)obj;
-    sout_stream_sys_t *sys = stream->p_sys;
-
-    assert(vlc_list_is_empty(&sys->ids));
-
-    if (sys->stream != NULL)
-        sout_StreamChainDelete(sys->stream, stream->p_next);
-
-    for (sout_cycle_t *cycle = sys->start, *next; cycle != NULL; cycle = next)
-    {
-        next = cycle->next;
-        free(cycle);
-    }
-
-    free(sys);
-}
-
 vlc_module_begin()
     set_shortname(N_("cycle"))
     set_description(N_("Cyclic stream output"))
     set_capability("sout output", 0)
     set_subcategory(SUBCAT_SOUT_STREAM)
-    set_callbacks(Open, Close)
+    set_callback(Open)
     add_shortcut("cycle")
     add_submodule()
     add_shortcut("cycle")
     set_capability("sout filter", 0)
-    set_callbacks(Open, Close)
+    set_callback(Open)
 vlc_module_end()

@@ -25,54 +25,68 @@
 @interface VLCTrackingView ()
 {
     NSTrackingArea *_trackingArea;
+    BOOL _mouseIn;
 }
 @end
 
 @implementation VLCTrackingView
 
-- (void)mouseExited:(NSEvent *)event
+- (void)performTransition
 {
     if (self.animatesTransition) {
-        [self.viewToHide setAlphaValue:1.0];
-        [self.viewToShow setAlphaValue:.0];
-        [self.viewToShow setHidden:NO];
+        const BOOL hideVTH = !_mouseIn;
+        const BOOL hideVTS = _mouseIn;
+        const BOOL startMouseIn = _mouseIn;
 
         __weak typeof(self.viewToHide) weakViewToHide = self.viewToHide;
         __weak typeof(self.viewToShow) weakViewToShow = self.viewToShow;
 
-        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context){
-            [[NSAnimationContext currentContext] setDuration:0.9];
-            [[weakViewToHide animator] setAlphaValue:0.0];
-            [[weakViewToShow animator] setAlphaValue:1.0];
+        weakViewToHide.hidden = NO;
+        weakViewToShow.hidden = NO;
+
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext * const context){
+            NSAnimationContext.currentContext.duration = 0.9;
+            weakViewToHide.animator.alphaValue = hideVTH ? 0.0 : 1.0;
+            weakViewToShow.animator.alphaValue = hideVTS ? 0.0 : 1.0;
         } completionHandler:^{
-            [weakViewToHide setHidden:YES];
+            if (startMouseIn != self->_mouseIn) {
+                return;
+            }
+            weakViewToHide.hidden = hideVTH;
+            weakViewToShow.hidden = hideVTS;
         }];
     } else {
-        self.viewToHide.hidden = YES;
-        self.viewToShow.hidden = NO;
+        self.viewToHide.hidden = !_mouseIn;
+        self.viewToShow.hidden = _mouseIn;
+    }
+}
+
+- (void)handleMouseEnter
+{
+    _mouseIn = YES;
+    [self performTransition];
+    if (self.mouseEnteredBlock) {
+        self.mouseEnteredBlock();
+    }
+}
+
+- (void)handleMouseExit
+{
+    _mouseIn = NO;
+    [self performTransition];
+    if (self.mouseExitedBlock) {
+        self.mouseExitedBlock();
     }
 }
 
 - (void)mouseEntered:(NSEvent *)event
 {
-    if (self.animatesTransition) {
-        [self.viewToHide setAlphaValue:.0];
-        [self.viewToHide setHidden:NO];
+    [self handleMouseEnter];
+}
 
-        __weak typeof(self.viewToHide) weakViewToHide = self.viewToHide;
-        __weak typeof(self.viewToShow) weakViewToShow = self.viewToShow;
-
-        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context){
-            [[NSAnimationContext currentContext] setDuration:0.9];
-            [[weakViewToHide animator] setAlphaValue:1.0];
-            [[weakViewToShow animator] setAlphaValue:.0];
-        } completionHandler:^{
-            [weakViewToShow setHidden:YES];
-        }];
-    } else {
-        self.viewToHide.hidden = NO;
-        self.viewToShow.hidden = YES;
-    }
+- (void)mouseExited:(NSEvent *)event
+{
+    [self handleMouseExit];
 }
 
 - (void)updateTrackingAreas
@@ -88,6 +102,18 @@
                                                    owner:self
                                                 userInfo:nil];
     [self addTrackingArea:_trackingArea];
+
+    // Once tracking area updated, check if the cursor is still inside the tracking view.
+    // This prevents situations where the mouseEntered/mouseExited is not called because the view
+    // itself has moved but the cursor has not (e.g. when this view is inside a scrollview and the
+    // user scrolls)
+    const NSPoint mouseLocation = [self convertPoint:self.window.mouseLocationOutsideOfEventStream fromView:self.window.contentView];
+    const BOOL mouseInsideView = [self mouse:mouseLocation inRect:self.frame];
+    if (mouseInsideView && !_mouseIn) {
+        [self handleMouseEnter];
+    } else if (!mouseInsideView && _mouseIn) {
+        [self handleMouseExit];
+    }
 }
 
 @end

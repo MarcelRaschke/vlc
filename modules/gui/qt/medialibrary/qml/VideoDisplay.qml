@@ -16,10 +16,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick          2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts  1.11
-import QtQml.Models     2.2
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import QtQml.Models
 
 import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
@@ -33,13 +33,7 @@ Widgets.PageLoader {
     //---------------------------------------------------------------------------------------------
     // Properties
     //---------------------------------------------------------------------------------------------
-
-    property bool isViewMultiView: true
-
-    property var contentModel
-
     property var sortMenu
-    property var sortModel
 
     property ListModel tabModel: ListModel {
         Component.onCompleted: {
@@ -52,12 +46,17 @@ Widgets.PageLoader {
         }
     }
 
-    property Component localMenuDelegate: Widgets.LocalTabBar {
-        currentView: root.view
+    localMenuDelegate: Widgets.LocalTabBar {
+        currentView: root.pageName
 
         model: tabModel
 
-        onClicked: root.loadIndex(index)
+        onClicked: (index) => {
+            const pageName = root.pageModel[index].name
+            if (root.isDefaulLoadedForPath([pageName]))
+                return
+            History.push([...root.pagePrefix, pageName])
+        }
     }
 
     //---------------------------------------------------------------------------------------------
@@ -66,36 +65,21 @@ Widgets.PageLoader {
 
     pageModel: [{
             name: "all",
-            displayText: I18n.qtr("All"),
+            default: true,
+            displayText: qsTr("All"),
             url: "qrc:///medialibrary/VideoAllDisplay.qml"
         },{
             name: "playlists",
-            displayText: I18n.qtr("Playlists"),
+            displayText: qsTr("Playlists"),
             url: "qrc:///medialibrary/VideoPlaylistsDisplay.qml"
         }
     ]
 
-    loadDefaultView: function () {
-        History.update(["mc", "video", "all"])
-        loadPage("all")
-    }
+    Accessible.role: Accessible.Client
+    Accessible.name: qsTr("Video view")
 
     onCurrentItemChanged: {
-        isViewMultiView = (currentItem.isViewMultiView === undefined
-                           ||
-                           currentItem.isViewMultiView);
-
         // NOTE: We need bindings because the VideoAll model can change over time.
-        contentModel = Qt.binding(function () { return currentItem.model; })
         sortMenu     = Qt.binding(function () { return currentItem.sortMenu; })
-        sortModel    = Qt.binding(function () { return currentItem.sortModel; })
-    }
-
-    //---------------------------------------------------------------------------------------------
-    // Functions
-    //---------------------------------------------------------------------------------------------
-
-    function loadIndex(index) {
-        History.push(["mc", "video", root.pageModel[index].name]);
     }
 }

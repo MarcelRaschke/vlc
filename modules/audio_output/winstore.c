@@ -43,7 +43,7 @@ DEFINE_GUID (GUID_VLC_AUD_OUT, 0x4533f59d, 0x59ee, 0x00c6,
 
 static void EnterMTA(void)
 {
-    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
     if (unlikely(FAILED(hr)))
         abort();
 }
@@ -217,7 +217,7 @@ static int DeviceRequestLocked(audio_output_t *aout)
 
     if (sys->stream != NULL && sys->client != NULL)
         /* Request restart of stream with the new device */
-        aout_RestartRequest(aout, AOUT_RESTART_OUTPUT);
+        aout_RestartRequest(aout, true);
     return (sys->client != NULL) ? 0 : -1;
 }
 
@@ -551,8 +551,8 @@ static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
     for (;;)
     {
         owner->device = sys->client;
-        sys->module = vlc_module_load(s, "aout stream", NULL, false,
-                                      aout_stream_Start, s, fmt, &hr);
+        sys->module = vlc_module_load(vlc_object_logger(s), "aout stream", NULL,
+                                      false, aout_stream_Start, s, fmt, &hr);
 
         int ret = -1;
         if (hr == AUDCLNT_E_DEVICE_INVALIDATED)

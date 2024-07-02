@@ -43,14 +43,12 @@ vlc_modules += {
 vlc_modules += {
     'name' : 'i420_yuy2',
     'sources' : files('i420_yuy2.c'),
-    'c_args' : ['-DPLUGIN_PLAIN']
 }
 
 vlc_modules += {
     'name' : 'i420_nv12',
     'sources' : files('i420_nv12.c'),
     'link_with' : [chroma_copy_lib],
-    'c_args' : ['-DPLUGIN_PLAIN'],
 }
 
 vlc_modules += {
@@ -61,7 +59,6 @@ vlc_modules += {
 vlc_modules += {
     'name' : 'i422_yuy2',
     'sources' : files('i422_yuy2.c'),
-    'c_args' : ['-DPLUGIN_PLAIN']
 }
 
 vlc_modules += {
@@ -113,19 +110,22 @@ vlc_modules += {
 }
 
 # CVPX chroma converter
-if host_system == 'darwin'
-    # TODO: Set minimum versions for tvOS and iOS
-    vlc_modules += {
-        'name' : 'cvpx',
-        'sources' : files(
-            '../codec/vt_utils.c',
-            'cvpx.c',
-        ),
-        'link_with' : [chroma_copy_lib],
-        'dependencies' : [videotoolbox_dep, foundation_dep, coremedia_dep, corevideo_dep]
-    }
-endif
-
+# TODO: Set minimum versions for tvOS and iOS
+vlc_modules += {
+    'name' : 'cvpx',
+    'sources' : files(
+        '../codec/vt_utils.c',
+        'cvpx.c',
+    ),
+    'link_with' : [chroma_copy_lib],
+    'dependencies' : [
+        frameworks['VideoToolbox'],
+        frameworks['Foundation'],
+        frameworks['CoreMedia'],
+        frameworks['CoreVideo'],
+    ],
+    'enabled' : host_system == 'darwin',
+}
 
 ## Tests
 

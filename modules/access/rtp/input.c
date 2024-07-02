@@ -37,6 +37,8 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
+#include <vlc_poll.h>
 #include <vlc_demux.h>
 #include <vlc_block.h>
 #include "vlc_dtls.h"
@@ -45,16 +47,16 @@
 #ifdef HAVE_SRTP
 # include "srtp.h"
 #endif
+#include "input.h"
 
 #define DEFAULT_MRU (1500u - (20 + 8))
 
 /**
  * Processes a packet received from the RTP socket.
  */
-static void rtp_process (demux_t *demux, block_t *block)
+static void rtp_process (struct vlc_logger *logger, rtp_input_sys_t *sys,
+                         rtp_session_t *session, block_t *block)
 {
-    demux_sys_t *sys = demux->p_sys;
-
     if (block->i_buffer < 2)
         goto drop;
     const uint8_t ptype = rtp_ptype (block);
@@ -67,14 +69,14 @@ static void rtp_process (demux_t *demux, block_t *block)
         size_t len = block->i_buffer;
         if (srtp_recv (sys->srtp, block->p_buffer, &len))
         {
-            msg_Dbg (demux, "SRTP authentication/decryption failed");
+            vlc_debug (logger, "SRTP authentication/decryption failed");
             goto drop;
         }
         block->i_buffer = len;
     }
 #endif
 
-    rtp_queue (demux, sys->session, block);
+    rtp_queue (logger, session, block);
     return;
 drop:
     block_Release (block);
@@ -100,10 +102,9 @@ static int rtp_timeout (vlc_tick_t deadline)
  */
 void *rtp_dgram_thread (void *opaque)
 {
-    demux_t *demux = opaque;
-    demux_sys_t *sys = demux->p_sys;
+    rtp_sys_t *sys = opaque;
     vlc_tick_t deadline = VLC_TICK_INVALID;
-    struct vlc_dtls *rtp_sock = sys->rtp_sock;
+    struct vlc_dtls *rtp_sock = sys->input_sys.rtp_sock;
 
     vlc_thread_set_name("vlc-rtp");
 
@@ -133,20 +134,20 @@ void *rtp_dgram_thread (void *opaque)
                                        block->i_buffer, &truncated);
             if (len >= 0) {
                 if (truncated) {
-                    msg_Err(demux, "packet truncated (MRU was %zu)",
+                    vlc_error (sys->logger, "packet truncated (MRU was %zu)",
                             block->i_buffer);
                     block->i_flags |= BLOCK_FLAG_CORRUPTED;
                 }
                 else
                     block->i_buffer = len;
 
-                rtp_process (demux, block);
+                rtp_process (sys->logger, &sys->input_sys, sys->session, block);
             }
             else
             {
                 if (errno == EPIPE)
                     break; /* connection terminated */
-                msg_Warn (demux, "RTP network error: %s",
+                vlc_warning (sys->logger, "RTP network error: %s",
                           vlc_strerror_c(errno));
                 block_Release (block);
             }
@@ -155,7 +156,7 @@ void *rtp_dgram_thread (void *opaque)
         }
 
     dequeue:
-        if (!rtp_dequeue (demux, sys->session, &deadline))
+        if (!rtp_dequeue (sys->logger, sys->session, vlc_tick_now(), &deadline))
             deadline = VLC_TICK_INVALID;
         vlc_restorecancel (canc);
     }

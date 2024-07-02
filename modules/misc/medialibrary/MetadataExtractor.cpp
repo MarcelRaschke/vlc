@@ -41,11 +41,14 @@ EmbeddedThumbnail::~EmbeddedThumbnail()
 
 bool EmbeddedThumbnail::save( const std::string& path )
 {
-    std::unique_ptr<FILE, decltype(&fclose)> f{ vlc_fopen( path.c_str(), "wb" ),
-                                                &fclose };
+    FILE* f = vlc_fopen( path.c_str(), "wb" );
+
     if ( f == nullptr )
         return false;
-    auto res = fwrite( m_attachment->p_data, m_attachment->i_data, 1, f.get() );
+    auto res = fwrite( m_attachment->p_data, m_attachment->i_data, 1, f );
+
+    if ( fclose( f ) != 0 )
+        return false;
     return res == 1;
 }
 
@@ -133,10 +136,10 @@ void MetadataExtractor::populateItem( medialibrary::parser::IItem& item, input_i
 
     item.setDuration( MS_FROM_VLC_TICK(inputItem->i_duration) );
 
-    for ( auto i = 0; i < inputItem->i_es; ++i )
+    for ( auto i = 0u; i < inputItem->es_vec.size; ++i )
     {
         medialibrary::parser::IItem::Track t;
-        const es_format_t *p_es = inputItem->es[i];
+        const es_format_t *p_es = &inputItem->es_vec.data[i].es;
 
         switch ( p_es->i_cat )
         {
@@ -153,6 +156,9 @@ void MetadataExtractor::populateItem( medialibrary::parser::IItem& item, input_i
                 t.u.v.height = p_es->video.i_height;
                 t.u.v.sarNum = p_es->video.i_sar_num;
                 t.u.v.sarDen = p_es->video.i_sar_den;
+                break;
+            case SPU_ES:
+                t.type = medialibrary::parser::IItem::Track::Type::Subtitle;
                 break;
             default:
                 continue;
@@ -184,12 +190,14 @@ void MetadataExtractor::onParserSubtreeAdded( input_item_t *,
     ctx->mde->addSubtree( *ctx, subtree );
 }
 
-void MetadataExtractor::onAttachmentFound( const vlc_event_t* p_event, void* data )
+void MetadataExtractor::onAttachmentsAdded( input_item_t *,
+                                            input_attachment_t *const *array,
+                                            size_t count, void *data )
 {
     auto ctx = static_cast<ParseContext*>( data );
-    for ( auto i = 0u; i < p_event->u.input_item_attachments_found.count; ++i )
+    for ( auto i = 0u; i < count; ++i )
     {
-        auto a = p_event->u.input_item_attachments_found.attachments[i];
+        auto a = array[i];
         auto fcc = image_Mime2Fourcc( a->psz_mime );
         if ( fcc != VLC_CODEC_PNG && fcc != VLC_CODEC_JPEG )
             continue;
@@ -219,13 +227,10 @@ medialibrary::parser::Status MetadataExtractor::run( medialibrary::parser::IItem
     if ( ctx.inputItem == nullptr )
         return medialibrary::parser::Status::Fatal;
 
-    if ( vlc_event_attach( &ctx.inputItem->event_manager, vlc_InputItemAttachmentsFound,
-                      &MetadataExtractor::onAttachmentFound, &ctx ) != VLC_SUCCESS )
-        return medialibrary::parser::Status::Fatal;
-
     const input_item_parser_cbs_t cbs = {
         &MetadataExtractor::onParserEnded,
         &MetadataExtractor::onParserSubtreeAdded,
+        &MetadataExtractor::onAttachmentsAdded,
     };
     m_currentCtx = &ctx;
     ctx.inputItem->i_preparse_depth = 1;
@@ -236,8 +241,6 @@ medialibrary::parser::Status MetadataExtractor::run( medialibrary::parser::IItem
     };
     if ( ctx.inputParser == nullptr )
     {
-        vlc_event_detach( &ctx.inputItem->event_manager, vlc_InputItemAttachmentsFound,
-                          &MetadataExtractor::onAttachmentFound, &ctx );
         m_currentCtx = nullptr;
         return medialibrary::parser::Status::Fatal;
     }
@@ -257,8 +260,6 @@ medialibrary::parser::Status MetadataExtractor::run( medialibrary::parser::IItem
         }
         m_currentCtx = nullptr;
     }
-    vlc_event_detach( &ctx.inputItem->event_manager, vlc_InputItemAttachmentsFound,
-                      &MetadataExtractor::onAttachmentFound, &ctx );
 
     if ( !ctx.success || ctx.inputParser == nullptr )
         return medialibrary::parser::Status::Fatal;

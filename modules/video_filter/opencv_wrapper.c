@@ -76,15 +76,15 @@ vlc_module_begin ()
                           N_("Amount by which to scale the picture before sending it to the internal OpenCV filter") )
     add_string( "opencv-chroma", "input",
                           N_("OpenCV filter chroma"),
-                          N_("Chroma to convert picture to before sending it to the internal OpenCV filter"));
+                          N_("Chroma to convert picture to before sending it to the internal OpenCV filter"))
         change_string_list( chroma_list, chroma_list_text )
     add_string( "opencv-output", "input",
                           N_("Wrapper filter output"),
-                          N_("Determines what (if any) video is displayed by the wrapper filter"));
+                          N_("Determines what (if any) video is displayed by the wrapper filter"))
         change_string_list( output_list, output_list_text )
     add_string( "opencv-filter-name", "none",
                           N_("OpenCV internal filter name"),
-                          N_("Name of internal OpenCV plugin filter to use"));
+                          N_("Name of internal OpenCV plugin filter to use"))
 vlc_module_end ()
 
 
@@ -131,7 +131,6 @@ typedef struct
     IplImage *p_cv_image[VOUT_MAX_PLANES];
 
     filter_t *p_opencv;
-    char* psz_inner_name;
 
     picture_t hacked_pic;
 } filter_sys_t;
@@ -166,18 +165,18 @@ static int Create( filter_t* p_filter )
         return VLC_ENOMEM;
     }
 
-    p_sys->psz_inner_name = var_InheritString( p_filter, "opencv-filter-name" );
-    if( p_sys->psz_inner_name )
+    char *psz_inner_name = var_InheritString( p_filter, "opencv-filter-name" );
+    if( psz_inner_name )
         p_sys->p_opencv->p_module =
             module_need( p_sys->p_opencv,
                          "opencv internal filter",
-                         p_sys->psz_inner_name,
+                         psz_inner_name,
                          true );
 
     if( !p_sys->p_opencv->p_module )
     {
-        msg_Err( p_filter, "can't open internal opencv filter: %s", p_sys->psz_inner_name );
-        free( p_sys->psz_inner_name );
+        msg_Err( p_filter, "can't open internal opencv filter: %s", psz_inner_name );
+        free( psz_inner_name );
         vlc_object_delete(p_sys->p_opencv);
         free( p_sys );
 
@@ -239,7 +238,8 @@ static int Create( filter_t* p_filter )
         p_sys->f_scale,
         p_sys->i_internal_chroma,
         p_sys->i_wrapper_output,
-        p_sys->psz_inner_name);
+        psz_inner_name);
+    free( psz_inner_name );
 
 #ifndef NDEBUG
     msg_Dbg( p_filter, "opencv_wrapper successfully started" );

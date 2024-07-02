@@ -29,6 +29,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 #include <vlc_dialog.h>
@@ -61,8 +62,8 @@ typedef struct
     bool synchronous;
 } sout_stream_id_sys_t;
 
-static char * es_print_url( const char *psz_fmt, vlc_fourcc_t i_fourcc, int i_count,
-                            const char *psz_access, const char *psz_mux )
+VLC_MALLOC static char * es_print_url( const char *psz_fmt, vlc_fourcc_t i_fourcc, int i_count,
+                                       const char *psz_access, const char *psz_mux )
 {
     struct vlc_memstream stream;
     unsigned char c;
@@ -109,7 +110,8 @@ out:
     return stream.ptr;
 }
 
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *
+Add( sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id )
 {
     sout_stream_sys_t *p_sys = p_stream->p_sys;
 
@@ -240,6 +242,7 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
 
     p_sys->count_sync += id->synchronous;
     return id;
+    (void)es_id;
 }
 
 static void Del( sout_stream_t *p_stream, void *_id )
@@ -263,8 +266,32 @@ static int Send( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
     return sout_MuxSendBuffer( id->p_mux, id->p_input, p_buffer );
 }
 
+/*****************************************************************************
+ * Close:
+ *****************************************************************************/
+
+static void Close( sout_stream_t *p_stream )
+{
+    sout_stream_sys_t *p_sys = p_stream->p_sys;
+
+    free( p_sys->psz_access );
+    free( p_sys->psz_access_audio );
+    free( p_sys->psz_access_video );
+
+    free( p_sys->psz_mux );
+    free( p_sys->psz_mux_audio );
+    free( p_sys->psz_mux_video );
+
+    free( p_sys->psz_dst );
+    free( p_sys->psz_dst_audio );
+    free( p_sys->psz_dst_video );
+}
+
 static const struct sout_stream_operations ops = {
-    Add, Del, Send, NULL, NULL, NULL,
+    .add = Add,
+    .del = Del,
+    .send = Send,
+    .close = Close,
 };
 
 #define SOUT_CFG_PREFIX "sout-es-"
@@ -309,28 +336,6 @@ static int Open( vlc_object_t *p_this )
     p_stream->p_sys = p_sys;
 
     return VLC_SUCCESS;
-}
-
-/*****************************************************************************
- * Close:
- *****************************************************************************/
-
-static void Close( vlc_object_t * p_this )
-{
-    sout_stream_t     *p_stream = (sout_stream_t*)p_this;
-    sout_stream_sys_t *p_sys = p_stream->p_sys;
-
-    free( p_sys->psz_access );
-    free( p_sys->psz_access_audio );
-    free( p_sys->psz_access_video );
-
-    free( p_sys->psz_mux );
-    free( p_sys->psz_mux_audio );
-    free( p_sys->psz_mux_video );
-
-    free( p_sys->psz_dst );
-    free( p_sys->psz_dst_audio );
-    free( p_sys->psz_dst_video );
 }
 
 /*****************************************************************************
@@ -395,5 +400,5 @@ vlc_module_begin()
     add_string(SOUT_CFG_PREFIX "dst-video", "", DESTV_TEXT,
                DESTV_LONGTEXT)
 
-    set_callbacks(Open, Close)
+    set_callback(Open)
 vlc_module_end()

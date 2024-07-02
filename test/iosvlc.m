@@ -38,13 +38,15 @@
 
 #include <TargetConditionals.h>
 
+#include "../lib/libvlc_internal.h"
+
 @interface AppDelegate : UIResponder <UIApplicationDelegate> {
     @public
     libvlc_instance_t *_libvlc;
     UIWindow *window;
     UIView *subview;
 
-#if TARGET_OS_IOS
+#if !TARGET_OS_TV
     UIPinchGestureRecognizer *_pinchRecognizer;
 #endif
 
@@ -56,7 +58,7 @@
 
 
 @implementation AppDelegate
-#if TARGET_OS_IOS
+#if !TARGET_OS_TV
 - (void)pinchRecognized:(UIPinchGestureRecognizer *)pinchRecognizer
 {
     UIGestureRecognizerState state = [pinchRecognizer state];
@@ -93,19 +95,15 @@
 /* Called after application launch */
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
-    /* Set VLC_PLUGIN_PATH for dynamic loading */
-    NSString *pluginsDirectory = [[NSBundle mainBundle] privateFrameworksPath];
-    setenv("VLC_PLUGIN_PATH", [pluginsDirectory UTF8String], 1);
-
     /* Store startup arguments to forward them to libvlc */
     NSArray *arguments = [[NSProcessInfo processInfo] arguments];
-    unsigned vlc_argc = [arguments count];
+    unsigned vlc_argc = [arguments count] - 1;
     const char **vlc_argv = malloc(vlc_argc * sizeof *vlc_argv);
     if (vlc_argv == NULL)
         return NO;
 
     for (unsigned i = 0; i < vlc_argc; i++)
-         vlc_argv[i] = [[arguments objectAtIndex:i] UTF8String];
+        vlc_argv[i] = [[arguments objectAtIndex:i + 1] UTF8String];
 
     /* Initialize libVLC */
     _libvlc = libvlc_new(vlc_argc, (const char * const*)vlc_argv);
@@ -115,8 +113,13 @@
         return NO;
 
     /* Initialize main window */
+#if TARGET_OS_VISION
+    /* UIScreen is unavailable so we need create a size on our own */
+    window = [[UIWindow alloc] initWithFrame:CGRectMake(0., 0., 1200., 800.)];
+#else
     window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    window.rootViewController = [UIViewController alloc];
+#endif
+    window.rootViewController = [[UIViewController alloc] init];
     window.backgroundColor = [UIColor whiteColor];
 
     subview = [[UIView alloc] initWithFrame:window.bounds];
@@ -124,17 +127,18 @@
     [window addSubview:subview];
     [window makeKeyAndVisible];
 
-#if TARGET_OS_IOS
+#if !TARGET_OS_TV
     _pinchRecognizer = [[UIPinchGestureRecognizer alloc]
         initWithTarget:self action:@selector(pinchRecognized:)];
     [window addGestureRecognizer:_pinchRecognizer];
 #endif
 
     /* Start glue interface, see code below */
-    libvlc_add_intf(_libvlc, "ios_interface,none");
+
+    libvlc_InternalAddIntf(_libvlc->p_libvlc_int, "ios_interface,none");
 
     /* Start parsing arguments and eventual playback */
-    libvlc_playlist_play(_libvlc);
+    libvlc_InternalPlay(_libvlc->p_libvlc_int);
 
     return YES;
 }
@@ -157,9 +161,38 @@ static int Open(vlc_object_t *obj)
     return VLC_SUCCESS;
 }
 
+#include <vlc_stream.h>
+#include <vlc_access.h>
+
+static int OpenAssetDemux(vlc_object_t *obj)
+{
+    stream_t *access = (stream_t *)obj;
+
+    if (access->psz_location == NULL)
+        return VLC_EGENERIC;
+
+    /* Store startup arguments to forward them to libvlc */
+    NSString *bundle_path = [[NSBundle mainBundle] resourcePath];
+    const char *resource_path = [bundle_path UTF8String];
+    size_t resource_path_length = strlen(resource_path);
+
+    char *url;
+    if (asprintf(&url, "file://%s/%s", resource_path, access->psz_location) < 0)
+        return VLC_ENOMEM;
+
+    access->psz_url = url;
+
+    return VLC_ACCESS_REDIRECT;
+}
+
 vlc_module_begin()
     set_capability("interface", 0)
     set_callback(Open)
+
+    add_submodule()
+    set_capability("access", 1)
+    set_callback(OpenAssetDemux)
+    add_shortcut("asset")
 vlc_module_end()
 
 VLC_EXPORT const vlc_plugin_cb vlc_static_modules[] = {

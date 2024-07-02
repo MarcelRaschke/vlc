@@ -35,11 +35,12 @@
 # define UNICODE
 #endif
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_aout.h>
 #include <vlc_charset.h>              /* FromWide() */
 
-#include "audio_output/windows_audio_common.h"
+#include "windows_audio_common.h"
 
 #define FRAME_SIZE 4096              /* The size is in samples, not in bytes */
 
@@ -497,7 +498,7 @@ static int OpenWaveOut( audio_output_t *p_aout, uint32_t i_device_id, int i_form
                  waveformat.Samples.wValidBitsPerSample);
         msg_Dbg( p_aout,"waveformat.Samples.wSamplesPerBlock = %d",
                  waveformat.Samples.wSamplesPerBlock);
-        msg_Dbg( p_aout,"waveformat.dwChannelMask          = %u",
+        msg_Dbg( p_aout,"waveformat.dwChannelMask          = %lu",
                  waveformat.dwChannelMask);
     }
 
@@ -768,7 +769,7 @@ static int DeviceSelect (audio_output_t *aout, const char *id)
 {
     var_SetString(aout, "waveout-audio-device", (id != NULL) ? id : "");
     aout_DeviceReport (aout, id);
-    aout_RestartRequest (aout, AOUT_RESTART_OUTPUT);
+    aout_RestartRequest (aout, true);
     return 0;
 }
 

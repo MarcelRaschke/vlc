@@ -22,6 +22,8 @@
 # include "config.h"
 #endif
 
+#include <stdckdint.h>
+
 #include <vlc_common.h>
 #include <vlc_memstream.h>
 
@@ -49,17 +51,26 @@ int vlc_memstream_close(struct vlc_memstream *ms)
     int ret;
 
     if (unlikely(stream == NULL))
+    {
+        // was never properly opened
+        ms->ptr = NULL;
         return EOF;
+    }
 
     ms->stream = NULL;
     ret = ferror(stream);
 
     if (fclose(stream))
+    {
+        // assuming it's free'd by the memstream
+        ms->ptr = NULL;
         return EOF;
+    }
 
     if (unlikely(ret))
     {
         free(ms->ptr);
+        ms->ptr = NULL;
         return EOF;
     }
     return 0;
@@ -69,6 +80,9 @@ size_t vlc_memstream_write(struct vlc_memstream *ms, const void *ptr,
                            size_t len)
 {
     if (unlikely(ms->stream == NULL))
+        return 0;
+
+    if (len == 0)
         return 0;
 
     return fwrite(ptr, 1, len, ms->stream);
@@ -120,7 +134,10 @@ int vlc_memstream_flush(struct vlc_memstream *ms)
 int vlc_memstream_close(struct vlc_memstream *ms)
 {
     if (ms->error)
+    {
         free(ms->ptr);
+        ms->ptr = NULL;
+    }
     return ms->error;
 } 
 
@@ -129,8 +146,11 @@ size_t vlc_memstream_write(struct vlc_memstream *ms, const void *ptr,
 {
     size_t newlen;
 
-    if (unlikely(add_overflow(ms->length, len, &newlen))
-     || unlikely(add_overflow(newlen, 1, &newlen)))
+    if (len == 0)
+        return 0;
+
+    if (unlikely(ckd_add(&newlen, ms->length, len))
+     || unlikely(ckd_add(&newlen, newlen, 1)))
         goto error;
 
     char *base = realloc(ms->ptr, newlen);
@@ -172,8 +192,8 @@ int vlc_memstream_vprintf(struct vlc_memstream *ms, const char *fmt,
     va_end(ap);
 
     if (len < 0
-     || unlikely(add_overflow(ms->length, len, &newlen))
-     || unlikely(add_overflow(newlen, 1, &newlen)))
+     || unlikely(ckd_add(&newlen, ms->length, len))
+     || unlikely(ckd_add(&newlen, newlen, 1)))
         goto error;
 
     ptr = realloc(ms->ptr, newlen);

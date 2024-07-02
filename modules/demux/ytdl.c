@@ -31,6 +31,7 @@
 
 #include "json/json.h"
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_demux.h>
 #include <vlc_stream.h>
 #include <vlc_fs.h>
@@ -437,7 +438,7 @@ vlc_module_begin()
     set_shortname("YT-DL")
     set_description("YT-DL extractor")
     set_subcategory(SUBCAT_INPUT_STREAM_FILTER)
-    set_capability("demux", 5)
+    set_capability("demux", 7)
     set_callbacks(OpenFilter, Close)
     add_bool("ytdl", true, N_("Enable YT-DL"), NULL)
         change_safe()

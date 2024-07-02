@@ -15,10 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
-import QtQml.Models 2.2
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
+import QtQml.Models
 
 import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
@@ -33,19 +33,28 @@ MainInterface.MainViewLoader {
     id: root
 
     // Properties
+    readonly property var currentIndex: currentItem?.currentIndex ?? - 1
 
-    property var sortModel: [
-        { text: I18n.qtr("Alphabetic"), criteria: "title" }
-    ]
+    property Component header: null
 
-    readonly property var currentIndex: Helpers.get(currentItem, "currentIndex", - 1)
+    readonly property int contentLeftMargin: currentItem?.contentLeftMargin ?? 0
+    readonly property int contentRightMargin: currentItem?.contentRightMargin ?? 0
+
+    property alias searchPattern: genreModel.searchPattern
+    property alias sortOrder: genreModel.sortOrder
+    property alias sortCriteria: genreModel.sortCriteria
 
     // FIXME: remove this
     property var _currentView: currentItem
 
     signal showAlbumView(var id, string name, int reason)
 
+    isSearchable: true
     model: genreModel
+
+    sortModel: [
+        { text: qsTr("Alphabetic"), criteria: "name" }
+    ]
 
     list: tableComponent
     grid: gridComponent
@@ -66,10 +75,10 @@ MainInterface.MainViewLoader {
 
     function _actionAtIndex(index) {
         if (selectionModel.selectedIndexes.length > 1) {
-            MediaLib.addAndPlay(model.getIdsForIndexes(selectionModel.selectedIndexes))
+            model.addAndPlay( selectionModel.selectedIndexes )
         } else if (selectionModel.selectedIndexes.length === 1) {
-            var sel = selectionModel.selectedIndexes[0]
-            var model = genreModel.getDataAt(sel)
+            const sel = selectionModel.selectedIndexes[0]
+            const model = genreModel.getDataAt(sel)
             showAlbumView(model.id, model.name, Qt.TabFocusReason)
         }
     }
@@ -79,9 +88,9 @@ MainInterface.MainViewLoader {
 
         mlModel: genreModel
 
-        indexes: selectionModel.selectedIndexes
-
-        titleRole: "name"
+        indexes: indexesFlat ? selectionModel.selectedIndexesFlat
+                             : selectionModel.selectedIndexes
+        indexesFlat: !!selectionModel.selectedIndexesFlat
     }
 
     /*
@@ -91,7 +100,7 @@ MainInterface.MainViewLoader {
      */
     onActiveFocusChanged: {
         if (activeFocus && genreModel.count > 0 && !selectionModel.hasSelection) {
-            var initialIndex = 0
+            let initialIndex = 0
             if (currentIndex !== -1)
                 initialIndex = currentIndex
 
@@ -112,12 +121,13 @@ MainInterface.MainViewLoader {
         MainInterface.MainGridView {
             id: gridView_id
 
-            selectionDelegateModel: selectionModel
+            selectionModel: root.selectionModel
             model: genreModel
-            topMargin: VLCStyle.margin_large
 
-           delegate: Widgets.GridItem {
-                id: item
+            headerDelegate: root.header
+
+            delegate: Widgets.GridItem {
+                id: genreGridDelegate
 
                 property var model: ({})
                 property int index: -1
@@ -126,26 +136,32 @@ MainInterface.MainViewLoader {
                 height: width / 2
                 pictureWidth: width
                 pictureHeight: height
-                image: model.cover || VLCStyle.noArtAlbumCover
+
+                image: model.cover || ""
+                cacheImage: true // for this view, we generate custom covers, cache it
+
+                fallbackImage: VLCStyle.noArtAlbumCover
+
                 playCoverBorderWidth: VLCStyle.dp(3, VLCStyle.scale)
                 dragItem: genreDragItem
 
                 onItemDoubleClicked: root.showAlbumView(model.id, model.name, Qt.MouseFocusReason)
-                onItemClicked: gridView_id.leftClickOnItem(modifier, item.index)
+                onItemClicked: (modifier) => { gridView_id.leftClickOnItem(modifier, index) }
 
                 onPlayClicked: {
                     if (model.id)
                         MediaLib.addAndPlay(model.id)
                 }
 
-                onContextMenuButtonClicked: {
+                onContextMenuButtonClicked: (_, globalMousePos) => {
                     gridView_id.rightClickOnItem(index)
                     contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
                 }
 
                 pictureOverlay: Item {
-                    Rectangle
-                    {
+                    id: overlay
+
+                    Rectangle {
                         anchors.fill: parent
 
                         radius: VLCStyle.gridCover_radius
@@ -161,18 +177,18 @@ MainInterface.MainViewLoader {
 
                         //FIXME use the right xxxLabel class
                         T.Label {
-                             width: item.width
-                             elide: Text.ElideRight
-                             font.pixelSize: VLCStyle.fontSize_large
-                             font.weight: Font.DemiBold
-                             text: model.name || I18n.qtr("Unknown genre")
-                             color: "white"
-                             horizontalAlignment: Text.AlignHCenter
+                            width: overlay.width
+                            elide: Text.ElideRight
+                            font.pixelSize: VLCStyle.fontSize_large
+                            font.weight: Font.DemiBold
+                            text: model.name || qsTr("Unknown genre")
+                            color: "white"
+                            horizontalAlignment: Text.AlignHCenter
                         }
 
                         Widgets.CaptionLabel {
-                            width: item.width
-                            text: model.nb_tracks > 1 ? I18n.qtr("%1 Tracks").arg(model.nb_tracks) : I18n.qtr("%1 Track").arg(model.nb_tracks)
+                            width: overlay.width
+                            text: model.nb_tracks > 1 ? qsTr("%1 Tracks").arg(model.nb_tracks) : qsTr("%1 Track").arg(model.nb_tracks)
                             opacity: .7
                             color: "white"
                             horizontalAlignment: Text.AlignHCenter
@@ -186,7 +202,7 @@ MainInterface.MainViewLoader {
             cellWidth: VLCStyle.colWidth(2)
             cellHeight: cellWidth / 2
 
-            onActionAtIndex: _actionAtIndex(index)
+            onActionAtIndex: (index) => { _actionAtIndex(index) }
 
             Navigation.parentItem: root
         }
@@ -208,7 +224,7 @@ MainInterface.MainViewLoader {
 
                     subCriterias: [ "nb_tracks" ],
 
-                    text: I18n.qtr("Name"),
+                    text: qsTr("Name"),
 
                     headerDelegate: tableColumns.titleHeaderDelegate,
                     colDelegate: tableColumns.titleDelegate
@@ -221,6 +237,10 @@ MainInterface.MainViewLoader {
                 model: {
                     criteria: "cover",
 
+                    text: qsTr("Cover"),
+
+                    isSortable: false,
+
                     headerDelegate: tableColumns.titleHeaderDelegate,
                     colDelegate: tableColumns.titleDelegate
                 }
@@ -230,7 +250,7 @@ MainInterface.MainViewLoader {
                 model: {
                     criteria: "name",
 
-                    text: I18n.qtr("Name")
+                    text: qsTr("Name")
                 }
             }, {
                 size: 1,
@@ -238,7 +258,9 @@ MainInterface.MainViewLoader {
                 model: {
                     criteria: "nb_tracks",
 
-                    text: I18n.qtr("Tracks")
+                    text: qsTr("Tracks"),
+
+                    isSortable: false
                 }
             }]
 
@@ -247,22 +269,28 @@ MainInterface.MainViewLoader {
             sortModel: (availableRowWidth < VLCStyle.colWidth(4)) ? _modelSmall
                                                                   : _modelMedium
 
-            selectionDelegateModel: selectionModel
+            selectionModel: root.selectionModel
             focus: true
-            onActionForSelection: _actionAtIndex(selection)
+            onActionForSelection: (selection) => _actionAtIndex(selection)
             Navigation.parentItem: root
             dragItem: genreDragItem
             rowHeight: VLCStyle.tableCoverRow_height
-            headerTopPadding: VLCStyle.margin_normal
 
-            onItemDoubleClicked: {
+            header: root.header
+
+            onItemDoubleClicked: (index, model) => {
                 root.showAlbumView(model.id, model.name, Qt.MouseFocusReason)
             }
 
-            onContextMenuButtonClicked: contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
-            onRightClick: contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
+            onContextMenuButtonClicked: (_,_,globalMousePos) => {
+                contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
+            }
 
-            Widgets.TableColumns {
+            onRightClick: (_,_,globalMousePos) => {
+                contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
+            }
+
+            Widgets.MLTableColumns {
                 id: tableColumns
 
                 showTitleText: (tableView_id.sortModel === tableView_id._modelSmall)
@@ -279,8 +307,8 @@ MainInterface.MainViewLoader {
     Component {
         id: emptyLabelComponent
 
-        EmptyLabelButton {
-            text: I18n.qtr("No genres found\nPlease try adding sources, by going to the Browse tab")
+        Widgets.EmptyLabelButton {
+            text: qsTr("No genres found\nPlease try adding sources, by going to the Browse tab")
             Navigation.parentItem: root
             cover: VLCStyle.noArtAlbumCover
         }

@@ -117,7 +117,6 @@ static int Open(vout_display_t *vd,
         switch (chroma) {
         case VLC_CODEC_YV12:
         case VLC_CODEC_I420:
-        case VLC_CODEC_J420:
             break;
         default:
             msg_Err(vd, "YUV4MPEG2 mode needs chroma YV12 not %4.4s as requested",
@@ -150,7 +149,6 @@ static int Open(vout_display_t *vd,
     video_format_t fmt;
     video_format_ApplyRotation(&fmt, vd->source);
     fmt.i_chroma = chroma;
-    video_format_FixRgb(&fmt);
 
     /* */
     *fmtp = fmt;
@@ -255,10 +253,9 @@ static int Control(vout_display_t *vd, int query)
 
     switch (query) {
         case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
-        case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
-        case VOUT_DISPLAY_CHANGE_ZOOM:
         case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
         case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
+        case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
             return VLC_SUCCESS;
     }
     return VLC_EGENERIC;

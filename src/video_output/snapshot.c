@@ -31,6 +31,7 @@
 #include <time.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_fs.h>
 #include <vlc_strings.h>
 #include <vlc_block.h>
@@ -156,7 +157,7 @@ void vout_snapshot_Set(vout_snapshot_t *snap,
 /* */
 char *vout_snapshot_GetDirectory(void)
 {
-    return config_GetUserDir(VLC_PICTURES_DIR);
+    return config_GetUserDir(VLC_SNAPSHOTS_DIR);
 }
 /* */
 int vout_snapshot_SaveImage(char **name, int *sequential,

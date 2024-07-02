@@ -283,6 +283,10 @@ extern const CGFloat VLCVolumeDefault;
  * @note listen to VLCPlayerABLoopStateChanged for changes to this property
  */
 @property (readonly) enum vlc_player_abloop abLoopState;
+@property (readonly) vlc_tick_t aLoopTime;
+@property (readonly) vlc_tick_t bLoopTime;
+@property (readonly) float aLoopPosition;
+@property (readonly) float bLoopPosition;
 
 /**
  * set the A→B loop
@@ -297,13 +301,6 @@ extern const CGFloat VLCVolumeDefault;
  * @return VLC_SUCCESS or a VLC error code
  */
 - (int)disableABLoop;
-
-/**
- * Define the action to perform after playback of the current media stopped (for any reason)
- * Options are: continue with next time, pause on last frame, stop even if there is a next item and quit VLC
- * @see the vlc_player_media_stopped_action enum for details
- */
-@property (readwrite, nonatomic) enum vlc_player_media_stopped_action actionAfterStop;
 
 /**
  * Move on to the next video frame and pause

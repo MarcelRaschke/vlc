@@ -19,28 +19,29 @@
 #ifndef VLC_TS_STREAMS_PRIVATE_H
 #define VLC_TS_STREAMS_PRIVATE_H
 
-typedef struct dvbpsi_s dvbpsi_t;
+typedef struct ts_psi_context_t ts_psi_context_t;
 typedef struct ts_sections_processor_t ts_sections_processor_t;
 
 #include "mpeg4_iod.h"
 #include "timestamps.h"
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_es.h>
 
 struct ts_pat_t
 {
+    ts_psi_context_t *p_ctx;
     int             i_version;
     int             i_ts_id;
     bool            b_generated;
-    dvbpsi_t       *handle;
     DECL_ARRAY(ts_pid_t *) programs;
 
 };
 
 struct ts_pmt_t
 {
-    dvbpsi_t       *handle;
+    ts_psi_context_t *p_ctx;
     int             i_version;
     int             i_number;
     int             i_pid_pcr;
@@ -75,6 +76,9 @@ struct ts_pmt_t
 
     stime_t i_last_dts;
     uint64_t i_last_dts_byte;
+
+    /* CA */
+    //en50221_capmt_info_t *capmt;
 
     /* ARIB specific */
     struct
@@ -149,8 +153,7 @@ typedef struct ts_si_context_t ts_si_context_t;
 
 struct ts_si_t
 {
-    dvbpsi_t *handle;
-    int       i_version;
+    ts_si_context_t *p_ctx;
     /* Track successfully set pid */
     ts_pid_t *eitpid;
     ts_pid_t *tdtpid;
@@ -161,10 +164,8 @@ typedef struct ts_psip_context_t ts_psip_context_t;
 
 struct ts_psip_t
 {
-    dvbpsi_t       *handle;
-    int             i_version;
-    ts_es_t    *p_eas_es;
     ts_psip_context_t *p_ctx;
+    ts_es_t    *p_eas_es;
     /* Used to track list of active pid for eit/ett, to call PIDRelease on them.
        VCT table could have been used, but PIDSetup can fail, and we can't alter
        the VCT table accordingly without going ahead of more troubles */

@@ -24,6 +24,8 @@
 # include "config.h"
 #endif
 
+#include <stdckdint.h>
+
 #include <vlc/libvlc.h>
 #include <vlc/libvlc_picture.h>
 #include "libvlc_internal.h"
@@ -65,21 +67,15 @@ libvlc_picture_t* libvlc_picture_new( vlc_object_t* p_obj, picture_t* input,
     pic->type = type;
     pic->time = libvlc_time_from_vlc_tick( input->date );
     pic->attachment = NULL;
-    vlc_fourcc_t format;
-    switch ( type )
-    {
-        case libvlc_picture_Argb:
-            format = VLC_CODEC_ARGB;
-            break;
-        case libvlc_picture_Jpg:
-            format = VLC_CODEC_JPEG;
-            break;
-        case libvlc_picture_Png:
-            format = VLC_CODEC_PNG;
-            break;
-        default:
-            vlc_assert_unreachable();
-    }
+
+    static const vlc_fourcc_t table[] = {
+        [libvlc_picture_Jpg] = VLC_CODEC_JPEG,
+        [libvlc_picture_Png] = VLC_CODEC_PNG,
+        [libvlc_picture_Argb] = VLC_CODEC_ARGB,
+        [libvlc_picture_WebP] = VLC_CODEC_WEBP,
+    };
+    assert(ARRAY_SIZE(table) > type && table[type] != 0);
+    vlc_fourcc_t format = table[type];
     if ( picture_Export( p_obj, &pic->converted, &pic->fmt,
                          input, format, width, height, crop ) != VLC_SUCCESS )
     {
@@ -100,15 +96,30 @@ static const struct vlc_block_callbacks block_cbs =
     libvlc_picture_block_release,
 };
 
+static bool IsSupportedByLibVLC(vlc_fourcc_t fcc)
+{
+    switch (fcc)
+    {
+        case VLC_CODEC_PNG:
+        case VLC_CODEC_JPEG:
+        case VLC_CODEC_WEBP:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static libvlc_picture_t* libvlc_picture_from_attachment( input_attachment_t* attachment )
 {
     vlc_fourcc_t fcc = image_Mime2Fourcc( attachment->psz_mime );
-    if ( fcc != VLC_CODEC_PNG && fcc != VLC_CODEC_JPEG )
+    if (!IsSupportedByLibVLC(fcc))
         return NULL;
+
     libvlc_picture_t *pic = malloc( sizeof( *pic ) );
     if ( unlikely( pic == NULL ) )
         return NULL;
-    pic->converted = malloc( sizeof( *pic->converted ) );
+    pic->converted = block_New(&block_cbs, attachment->p_data,
+                               attachment->i_data);
     if ( unlikely( pic->converted == NULL ) )
     {
         free(pic);
@@ -117,9 +128,7 @@ static libvlc_picture_t* libvlc_picture_from_attachment( input_attachment_t* att
     vlc_atomic_rc_init( &pic->rc );
     pic->attachment = vlc_input_attachment_Hold( attachment );
     pic->time = VLC_TICK_INVALID;
-    block_Init( pic->converted, &block_cbs, attachment->p_data,
-                attachment->i_data);
-    video_format_Init( &pic->fmt, fcc );
+    video_format_Init( &pic->fmt, 0 );
     switch ( fcc )
     {
     case VLC_CODEC_PNG:
@@ -128,6 +137,9 @@ static libvlc_picture_t* libvlc_picture_from_attachment( input_attachment_t* att
     case VLC_CODEC_JPEG:
         pic->type = libvlc_picture_Jpg;
         break;
+    case VLC_CODEC_WEBP:
+        pic->type = libvlc_picture_WebP;
+        break;
     default:
         vlc_assert_unreachable();
     }
@@ -135,9 +147,10 @@ static libvlc_picture_t* libvlc_picture_from_attachment( input_attachment_t* att
     return pic;
 }
 
-void libvlc_picture_retain( libvlc_picture_t* pic )
+libvlc_picture_t *libvlc_picture_retain( libvlc_picture_t* pic )
 {
     vlc_atomic_rc_inc( &pic->rc );
+    return pic;
 }
 
 void libvlc_picture_release( libvlc_picture_t* pic )
@@ -179,7 +192,7 @@ libvlc_picture_type_t libvlc_picture_type( const libvlc_picture_t* pic )
 unsigned int libvlc_picture_get_stride( const libvlc_picture_t *pic )
 {
     assert( pic->type == libvlc_picture_Argb );
-    return pic->fmt.i_width * pic->fmt.i_bits_per_pixel / 8;
+    return pic->fmt.i_width * 4;
 }
 
 unsigned int libvlc_picture_get_width( const libvlc_picture_t* pic )
@@ -197,14 +210,13 @@ libvlc_time_t libvlc_picture_get_time( const libvlc_picture_t* pic )
     return pic->time;
 }
 
-libvlc_picture_list_t* libvlc_picture_list_from_attachments( input_attachment_t** attachments,
+libvlc_picture_list_t* libvlc_picture_list_from_attachments( input_attachment_t* const* attachments,
                                                              size_t nb_attachments )
 {
     size_t size = 0;
     libvlc_picture_list_t* list;
-    if ( mul_overflow( nb_attachments, sizeof( libvlc_picture_t* ), &size ) )
-        return NULL;
-    if ( add_overflow( size, sizeof( *list ), &size ) )
+    if (ckd_mul(&size, nb_attachments, sizeof (libvlc_picture_t *)) ||
+        ckd_add(&size, sizeof (*list), size))
         return NULL;
 
     list = malloc( size );

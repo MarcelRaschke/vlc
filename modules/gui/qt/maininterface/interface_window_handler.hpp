@@ -22,13 +22,14 @@
 
 #include <QObject>
 #include <QWindow>
+#include <QPointer>
 
 class MainCtx;
 class InterfaceWindowHandler : public QObject
 {
     Q_OBJECT
 public:
-    explicit InterfaceWindowHandler(qt_intf_t *_p_intf, MainCtx* mainCtx, QWindow* window, QWidget* widget, QObject *parent = nullptr);
+    explicit InterfaceWindowHandler(qt_intf_t *_p_intf, MainCtx* mainCtx, QWindow* window, QObject *parent = nullptr);
     virtual ~InterfaceWindowHandler();
 
 public slots:
@@ -51,7 +52,7 @@ protected slots:
 
     void requestActivate();
 
-    virtual bool eventFilter(QObject*, QEvent* event) override;
+    bool eventFilter(QObject*, QEvent* event) override;
 
 signals:
     void minimalViewToggled( bool );
@@ -63,16 +64,11 @@ signals:
 private:
     bool applyKeyEvent(QKeyEvent * event) const;
 
-#if QT_CLIENT_SIDE_DECORATION_AVAILABLE
     virtual void updateCSDWindowSettings();
-#endif
 
 protected:
     qt_intf_t* p_intf = nullptr;
-    //some compositor uses a Window as the base interface, some uses a widget
-    //when a widget is used, perform window operation on it
-    QWindow* m_window = nullptr;
-    QWidget* m_widget = nullptr;
+    QPointer<QWindow> m_window;
 
     MainCtx* m_mainCtx = nullptr;
 

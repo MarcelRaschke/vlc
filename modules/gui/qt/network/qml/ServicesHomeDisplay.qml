@@ -15,10 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQml.Models 2.2
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Controls
+import QtQml.Models
+import QtQuick.Layouts
 
 import org.videolan.vlc 0.1
 
@@ -30,14 +30,10 @@ import "qrc:///style/"
 Widgets.PageLoader {
     id: root
 
-    property bool isViewMultiView: false
-    property var sortModel
-    property var model
-    property Component localMenuDelegate: null
-
     pageModel: [{
         name: "all",
-        url: "qrc:///network/ServicesSources.qml"
+        default: true,
+        component: serviceSourceComponent
     }, {
         name: "services_manage",
         url: "qrc:///network/ServicesManage.qml"
@@ -50,21 +46,38 @@ Widgets.PageLoader {
         guard: function (prop) { return !!prop.tree }
     }]
 
-    loadDefaultView: function() {
-        History.update(["mc", "discover", "services", "all"])
-        loadPage("all")
+
+    function _showServiceHome(reason) {
+        History.push([...root.pagePrefix, "services"], reason)
     }
 
-    onCurrentItemChanged: {
-        sortModel = currentItem.sortModel
-        model = currentItem.model
-        localMenuDelegate = !!currentItem.addressBar ? currentItem.addressBar : null
-        isViewMultiView = currentItem.isViewMultiView === undefined || currentItem.isViewMultiView
+    function _showServiceManage(reason) {
+        History.push([...root.pagePrefix, "services_manage"], reason)
     }
 
-    function setCurrentItemFocus(reason) {
-        stackView.currentItem.setCurrentItemFocus(reason);
+    function _showServiceRoot(source_name, reason) {
+        History.push([...root.pagePrefix, "source_root"], { source_name: source_name }, reason)
     }
+
+    function _showServiceNode(tree, source_name, reason) {
+        History.push(
+            [...root.pagePrefix, "source_browse"],
+            {
+                tree: tree,
+                source_name: source_name
+            },
+            reason)
+    }
+
+    Component {
+        id: serviceSourceComponent
+
+        ServicesSources {
+            onBrowseServiceManage:  (reason) => root._showServiceManage(reason)
+            onBrowseSourceRoot: (name, reason) => root. _showServiceRoot(name, reason)
+        }
+    }
+
 
     Component {
         id: sourceRootComponent
@@ -72,26 +85,20 @@ Widgets.PageLoader {
         BrowseTreeDisplay {
             property alias source_name: deviceModel.source_name
 
-            property Component addressBar: NetworkAddressbar {
+            property Component localMenuDelegate: NetworkAddressbar {
                 path: [{display: deviceModel.name, tree: {}}]
 
-                onHomeButtonClicked: {
-                    History.push(["mc", "discover", "services"]);
-
-                    root.setCurrentItemFocus(reason);
-                }
+                onHomeButtonClicked: _showServiceHome(reason)
             }
 
-            providerModel: deviceModel
+            model: deviceModel
             contextMenu: contextMenu
 
-            onBrowse: {
-                History.push(["mc", "discover", "services", "source_browse",
-                              { tree: tree, "root_name": deviceModel.name,
-                                "source_name": source_name }]);
-
-                root.setCurrentItemFocus(reason);
+            onBrowse: (tree, reason) => {
+                root._showServiceNode(tree, deviceModel.source_name, reason)
             }
+
+            onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
 
             NetworkDeviceModel {
                 id: deviceModel
@@ -112,47 +119,37 @@ Widgets.PageLoader {
         id: sourceBrowseComponent
 
         BrowseTreeDisplay {
-            property string root_name
+            property alias tree: mediaModel.tree
             property string source_name
 
-            property Component addressBar: NetworkAddressbar {
+            property Component localMenuDelegate: NetworkAddressbar {
                 path: {
-                    var _path = providerModel.path
+                    const _path = mediaModel.path
                     _path.unshift({display: root_name, tree: {"source_name": source_name, "isRoot": true}})
                     return _path
                 }
 
-                onHomeButtonClicked: {
-                    History.push(["mc", "discover", "services"]);
+                onHomeButtonClicked: root._showServiceHome(reason)
 
-                    root.setCurrentItemFocus(reason);
-                }
-
-                onBrowse: {
-                    if (!!tree.isRoot)
-                        History.push(["mc", "discover", "services", "source_root",
-                                      { source_name: tree.source_name }]);
+                onBrowse: (tree, reason) => {
+                    if (tree.isRoot)
+                        root._showServiceRoot(source_name, reason)
                     else
-                        History.push(["mc", "discover", "services", "source_browse",
-                                      { tree: tree, "root": root_name }]);
-
-                    root.setCurrentItemFocus(reason);
+                        root._showServiceNode(tree, source_name, reason)
                 }
             }
 
-            onBrowse: {
-                History.push(["mc", "discover", "services", "source_browse",
-                              { tree: tree, "root": root_name }]);
+            onBrowse: (tree, reason) => root._showServiceNode(tree, source_name, reason)
 
-                root.setCurrentItemFocus(reason);
-            }
+            onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
 
-            providerModel: NetworkMediaModel {
+            model: NetworkMediaModel {
+                id: mediaModel
                 ctx: MainCtx
             }
 
             contextMenu: NetworkMediaContextMenu {
-                model: providerModel
+                model: mediaModel
             }
         }
     }

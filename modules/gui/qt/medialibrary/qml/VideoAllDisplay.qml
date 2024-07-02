@@ -16,10 +16,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick          2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts  1.11
-import QtQml.Models     2.2
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import QtQml.Models
 
 import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
@@ -32,44 +32,26 @@ Widgets.PageLoader {
 
     // Properties
 
-    property var model
     property var sortMenu
-    property var sortModel
 
     // Settings
 
     pageModel: [{
         name: "base",
+        default: true,
         component: componentBase
     }, {
         name: "group",
         component: componentGroup
+    }, {
+        name: "recentVideos",
+        component: componentRecentVideos
     }]
-
-    loadDefaultView: function () {
-        History.update(["mc", "video", "all", "base"])
-        loadPage("base")
-    }
 
     // Events
 
     onCurrentItemChanged: {
-        model     = currentItem.model
         sortMenu  = currentItem.sortMenu
-        sortModel = currentItem.sortModel
-    }
-    // Functions private
-
-    function _updateHistoryAll(index) {
-        History.update(["mc", "video", "all", "base", { "initialIndex": index }])
-    }
-
-    function _updateHistoryGroup(group) {
-        History.update(["mc", "video", "all", "group", {
-                            "initialIndex": group.currentIndex,
-                            "parentId" : group.parentId,
-                            "title" : group.title
-                        }])
     }
 
     // Children
@@ -80,17 +62,11 @@ Widgets.PageLoader {
         VideoAllSubDisplay {
             // Events
 
-            onShowList: {
-                History.push(["mc", "video", "all", "group",
-                             { parentId: model.id, title: model.title }])
-
-                root.stackView.currentItem.setCurrentItemFocus(reason)
+            onShowList: (model, reason) => {
+                History.push([...root.pagePrefix, "group"], { parentId: model.id, title: model.title }, reason)
             }
 
-            // NOTE: The model can change over time.
-            onModelChanged: root.model = model
-
-            onCurrentIndexChanged: root._updateHistoryAll(currentIndex)
+            onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
         }
     }
 
@@ -100,15 +76,22 @@ Widgets.PageLoader {
         MediaGroupDisplay {
             id: group
 
-            anchors.fill: parent
-
-            onCurrentIndexChanged: root._updateHistoryGroup(group)
-            onParentIdChanged    : root._updateHistoryGroup(group)
-            onTitleChanged       : root._updateHistoryGroup(group)
+            onCurrentIndexChanged: History.viewProp.initialIndex = currentIndex
 
             function isInfoExpandPanelAvailable(/* modelIndexData */) {
                 return true
             }
         }
     }
+
+    Component {
+        id: componentRecentVideos
+
+        VideoRecentVideosDisplay {
+            function isInfoExpandPanelAvailable(/* modelIndexData */) {
+                return true
+            }
+        }
+    }
+
 }

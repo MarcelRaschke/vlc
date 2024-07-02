@@ -20,6 +20,7 @@
 
 // VLC includes
 #include "qt.hpp"
+#include "util/vlctick.hpp"
 
 //-------------------------------------------------------------------------------------------------
 // Ctor / dtor
@@ -28,7 +29,7 @@
 MLPlaylist::MLPlaylist(const vlc_ml_playlist_t * data)
     : MLItem(MLItemId(data->i_id, VLC_ML_PARENT_PLAYLIST))
     , m_name(qfu(data->psz_name))
-    , m_duration(0) // TODO m_duration
+    , m_duration(data->i_duration)
     , m_count(data->i_nb_media)
 {
     assert(data);
@@ -41,6 +42,11 @@ MLPlaylist::MLPlaylist(const vlc_ml_playlist_t * data)
 QString MLPlaylist::getName() const
 {
     return m_name;
+}
+
+void MLPlaylist::setName(const QString & name)
+{
+    m_name = name;
 }
 
 //-------------------------------------------------------------------------------------------------

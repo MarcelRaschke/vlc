@@ -25,7 +25,6 @@
 
 #include <vlc_vlm.h>
 #include <vlc_player.h>
-#include "input_interface.h"
 
 /* Private */
 typedef struct
@@ -36,17 +35,16 @@ typedef struct
     /* "playlist" index */
     int i_index;
 
-    vlc_object_t *p_parent;
     input_item_t      *p_item;
     vlc_player_t *player;
     vlc_player_listener_id *listener;
-
+    bool finished;
 } vlm_media_instance_sys_t;
 
 
 typedef struct
 {
-    struct vlc_object_t obj;
+    vlm_t *vlm;
     vlm_media_t cfg;
 
     /* actual input instances */

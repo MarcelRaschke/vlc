@@ -25,9 +25,11 @@
 #include <stdlib.h>
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_window.h>
 #include <vlc_vout.h>
 #include <vlc_vout_display.h>
+#include <vlc_ancillary.h>
 #include "video_window.h"
 #include "vout_internal.h"
 

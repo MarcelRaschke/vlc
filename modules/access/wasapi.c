@@ -26,13 +26,15 @@
 
 #include <initguid.h>
 #define COBJMACROS
-#define CONST_VTABLE
 
 #include <assert.h>
+#include <stdbit.h>
 #include <stdlib.h>
 
 #define _DECL_DLLMAIN
+#include <process.h>
 #include <vlc_common.h>
+#include <windows.h>
 #include <vlc_aout.h>
 #include <vlc_demux.h>
 #include <vlc_plugin.h>
@@ -73,7 +75,7 @@ static msftime_t GetQPC_100ns(void)
 
 static msftime_t (*get_qpc)(void);
 
-BOOL WINAPI DllMain(HANDLE dll, DWORD reason, LPVOID reserved)
+int __stdcall DllMain(void *dll, unsigned long reason, void *reserved)
 {
     (void) dll;
     (void) reserved;
@@ -168,7 +170,7 @@ static int vlc_FromWave(const WAVEFORMATEX *restrict wf,
     if (wfe->dwChannelMask & SPEAKER_LOW_FREQUENCY)
         fmt->i_physical_channels |= AOUT_CHAN_LFE;
 
-    assert(vlc_popcount(wfe->dwChannelMask) == wf->nChannels);
+    assert(stdc_count_ones(wfe->dwChannelMask) == wf->nChannels);
 
     if (IsEqualIID(&wfe->SubFormat, &KSDATAFORMAT_SUBTYPE_PCM))
     {
@@ -181,11 +183,7 @@ static int vlc_FromWave(const WAVEFORMATEX *restrict wf,
                         fmt->i_format = VLC_CODEC_S32N;
                         break;
                     case 24:
-#ifdef WORDS_BIGENDIAN
-                        fmt->i_format = VLC_CODEC_S24B32;
-#else
                         fmt->i_format = VLC_CODEC_S24L32;
-#endif
                         break;
                     default:
                         return -1;
@@ -316,7 +314,7 @@ static unsigned __stdcall Thread(void *data)
     void *pv;
     HRESULT hr;
 
-    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
     assert(SUCCEEDED(hr)); /* COM already allocated by parent thread */
     SetEvent(sys->ready);
 
@@ -432,7 +430,7 @@ static int Open(vlc_object_t *obj)
             goto error;
     }
 
-    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
     if (unlikely(FAILED(hr))) {
         msg_Err(demux, "cannot initialize COM (error 0x%lX)", hr);
         goto error;
@@ -496,7 +494,7 @@ static void Close (vlc_object_t *obj)
     demux_sys_t *sys = demux->p_sys;
     HRESULT hr;
 
-    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
     assert(SUCCEEDED(hr));
 
     SetEvent(sys->events[0]);

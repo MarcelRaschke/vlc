@@ -1,10 +1,21 @@
 # srt
 
-SRT_VERSION := 1.4.4
+SRT_VERSION := 1.5.3
 SRT_URL := $(GITHUB)/Haivision/srt/archive/v$(SRT_VERSION).tar.gz
 
+# gnutls (nettle/gmp) can't be used with the LGPLv2 license
+ifdef GPL
+SRT_PKG=1
+else
+ifdef GNUV3
+SRT_PKG=1
+endif
+endif
+
 ifdef BUILD_NETWORK
+ifdef SRT_PKG
 PKGS += srt
+endif
 endif
 
 ifeq ($(call need_pkg,"srt >= 1.3.2"),)
@@ -24,8 +35,6 @@ $(TARBALLS)/srt-$(SRT_VERSION).tar.gz:
 
 srt: srt-$(SRT_VERSION).tar.gz .sum-srt
 	$(UNPACK)
-	$(APPLY) $(SRC)/srt/0001-core-remove-MSG_TRUNC-logging.patch
-	$(APPLY) $(SRC)/srt/0001-build-always-use-GNUInstallDirs.patch
 	$(call pkg_static,"scripts/srt.pc.in")
 	mv srt-$(SRT_VERSION) $@ && touch $@
 
@@ -33,7 +42,7 @@ SRT_CONF := -DENABLE_SHARED=OFF -DUSE_ENCLIB=gnutls -DENABLE_CXX11=OFF -DENABLE_
 
 .srt: srt toolchain.cmake
 	$(CMAKECLEAN)
-	$(HOSTVARS) $(CMAKE) $(SRT_CONF)
+	$(HOSTVARS_CMAKE) $(CMAKE) $(SRT_CONF)
 	+$(CMAKEBUILD)
 	$(CMAKEINSTALL)
 	touch $@

@@ -18,8 +18,9 @@
 
 #include "medialib.hpp"
 #include "mlhelper.hpp"
-
 #include "playlist/playlist_controller.hpp"
+#include "util/shared_input_item.hpp"
+
 
 MediaLib::MediaLib(qt_intf_t *_intf, QObject *_parent)
     : QObject( _parent )
@@ -77,21 +78,20 @@ static void convertMLItemToPlaylistMedias(vlc_medialibrary_t* ml, const MLItemId
 
     if (itemId.type == VLC_ML_PARENT_UNKNOWN)
     {
-        vlc::playlist::InputItemPtr item( vlc_ml_get_input_item( ml, itemId.id ), false );
+        SharedInputItem item( vlc_ml_get_input_item( ml, itemId.id ), false );
         if (item)
             medias.push_back(vlc::playlist::Media(item.get(), options));
     }
     else
     {
-        vlc_ml_query_params_t query;
-        memset(&query, 0, sizeof(vlc_ml_query_params_t));
+        vlc_ml_query_params_t query = vlc_ml_query_params_create();
         ml_unique_ptr<vlc_ml_media_list_t> media_list(vlc_ml_list_media_of( ml, &query, itemId.type, itemId.id));
         if (media_list == nullptr || media_list->i_nb_items == 0)
             return;
 
         auto mediaRange = ml_range_iterate<vlc_ml_media_t>( media_list );
         std::transform(mediaRange.begin(), mediaRange.end(), std::back_inserter(medias), [&](vlc_ml_media_t& m) {
-            vlc::playlist::InputItemPtr item(vlc_ml_get_input_item( ml, m.i_id ), false);
+            SharedInputItem item(vlc_ml_get_input_item( ml, m.i_id ), false);
             return vlc::playlist::Media(item.get(), options);
         });
     }
@@ -99,7 +99,7 @@ static void convertMLItemToPlaylistMedias(vlc_medialibrary_t* ml, const MLItemId
 
 static void convertQUrlToPlaylistMedias(QUrl mrl, const QStringList& options, QVector<vlc::playlist::Media>& medias)
 {
-    vlc::playlist::Media media{ mrl.toString(QUrl::None), mrl.fileName(), options };
+    vlc::playlist::Media media{ mrl.toString(QUrl::FullyEncoded), mrl.fileName(), options };
     medias.push_back(media);
 }
 
@@ -211,13 +211,13 @@ void MediaLib::addAndPlay(const MLItemId & itemId, const QStringList &options )
 void MediaLib::addAndPlay(const QString& mrl, const QStringList &options)
 {
     vlc::playlist::Media media{ mrl, mrl, options };
-    m_intf->p_mainPlaylistController->append( {media}, true );
+    m_intf->p_mainPlaylistController->append( QVector<vlc::playlist::Media>{media}, true );
 }
 
 void MediaLib::addAndPlay(const QUrl& mrl, const QStringList &options)
 {
-    vlc::playlist::Media media{ mrl.toString(QUrl::None), mrl.fileName(), options };
-    m_intf->p_mainPlaylistController->append( {media}, true );
+    vlc::playlist::Media media{ mrl.toString(QUrl::FullyEncoded), mrl.fileName(), options };
+    m_intf->p_mainPlaylistController->append( QVector<vlc::playlist::Media>{media}, true );
 }
 
 
@@ -269,7 +269,7 @@ void MediaLib::reload()
     });
 }
 
-void MediaLib::mlInputItem(const QVariantList& variantList, QJSValue callback)
+void MediaLib::mlInputItem(const QVector<MLItemId>& itemIdVector, QJSValue callback)
 {
     if (!callback.isCallable()) // invalid argument
     {
@@ -277,17 +277,11 @@ void MediaLib::mlInputItem(const QVariantList& variantList, QJSValue callback)
         return;
     }
 
-    std::vector<MLItemId> mlIdList;
-    for (const auto& variant : variantList)
-    {
-        if (variant.canConvert<MLItemId>())
-            mlIdList.push_back(variant.value<MLItemId>());
-    }
     struct Ctx {
-        std::vector<QmlInputItem> items;
+        std::vector<SharedInputItem> items;
     };
 
-    if (mlIdList.empty())
+    if (itemIdVector.empty())
     {
         //call the callback with and empty list
         auto jsEngine = qjsEngine(this);
@@ -298,10 +292,30 @@ void MediaLib::mlInputItem(const QVariantList& variantList, QJSValue callback)
         return;
     }
 
+    auto it = m_inputItemQuery.find(itemIdVector);
+
+    if (it == m_inputItemQuery.end())
+    {
+        it = m_inputItemQuery.insert(itemIdVector, {callback});
+    }
+    else
+    {
+        // be patient
+
+        for (const auto& it2 : it.value())
+        {
+            if (callback.strictlyEquals(it2))
+                return;
+        }
+
+        it.value().push_back(callback); // FIXME: Use an ordered set
+        return;
+    }
+
     runOnMLThread<Ctx>(this,
     //ML thread
-    [mlIdList](vlc_medialibrary_t* ml, Ctx& ctx){
-        for (auto mlId : mlIdList)
+    [itemIdVector](vlc_medialibrary_t* ml, Ctx& ctx){
+        for (auto mlId : itemIdVector)
         {
             // NOTE: When we have a parent it's a collection of media(s).
             if (mlId.type == VLC_ML_PARENT_UNKNOWN)
@@ -312,8 +326,7 @@ void MediaLib::mlInputItem(const QVariantList& variantList, QJSValue callback)
             {
                 ml_unique_ptr<vlc_ml_media_list_t> list;
 
-                vlc_ml_query_params_t query;
-                memset(&query, 0, sizeof(vlc_ml_query_params_t));
+                vlc_ml_query_params_t query = vlc_ml_query_params_create();
 
                 list.reset(vlc_ml_list_media_of(ml, &query, mlId.type, mlId.id));
 
@@ -326,7 +339,7 @@ void MediaLib::mlInputItem(const QVariantList& variantList, QJSValue callback)
         }
     },
     //UI thread
-    [this, callback](quint64, Ctx& ctx) mutable
+    [this, it](quint64, Ctx& ctx) mutable
     {
         auto jsEngine = qjsEngine(this);
         if (!jsEngine)
@@ -341,7 +354,12 @@ void MediaLib::mlInputItem(const QVariantList& variantList, QJSValue callback)
             i++;
         }
 
-        callback.call({jsArray});
+        for (const auto& cb : qAsConst(it.value()))
+        {
+            cb.call({jsArray});
+        }
+
+        m_inputItemQuery.erase(it);
     });
 }
 

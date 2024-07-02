@@ -34,8 +34,6 @@
 #include "mmal_cma.h"
 #include "mmal_picture.h"
 
-const vlc_fourcc_t hw_mmal_vzc_subpicture_chromas[] = { VLC_CODEC_RGBA, VLC_CODEC_BGRA, VLC_CODEC_ARGB, 0 };
-
 #define UINT64_SIZE(s) (((s) + sizeof(uint64_t) - 1)/sizeof(uint64_t))
 
 // WB + Inv
@@ -76,32 +74,16 @@ MMAL_FOURCC_T vlc_to_mmal_color_space(const video_color_space_t vlc_cs)
 MMAL_FOURCC_T vlc_to_mmal_video_fourcc(const video_frame_format_t * const vf_vlc)
 {
     switch (vf_vlc->i_chroma) {
-        case VLC_CODEC_RGB32:
-        {
-            // VLC RGB32 aka RV32 means we have to look at the mask values
-            const uint32_t r = vf_vlc->i_rmask;
-            const uint32_t g = vf_vlc->i_gmask;
-            const uint32_t b = vf_vlc->i_bmask;
-            if (r == 0xff0000 && g == 0xff00 && b == 0xff)
-                return MMAL_ENCODING_BGRA;
-            if (r == 0xff && g == 0xff00 && b == 0xff0000)
-                return MMAL_ENCODING_RGBA;
-            if (r == 0xff000000 && g == 0xff0000 && b == 0xff00)
-                return MMAL_ENCODING_ABGR;
-            if (r == 0xff00 && g == 0xff0000 && b == 0xff000000)
-                return MMAL_ENCODING_ARGB;
-            break;
-        }
-        case VLC_CODEC_RGB16:
-        {
-            // VLC RGB16 aka RV16 means we have to look at the mask values
-            const uint32_t r = vf_vlc->i_rmask;
-            const uint32_t g = vf_vlc->i_gmask;
-            const uint32_t b = vf_vlc->i_bmask;
-            if (r == 0xf800 && g == 0x7e0 && b == 0x1f)
-                return MMAL_ENCODING_RGB16;
-            break;
-        }
+        case VLC_CODEC_BGRX:
+            return MMAL_ENCODING_BGRA;
+        case VLC_CODEC_RGBX:
+            return MMAL_ENCODING_RGBA;
+        case VLC_CODEC_XBGR:
+            return MMAL_ENCODING_ABGR;
+        case VLC_CODEC_XRGB:
+            return MMAL_ENCODING_ARGB;
+        case VLC_CODEC_RGB565BE:
+            return MMAL_ENCODING_RGB16;
         case VLC_CODEC_I420:
             return MMAL_ENCODING_I420;
         case VLC_CODEC_RGBA:
@@ -110,7 +92,8 @@ MMAL_FOURCC_T vlc_to_mmal_video_fourcc(const video_frame_format_t * const vf_vlc
             return MMAL_ENCODING_BGRA;
         case VLC_CODEC_ARGB:
             return MMAL_ENCODING_ARGB;
-        // VLC_CODEC_ABGR does not exist in VLC
+        case VLC_CODEC_ABGR:
+            return MMAL_ENCODING_ABGR;
         case VLC_CODEC_MMAL_OPAQUE:
             return MMAL_ENCODING_OPAQUE;
         default:
@@ -1053,6 +1036,7 @@ MMAL_BUFFER_HEADER_T * hw_mmal_vzc_buf_from_pic(vzc_pool_ctl_t * const pc,
                                                 picture_t * const pic,
                                                 const MMAL_RECT_T dst_pic_rect,
                                                 const int x_offset, const int y_offset,
+                                                const unsigned width, const unsigned height,
                                                 const unsigned int alpha,
                                                 const bool is_first)
 {
@@ -1080,7 +1064,7 @@ MMAL_BUFFER_HEADER_T * hw_mmal_vzc_buf_from_pic(vzc_pool_ctl_t * const pc,
         // ?? Round start offset as well as length
         const video_format_t *const fmt = &pic->format;
 
-        const unsigned int bpp = (fmt->i_bits_per_pixel + 7) >> 3;
+        const unsigned int bpp = (vlc_fourcc_GetChromaBPP(fmt->i_chroma) + 7) >> 3;
         const unsigned int xl = (fmt->i_x_offset & ~15);
         const unsigned int xr = (fmt->i_x_offset + fmt->i_visible_width + 15) & ~15;
         const size_t dst_stride = (xr - xl) * bpp;
@@ -1151,8 +1135,8 @@ MMAL_BUFFER_HEADER_T * hw_mmal_vzc_buf_from_pic(vzc_pool_ctl_t * const pc,
         sb->orig_dest_rect = (MMAL_RECT_T){
             .x      = x_offset,
             .y      = y_offset,
-            .width  = fmt->i_visible_width,
-            .height = fmt->i_visible_height
+            .width  = width,
+            .height = height
         };
 
         if (needs_copy)

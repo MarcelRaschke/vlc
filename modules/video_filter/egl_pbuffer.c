@@ -84,6 +84,11 @@ static int MakeCurrent (vlc_gl_t *gl)
         return VLC_EGENERIC;
 
     sys->current = true;
+
+    const opengl_vtable_t *vt = &sys->api.vt;
+    vt->BindBuffer(GL_PIXEL_PACK_BUFFER, sys->pixelbuffers[sys->current_flip]);
+    vt->BindFramebuffer(GL_FRAMEBUFFER, sys->framebuffers[sys->current_flip]);
+
     return VLC_SUCCESS;
 }
 
@@ -104,7 +109,19 @@ static void *GetSymbol(vlc_gl_t *gl, const char *procname)
     return (void *)eglGetProcAddress (procname);
 }
 
-static int InitEGL(vlc_gl_t *gl, unsigned width, unsigned height)
+static EGLContext CreateContext(vlc_gl_t *gl, EGLConfig cfg, EGLint client_version)
+{
+    struct vlc_gl_pbuffer *sys = gl->sys;
+
+    const EGLint ctx_attr[] = {
+        EGL_CONTEXT_CLIENT_VERSION, client_version,
+        EGL_NONE
+    };
+
+    return eglCreateContext(sys->display, cfg, EGL_NO_CONTEXT, ctx_attr);
+}
+
+static int InitEGL(vlc_gl_t *gl, int opengl_api, unsigned width, unsigned height)
 {
     struct vlc_gl_pbuffer *sys = gl->sys;
 
@@ -125,36 +142,24 @@ static int InitEGL(vlc_gl_t *gl, unsigned width, unsigned height)
     msg_Dbg(gl, "EGL version %s by %s, API %s",
             eglQueryString(sys->display, EGL_VERSION),
             eglQueryString(sys->display, EGL_VENDOR),
-#ifdef USE_OPENGL_ES2
-            "OpenGL ES2"
-#else
-            "OpenGL"
-#endif
-            );
+            opengl_api == VLC_OPENGL ? "OpenGL" : "OpenGL ES2");
 
     const char *extensions = eglQueryString(sys->display, EGL_EXTENSIONS);
     bool need_surface =
         !vlc_gl_StrHasToken(extensions, "EGL_KHR_surfaceless_context");
 
-    static const EGLint conf_attr_surface[] = {
+    EGLint renderable_type = opengl_api == VLC_OPENGL ? EGL_OPENGL_BIT : EGL_OPENGL_ES2_BIT;
+    const EGLint conf_attr_surface[] = {
         EGL_RED_SIZE, 8,
         EGL_GREEN_SIZE, 8,
         EGL_BLUE_SIZE, 8,
-#ifdef USE_OPENGL_ES2
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-#else
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
-#endif
+        EGL_RENDERABLE_TYPE, renderable_type,
         EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
         EGL_NONE,
     };
 
-    static const EGLint conf_attr_surfaceless[] = {
-#ifdef USE_OPENGL_ES2
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-#else
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
-#endif
+    const EGLint conf_attr_surfaceless[] = {
+        EGL_RENDERABLE_TYPE, renderable_type,
         EGL_NONE,
     };
 
@@ -193,59 +198,31 @@ static int InitEGL(vlc_gl_t *gl, unsigned width, unsigned height)
     else
         sys->surface = EGL_NO_SURFACE;
 
-#ifdef USE_OPENGL_ES2
-    if (eglBindAPI (EGL_OPENGL_ES_API) != EGL_TRUE)
-    {
-        msg_Err (gl, "cannot bind EGL OPENGL ES API");
-        goto error;
-    }
+    EGLint egl_api;
+    if (opengl_api == VLC_OPENGL_ES2)
+        egl_api = EGL_OPENGL_ES_API;
+    else
+        egl_api = EGL_OPENGL_API;
 
-    const GLint ctx_attr[] = {
-        EGL_CONTEXT_CLIENT_VERSION, 2,
-        EGL_NONE
-    };
-#else
-    if (eglBindAPI (EGL_OPENGL_API) != EGL_TRUE)
+    if (eglBindAPI(egl_api) != EGL_TRUE)
     {
         msg_Err (gl, "cannot bind EGL OPENGL API");
         goto error;
     }
 
-    const GLint ctx_attr[] = {
-        EGL_CONTEXT_CLIENT_VERSION, 3,
-        EGL_NONE
-    };
-#endif
+    EGLContext ctx = CreateContext(gl, cfgv[0], 3);
+    if (ctx != EGL_NO_CONTEXT)
+        goto context_created;
 
-    EGLContext ctx
-        = sys->context
-        = eglCreateContext(sys->display, cfgv[0], EGL_NO_CONTEXT, ctx_attr);
+    ctx = CreateContext(gl, cfgv[0], 2);
+    if (ctx != EGL_NO_CONTEXT)
+        goto context_created;
 
-#ifdef USE_OPENGL_ES2
-    if (ctx == EGL_NO_CONTEXT)
-    {
-        msg_Err (gl, "cannot create EGL context");
-        goto error;
-    }
-#else
-    if (ctx == EGL_NO_CONTEXT)
-    {
-        const GLint ctx_attr_fallback[] = {
-            EGL_CONTEXT_CLIENT_VERSION, 2,
-            EGL_NONE
-        };
+    msg_Err (gl, "cannot create EGL context");
+    goto error;
 
-        ctx
-            = sys->context
-            = eglCreateContext(sys->display, cfgv[0], EGL_NO_CONTEXT, ctx_attr_fallback);
-
-        if (ctx == EGL_NO_CONTEXT)
-        {
-            msg_Err (gl, "cannot create EGL context");
-            goto error;
-        }
-    }
-#endif
+context_created:
+    sys->context = ctx;
 
     return VLC_SUCCESS;
 error:
@@ -417,7 +394,7 @@ static int Open(vlc_gl_t *gl, unsigned width, unsigned height,
 
     gl->sys = sys;
 
-    if (InitEGL(gl, width, height) != VLC_SUCCESS)
+    if (InitEGL(gl, gl->api_type, width, height) != VLC_SUCCESS)
     {
         msg_Err(gl, "Failed to create opengl context\n");
         goto error1;
@@ -432,14 +409,18 @@ static int Open(vlc_gl_t *gl, unsigned width, unsigned height,
         .close = Close,
     };
     gl->ops = &gl_ops;
-    gl->offscreen_vflip = true;
+    gl->orientation = ORIENT_VFLIPPED;
 
-    vlc_gl_MakeCurrent(gl);
+    eglMakeCurrent(sys->display, sys->surface, sys->surface,
+                   sys->context);
+
+
     int ret = vlc_gl_api_Init(&sys->api, gl);
     if (ret != VLC_SUCCESS)
     {
         msg_Err(gl, "Failed to initialize gl_api");
-        vlc_gl_ReleaseCurrent(gl);
+        eglMakeCurrent(sys->display, sys->surface, sys->surface,
+                       EGL_NO_CONTEXT);
         goto error2;
     }
 
@@ -471,8 +452,8 @@ static int Open(vlc_gl_t *gl, unsigned width, unsigned height,
 
     sys->current_flip = BUFFER_COUNT - 1;
     BindDrawFramebuffer(sys);
-
-    vlc_gl_ReleaseCurrent(gl);
+    eglMakeCurrent(sys->display, sys->surface, sys->surface,
+                   EGL_NO_CONTEXT);
 
     return VLC_SUCCESS;
 
@@ -486,12 +467,11 @@ error1:
 }
 
 vlc_module_begin()
+    add_shortcut( "egl_pbuffer" )
     set_shortname( N_("egl_pbuffer") )
     set_description( N_("EGL PBuffer offscreen opengl provider") )
-#ifdef USE_OPENGL_ES2
-    set_callback_opengl_es2_offscreen( Open, 1 )
-#else
     set_callback_opengl_offscreen( Open, 1 )
-#endif
-    add_shortcut( "egl_pbuffer" )
+
+    add_submodule()
+    set_callback_opengl_es2_offscreen( Open, 1 )
 vlc_module_end()

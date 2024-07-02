@@ -50,13 +50,14 @@ endif
 if have_osx
     vlc_modules += {
         'name' : 'auhal',
-        'sources' : files('auhal.c', 'coreaudio_common.c'),
+        'sources' : files('apple/auhal.c', 'apple/coreaudio_common.c',
+                          'apple/channel_layout.c'),
         'dependencies' : [
-            corefoundation_dep,
-            audiounit_dep,
-            audiotoolbox_dep,
-            coreaudio_dep,
-        ]
+            frameworks['CoreFoundation'],
+            frameworks['AudioUnit'],
+            frameworks['AudioToolbox'],
+            frameworks['CoreAudio'],
+        ],
     }
 endif
 
@@ -64,12 +65,36 @@ endif
 if have_ios or have_tvos
     vlc_modules += {
         'name' : 'audiounit_ios',
-        'sources' : files('audiounit_ios.m', 'coreaudio_common.c'),
+        'sources' : files('apple/audiounit_ios.m', 'apple/coreaudio_common.c',
+                          'apple/channel_layout.c', 'apple/avaudiosession_common.m'),
         'dependencies' : [
-            foundation_dep,
-            avfoundation_dep,
-            audiotoolbox_dep,
-            coreaudio_dep,
-        ]
+            frameworks['Foundation'],
+            frameworks['AVFoundation'],
+            frameworks['AudioToolbox'],
+            frameworks['CoreAudio'],
+        ],
+    }
+endif
+
+if have_osx or have_ios or have_tvos
+    avsamplebuffer_sources = files(
+        'apple/avsamplebuffer.m',
+        'apple/channel_layout.c',
+    )
+    if have_ios or have_tvos
+        avsamplebuffer_sources += files(
+            'apple/avaudiosession_common.m',
+        )
+    endif
+
+    vlc_modules += {
+        'name' : 'avsamplebuffer',
+        'sources' : avsamplebuffer_sources,
+        'dependencies' : [
+            frameworks['CoreMedia'],
+            frameworks['Foundation'],
+            frameworks['AVFoundation'],
+        ],
+        'objc_args' : ['-fobjc-arc']
     }
 endif

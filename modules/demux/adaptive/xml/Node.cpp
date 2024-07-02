@@ -28,6 +28,7 @@
 #include "Node.h"
 
 #include <cassert>
+#include <algorithm>
 #include <vlc_common.h>
 #include <vlc_xml.h>
 
@@ -35,10 +36,17 @@ using namespace adaptive::xml;
 
 const std::string   Node::EmptyString = "";
 
-Node::Node() :
-    type( -1 )
+bool Node::Attribute::matches(const std::string &name, const std::string &ns) const
 {
+    return *this->ns == ns && this->name == name;
 }
+
+Node::Node(std::unique_ptr<std::string> name, Namespaces::Ptr ns)
+{
+    this->name = std::move(name);
+    this->ns = ns;
+}
+
 Node::~Node ()
 {
     for(size_t i = 0; i < this->subNodes.size(); i++)
@@ -55,43 +63,51 @@ void                                Node::addSubNode            (Node *node)
 }
 const std::string&                  Node::getName               () const
 {
-    return this->name;
-}
-void                                Node::setName               (const std::string& name)
-{
-    this->name = name;
+    return *name;
 }
 
-bool                                Node::hasAttribute        (const std::string& name) const
+const std::string & Node::getNamespace() const
 {
-    if(this->attributes.find(name) != this->attributes.end())
-        return true;
-
-    return false;
-}
-const std::string&                  Node::getAttributeValue     (const std::string& key) const
-{
-    std::map<std::string, std::string>::const_iterator  it = this->attributes.find( key );
-
-    if ( it != this->attributes.end() )
-        return it->second;
+    if(ns != nullptr)
+        return *ns;
     return EmptyString;
 }
 
-void                                Node::addAttribute          ( const std::string& key, const std::string& value)
+bool Node::hasAttribute(const std::string& name) const
 {
-    this->attributes[key] = value;
+    return hasAttribute(name, EmptyString);
 }
-std::vector<std::string>            Node::getAttributeKeys      () const
-{
-    std::vector<std::string> keys;
-    std::map<std::string, std::string>::const_iterator it;
 
-    for(it = this->attributes.begin(); it != this->attributes.end(); ++it)
-    {
-        keys.push_back(it->first);
-    }
-    return keys;
+bool Node::hasAttribute(const std::string& name, const std::string &ns) const
+{
+    auto it = std::find_if(attributes.cbegin(),attributes.cend(),
+                           [name, ns](const class Attribute &a)
+                                {return a.name == name && ns == *a.ns;});
+    return it != attributes.cend();
+}
+
+const std::string& Node::getAttributeValue(const std::string& key) const
+{
+    return getAttributeValue(key, EmptyString);
+}
+
+const std::string& Node::getAttributeValue(const std::string& key, const std::string &ns) const
+{
+    auto it = std::find_if(attributes.cbegin(),attributes.cend(),
+                           [key, ns](const class Attribute &a)
+                                {return a.name == key && ns == *a.ns;});
+    if (it != attributes.cend())
+        return (*it).value;
+    return EmptyString;
+}
+
+void Node::addAttribute(const std::string& key, Namespaces::Ptr ns, const std::string& value)
+{
+    class Attribute attr;
+    attr.name = key;
+    attr.ns = ns;
+    attr.value = value;
+    attributes.push_back(std::move(attr));
 }
 
 const std::string&                         Node::getText               () const
@@ -104,32 +120,12 @@ void Node::setText(const std::string &text)
     this->text = text;
 }
 
-const std::map<std::string,std::string>&   Node::getAttributes         () const
+const Node::Attributes& Node::getAttributes() const
 {
     return this->attributes;
 }
 
-int Node::getType() const
+bool Node::matches(const std::string &name, const std::string &ns) const
 {
-    return this->type;
-}
-
-void Node::setType(int type)
-{
-    this->type = type;
-}
-
-std::vector<std::string> Node::toString(int indent) const
-{
-    std::vector<std::string> ret;
-    std::string text(indent, ' ');
-    text.append(getName());
-    ret.push_back(text);
-    std::vector<Node *>::const_iterator l;
-    for(l = subNodes.begin(); l < subNodes.end(); ++l)
-    {
-        std::vector<std::string> sub = (*l)->toString(indent + 1);
-        ret.insert(ret.end(), sub.begin(), sub.end());
-    }
-    return ret;
+    return *this->ns == ns && *this->name == name;
 }

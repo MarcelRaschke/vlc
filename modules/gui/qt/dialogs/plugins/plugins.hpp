@@ -26,9 +26,6 @@
 #include "widgets/native/qvlcframe.hpp"
 #include "util/singleton.hpp"
 
-#include <vlc_extensions.h>
-#include <vlc_addons.h>
-
 #include <QStringList>
 #include <QTreeWidgetItem>
 #include <QPushButton>
@@ -58,6 +55,10 @@ class AddonsManager;
 class PixmapAnimator;
 class DelegateAnimationHelper;
 class AddonsSortFilterProxyModel;
+
+extern "C" {
+    typedef struct extension_t extension_t;
+};
 
 class PluginDialog : public QVLCFrame, public Singleton<PluginDialog>
 {

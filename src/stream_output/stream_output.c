@@ -33,6 +33,8 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
+#include <vlc_configuration.h>
 
 #include <stdlib.h>                                                /* free() */
 #include <stdio.h>                                              /* sprintf() */
@@ -44,6 +46,7 @@
 
 #include <vlc_meta.h>
 #include <vlc_block.h>
+#include <vlc_frame.h>
 #include <vlc_codec.h>
 #include <vlc_modules.h>
 
@@ -119,7 +122,8 @@ struct sout_packetizer_input_t
 };
 
 sout_packetizer_input_t *sout_InputNew( sout_stream_t *p_sout,
-                                        const es_format_t *p_fmt )
+                                        const es_format_t *p_fmt,
+                                        const char *es_id)
 {
     sout_packetizer_input_t *p_input;
 
@@ -133,7 +137,7 @@ sout_packetizer_input_t *sout_InputNew( sout_stream_t *p_sout,
             (char *)&p_fmt->i_codec, (void *)p_input);
 
     /* *** add it to the stream chain */
-    p_input->id = sout_StreamIdAdd( p_sout, p_fmt );
+    p_input->id = sout_StreamIdAdd( p_sout, p_fmt, es_id);
 
     if( p_input->id == NULL )
     {
@@ -166,8 +170,9 @@ static int sout_InputControlVa( sout_stream_t *p_sout,
 {
     if( i_query == SOUT_INPUT_SET_SPU_HIGHLIGHT )
     {
+        const vlc_spu_highlight_t *spu_hl = va_arg( args, const vlc_spu_highlight_t * );
         return sout_StreamControl( p_sout, SOUT_STREAM_ID_SPU_HIGHLIGHT,
-                                   p_input->id, va_arg(args, void *) );
+                                   p_input->id, spu_hl );
     }
     return VLC_EGENERIC;
 }
@@ -196,14 +201,14 @@ void sout_InputFlush( sout_stream_t *p_sout,
  *****************************************************************************/
 int sout_InputSendBuffer( sout_stream_t *p_sout,
                           sout_packetizer_input_t *p_input,
-                          block_t *p_buffer )
+                          vlc_frame_t *frame )
 {
     if( p_input->b_flushed )
     {
-        p_buffer->i_flags |= BLOCK_FLAG_DISCONTINUITY;
+        frame->i_flags |= VLC_FRAME_FLAG_DISCONTINUITY;
         p_input->b_flushed = false;
     }
-    return sout_StreamIdSend( p_sout, p_input->id, p_buffer );
+    return sout_StreamIdSend( p_sout, p_input->id, frame );
 }
 
 #undef sout_AccessOutNew
@@ -437,8 +442,7 @@ void sout_MuxDeleteStream( sout_mux_t *p_mux, sout_input_t *p_input )
 {
     int i_index;
 
-    if( p_mux->b_waiting_stream
-     && block_FifoCount( p_input->p_fifo ) > 0 )
+    if( p_mux->b_waiting_stream )
     {
         /* We stop waiting, and call the muxer for taking care of the data
          * before we remove this es */
@@ -677,7 +681,6 @@ static void mrl_Clean( mrl_t *p_mrl )
 struct sout_stream_private {
     sout_stream_t stream;
     vlc_mutex_t lock;
-    module_t *module;
 };
 
 #define sout_stream_priv(s) \
@@ -693,12 +696,14 @@ static void sout_StreamUnlock(sout_stream_t *s)
     vlc_mutex_unlock(&sout_stream_priv(s)->lock);
 }
 
-void *sout_StreamIdAdd(sout_stream_t *s, const es_format_t *fmt)
+void *sout_StreamIdAdd(sout_stream_t *s, const es_format_t *fmt, const char *es_id)
 {
     void *id;
 
+    assert(es_id != NULL);
+
     sout_StreamLock(s);
-    id = s->ops->add(s, fmt);
+    id = s->ops->add(s, fmt, es_id);
     sout_StreamUnlock(s);
     return id;
 }
@@ -710,12 +715,14 @@ void sout_StreamIdDel(sout_stream_t *s, void *id)
     sout_StreamUnlock(s);
 }
 
-int sout_StreamIdSend(sout_stream_t *s, void *id, block_t *b)
+int sout_StreamIdSend(sout_stream_t *s, void *id, vlc_frame_t *f)
 {
     int val;
 
+    assert(f->p_next == NULL);
+
     sout_StreamLock(s);
-    val = s->ops->send(s, id, b);
+    val = s->ops->send(s, id, f);
     sout_StreamUnlock(s);
     return val;
 }
@@ -756,20 +763,19 @@ int sout_StreamControlVa(sout_stream_t *s, int i_query, va_list args)
 /* Destroy a "stream_out" module */
 static void sout_StreamDelete( sout_stream_t *p_stream )
 {
-    struct sout_stream_private *priv = sout_stream_priv(p_stream);
     char *psz_name = p_stream->psz_name;
 
     msg_Dbg( p_stream, "destroying chain... (name=%s)", psz_name ? psz_name
                                                                  : "(null)" );
-
-    if (priv->module != NULL)
-        module_unneed(p_stream, priv->module);
+    if (p_stream->ops != NULL && p_stream->ops->close != NULL)
+        p_stream->ops->close(p_stream);
 
     FREENULL( p_stream->psz_name );
 
     config_ChainDestroy( p_stream->p_cfg );
 
     msg_Dbg( p_stream, "destroying chain done" );
+    vlc_objres_clear(VLC_OBJECT(p_stream));
     vlc_object_delete(p_stream);
 }
 
@@ -786,15 +792,21 @@ void sout_ClockMainDelete( vlc_clock_main_t *main_clock )
 
 void sout_ClockMainSetFirstPcr( vlc_clock_main_t *main_clock, vlc_tick_t pcr )
 {
+    vlc_clock_main_Lock( main_clock );
     vlc_clock_main_Reset( main_clock );
     vlc_clock_main_SetFirstPcr( main_clock, vlc_tick_now(), pcr );
+    vlc_clock_main_Unlock( main_clock );
 }
 
 vlc_clock_t *sout_ClockCreate( vlc_clock_main_t *main_clock,
                                const es_format_t *fmt )
 {
-    return vlc_clock_main_CreateSlave( main_clock, NULL, fmt->i_cat,
-                                       NULL, NULL );
+    vlc_clock_main_Lock( main_clock );
+    vlc_clock_t *clock =
+        vlc_clock_main_CreateSlave( main_clock, NULL, fmt->i_cat,
+                                    NULL, NULL );
+    vlc_clock_main_Unlock( main_clock );
+    return clock;
 }
 
 void sout_ClockDelete( vlc_clock_t *clock )
@@ -820,36 +832,63 @@ void sout_StreamChainDelete(sout_stream_t *p_first, sout_stream_t *end)
     }
 }
 
-/* Create a "stream_out" module, which may forward its ES to p_next module */
-/*
- * XXX name and p_cfg are used (-> do NOT free them)
- */
-static sout_stream_t *sout_StreamNew( vlc_object_t *parent, char *psz_name,
-                               config_chain_t *p_cfg, sout_stream_t *p_next)
+static sout_stream_t *sout_StreamNewEmpty(vlc_object_t *parent, char *name)
 {
-    const char *cap = (p_next != NULL) ? "sout filter" : "sout output";
-    struct sout_stream_private *priv;
-    sout_stream_t *p_stream;
+    assert(name != NULL);
 
-    assert(psz_name);
-
-    priv = vlc_custom_create(parent, sizeof (*priv), "stream out");
+    struct sout_stream_private *priv =
+        vlc_custom_create(parent, sizeof(*priv), "stream out");
     if (unlikely(priv == NULL))
         return NULL;
 
     vlc_mutex_init(&priv->lock);
-    p_stream = &priv->stream;
-    p_stream->psz_name = psz_name;
+    priv->stream.psz_name = name;
+    priv->stream.p_cfg = NULL;
+    priv->stream.p_next = NULL;
+    priv->stream.ops = NULL;
+    priv->stream.p_sys = NULL;
+
+    return &priv->stream;
+}
+
+sout_stream_t *sout_StreamNew(vlc_object_t *parent, const char *config)
+{
+    assert(config != NULL);
+
+    char *name;
+    config_chain_t *parsed_conf;
+    char *leftover = config_ChainCreate(&name, &parsed_conf, config);
+    free(leftover);
+
+    sout_stream_t *stream = sout_StreamNewEmpty(parent, name);
+    if (unlikely(stream == NULL))
+        return NULL;
+
+    stream->p_cfg = parsed_conf;
+
+    return stream;
+}
+
+/* Create a "stream_out" module, which may forward its ES to p_next module */
+/*
+ * XXX name and p_cfg are used (-> do NOT free them)
+ */
+static sout_stream_t *sout_StreamNewModule( vlc_object_t *parent, char *psz_name,
+                               config_chain_t *p_cfg, sout_stream_t *p_next)
+{
+    const char *cap = (p_next != NULL) ? "sout filter" : "sout output";
+
+    sout_stream_t *p_stream = sout_StreamNewEmpty(parent, psz_name);
+    if (unlikely(p_stream == NULL))
+        return NULL;
+
     p_stream->p_cfg    = p_cfg;
     p_stream->p_next   = p_next;
-    p_stream->ops = NULL;
-    p_stream->p_sys = NULL;
 
     msg_Dbg( p_stream, "stream=`%s'", p_stream->psz_name );
 
-    priv->module = module_need(p_stream, cap, p_stream->psz_name, true);
-
-    if (priv->module == NULL)
+    module_t *module = module_need(p_stream, cap, p_stream->psz_name, true);
+    if (module == NULL)
     {
         /* those must be freed by the caller if creation failed */
         p_stream->psz_name = NULL;
@@ -862,14 +901,6 @@ static sout_stream_t *sout_StreamNew( vlc_object_t *parent, char *psz_name,
     return p_stream;
 }
 
-/* Creates a complete "stream_out" modules chain
- *
- *  chain format: module1{option=*:option=*}[:module2{option=*:...}]
- *
- *  The modules are created starting from the last one and linked together
- *
- *  Returns a pointer to the first module.
- */
 sout_stream_t *sout_StreamChainNew(vlc_object_t *parent, const char *psz_chain,
                                    sout_stream_t *sink)
 {
@@ -907,8 +938,10 @@ sout_stream_t *sout_StreamChainNew(vlc_object_t *parent, const char *psz_chain,
     {
         sout_stream_t *prev;
 
-        prev = sout_StreamNew(parent, vlc_array_item_at_index(&name, i),
-                              vlc_array_item_at_index(&cfg, i), front);
+        prev = sout_StreamNewModule(parent,
+                                    vlc_array_item_at_index(&name, i),
+                                    vlc_array_item_at_index(&cfg, i),
+                                    front);
         if (prev == NULL)
             goto error;
 

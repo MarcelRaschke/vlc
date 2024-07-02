@@ -37,8 +37,6 @@
 #include "ui_sprefs_interface.h"
 #include "ui_sprefs_medialibrary.h"
 
-#include <vlc_media_library.h>
-
 class MLFoldersEditor;
 
 #ifdef _WIN32
@@ -46,6 +44,10 @@ class MLFoldersEditor;
 #endif
 
 #include <QWidget>
+class QLineEdit;
+class QLabel;
+class QPushButton;
+class QAbstractButton;
 
 enum {
     SPrefsInterface = 0,
@@ -80,7 +82,7 @@ class SPrefsCatList : public QWidget
     Q_OBJECT
 public:
     SPrefsCatList( qt_intf_t *, QWidget * );
-    virtual ~SPrefsCatList() {};
+    virtual ~SPrefsCatList() {}
 private:
     qt_intf_t *p_intf;
 signals:
@@ -101,14 +103,39 @@ public:
 #endif
 
 private:
+    template<typename ControlType, typename WidgetType>
+    void configGeneric(const char* option, QLabel* label, WidgetType* control);
+    template<typename ControlType, typename WidgetType>
+    void configGenericNoUi(const char* option, QLabel* label, WidgetType* control);
+    void configBool(const char* option, QAbstractButton* control);
+    template<typename T>
+    void configGenericFile(const char* option, QLabel* label, QLineEdit* control, QPushButton* button);
+
+
+private:
     qt_intf_t *p_intf;
     QList<ConfigControl *> controls;
 
     int number;
 
-    QHash<QString, QWidget*> optionWidgets;
+    struct AudioControlGroup {
+        AudioControlGroup(QLabel* label, QWidget* widget, QPushButton* button = nullptr)
+            : label(label)
+            , widget(widget)
+            , button(button)
+        {
+        }
+
+        AudioControlGroup() {}
+
+        QLabel* label = nullptr;
+        QWidget* widget = nullptr;
+        QPushButton* button = nullptr;
+    };
+    QHash<QString, AudioControlGroup> audioControlGroups;
     QStringList qs_filter;
     QButtonGroup *radioGroup;
+    QButtonGroup *layoutImages;
 
     char *lang;
     MLFoldersEditor *mlFoldersEditor {};
@@ -124,12 +151,22 @@ private:
     bool m_isApplied = false;
     std::vector<std::unique_ptr<class PropertyResetter>> m_resetters;
 
+    Ui::SPrefsInterface m_interfaceUI;
+    Ui::SPrefsVideo m_videoUI;
+    Ui::SPrefsAudio m_audioUI;
+    Ui::SPrefsInputAndCodecs m_inputCodecUI;
+    Ui::SPrefsSubtitles m_subtitlesUI;
+    Ui::SPrefsMediaLibrary m_medialibUI;
+
 /* Display only the options for the selected audio output */
 private slots:
     void lastfm_Changed( int );
     void updateAudioOptions( int );
     void updateAudioVolume( int );
     void langChanged( int );
+    void imageLayoutClick( QAbstractButton* );
+    void handleLayoutChange( int );
+    void updateLayoutSelection();
 #ifdef _WIN32
     void assoDialog();
     void updateCheckBoxes( QTreeWidgetItem*, int );

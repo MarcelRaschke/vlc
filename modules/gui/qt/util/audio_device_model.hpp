@@ -21,12 +21,13 @@
 
 #include <QAbstractListModel>
 
-#ifdef HAVE_CONFIG_H
-# include "config.h"
-#endif
-
 #include "qt.hpp"
-#include <vlc_aout.h>
+
+extern "C" {
+    typedef struct vlc_player_aout_listener_id vlc_player_aout_listener_id;
+    typedef struct audio_output audio_output_t;
+    typedef struct vlc_player_t vlc_player_t;
+}
 
 class AudioDeviceModel : public QAbstractListModel
 {
@@ -37,13 +38,13 @@ public:
 
     ~AudioDeviceModel();
 
-    virtual Qt::ItemFlags flags(const QModelIndex &) const  override;
+    Qt::ItemFlags flags(const QModelIndex &) const  override;
 
-    virtual int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
 
-    virtual QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
 
-    virtual bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
+    bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
 
     void updateCurrent(QString current);
 

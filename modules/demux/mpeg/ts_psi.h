@@ -29,9 +29,15 @@ typedef enum
     TS_PMT_REGISTRATION_ARIB,
 } ts_pmt_registration_type_t;
 
+typedef struct ts_psi_context_t ts_psi_context_t;
+
+ts_psi_context_t * ts_psi_context_New( demux_t * );
+void ts_psi_context_Delete( ts_psi_context_t * );
+
 bool ts_psi_PAT_Attach( ts_pid_t *, void * );
 void ts_psi_Packet_Push( ts_pid_t *, const uint8_t * );
 
 int UserPmt( demux_t *p_demux, const char * );
+void SendCAPMTUpdate( demux_t *, const ts_pmt_t * );
 
 #endif

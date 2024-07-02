@@ -39,6 +39,8 @@ static void test_vector_insert_remove(void)
     assert(ok);
     assert(vec.data[0] == 42);
     assert(vec.size == 1);
+    assert(vlc_vector_last(&vec) == 42);
+    assert(*vlc_vector_last_ref(&vec) == 42);
 
     ok = vlc_vector_push(&vec, 37);
     assert(ok);
@@ -66,6 +68,8 @@ static void test_vector_insert_remove(void)
     assert(vec.data[0] == 42);
     assert(vec.data[1] == 37);
     assert(vec.data[2] == 77);
+    assert(vlc_vector_last(&vec) == 77);
+    assert(*vlc_vector_last_ref(&vec) == 77);
 
     vlc_vector_clear(&vec);
     assert(vec.size == 0);
@@ -87,9 +91,15 @@ static void test_vector_push_array(void)
 
     int items[] = { 1, 2, 3, 4, 5, 6, 7, 8 };
     ok = vlc_vector_push_all(&vec, items, 8);
-
     assert(ok);
-    assert(vec.size == 13);
+
+    int items_hole[] = { 7, 6, 5, 4, 3, 2, 1, 0 };
+    ok = vlc_vector_push_hole(&vec, 8);
+    assert(ok);
+    for (size_t i = 0; i < 8; ++i)
+        vec.data[vec.size-8+i] = items_hole[i];
+
+    assert(vec.size == 21);
     assert(vec.data[0] == 3);
     assert(vec.data[1] == 14);
     assert(vec.data[2] == 15);
@@ -103,6 +113,14 @@ static void test_vector_push_array(void)
     assert(vec.data[10] == 6);
     assert(vec.data[11] == 7);
     assert(vec.data[12] == 8);
+    assert(vec.data[13] == 7);
+    assert(vec.data[14] == 6);
+    assert(vec.data[15] == 5);
+    assert(vec.data[16] == 4);
+    assert(vec.data[17] == 3);
+    assert(vec.data[18] == 2);
+    assert(vec.data[19] == 1);
+    assert(vec.data[20] == 0);
 
     vlc_vector_destroy(&vec);
 }
@@ -239,10 +257,19 @@ static void test_vector_foreach(void)
     }
     assert(count == 10);
 
+    count = 0;
+    const int *ref;
+    vlc_vector_foreach_ref(ref, &vec)
+    {
+        assert(*ref == count);
+        assert(ref == &vec.data[count]);
+        count++;
+    }
+
     vlc_vector_destroy(&vec);
 }
 
-static void test_vector_grow()
+static void test_vector_grow(void)
 {
     struct VLC_VECTOR(int) vec = VLC_VECTOR_INITIALIZER;
 

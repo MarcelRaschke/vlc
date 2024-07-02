@@ -33,6 +33,7 @@
 #include <math.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_list.h>
 #include <vlc_subpicture.h>
 #include <vlc_opengl.h>
@@ -100,7 +101,7 @@ CreateFilters(vlc_gl_t *gl, const struct vlc_gl_api *api,
               struct vlc_gl_interop *interop,
               struct vlc_gl_renderer **out_renderer)
 {
-    struct vlc_gl_filters *filters = vlc_gl_filters_New(gl, api, interop);
+    struct vlc_gl_filters *filters = vlc_gl_filters_New(gl, api, interop, gl->orientation);
     if (!filters)
     {
         msg_Err(gl, "Could not create filters");
@@ -252,7 +253,8 @@ vout_display_opengl_t *vout_display_opengl_New(video_format_t *fmt,
 
     /* Forward to the core the changes to the input format requested by the
      * interop */
-    *fmt = vgl->interop->fmt_in;
+    video_format_Clean(fmt);
+    video_format_Copy(fmt, &vgl->interop->fmt_in);
 
     if (subpicture_chromas) {
         *subpicture_chromas = gl_subpicture_chromas;
@@ -261,8 +263,6 @@ vout_display_opengl_t *vout_display_opengl_New(video_format_t *fmt,
     GL_ASSERT_NOERROR(vt);
     return vgl;
 
-delete_sub_renderer:
-    vlc_gl_sub_renderer_Delete(vgl->sub_renderer);
 delete_sub_interop:
     vlc_gl_interop_Delete(vgl->sub_interop);
 delete_filters:
@@ -295,7 +295,7 @@ int vout_display_opengl_UpdateFormat(vout_display_opengl_t *vgl,
         return VLC_EGENERIC;
     }
 
-    if (in_fmt.i_chroma != fmt->i_chroma)
+    if ( !video_format_IsSameChroma( &in_fmt, fmt ) )
     {
         msg_Warn(gl, "Could not update format, the interop changed the "
                      "requested chroma from %4.4s to %4.4s\n",
@@ -358,6 +358,7 @@ void vout_display_opengl_SetOutputSize(vout_display_opengl_t *vgl,
     /* The renderer, last filter in the chain, necessarily accepts the new
      * output size */
     assert(ret == VLC_SUCCESS);
+    vlc_gl_sub_renderer_SetOutputSize(vgl->sub_renderer, width, height);
     (void) ret;
 }
 
@@ -368,7 +369,8 @@ void vout_display_opengl_Viewport(vout_display_opengl_t *vgl, int x, int y,
 }
 
 int vout_display_opengl_Prepare(vout_display_opengl_t *vgl,
-                                picture_t *picture, subpicture_t *subpicture)
+                                picture_t *picture,
+                                const vlc_render_subpicture *subpicture)
 {
     GL_ASSERT_NOERROR(&vgl->api.vt);
 

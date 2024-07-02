@@ -15,11 +15,14 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
+import QtQuick.Layouts
 
+import org.videolan.vlc 0.1
+
+import "."
 import "qrc:///style/"
 
 
@@ -36,8 +39,12 @@ T.Button {
 
     padding: 0
     width: VLCStyle.dp(40, VLCStyle.scale)
-    implicitWidth: contentItem.implicitWidth
-    implicitHeight: contentItem.implicitHeight
+
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            implicitContentWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             implicitContentHeight + topPadding + bottomPadding)
+
     focusPolicy: Qt.NoFocus
 
     background: Rectangle {
@@ -60,6 +67,20 @@ T.Button {
             id: icon
             anchors.centerIn: parent
             text: control.iconTxt
+
+            font.family:{
+                if (MainCtx.osName === MainCtx.Windows)
+                {
+                    if(MainCtx.osVersion === 10)
+                        return "Segoe MDL2 Assets"
+
+                    else if(MainCtx.osVersion >= 11)
+                        return "Segoe Fluent Icons"
+                }
+     
+                return VLCIcons.fontFamily
+            }
+
             font.pixelSize: VLCStyle.icon_CSD
             color: control.color
         }

@@ -73,7 +73,6 @@ typedef struct
     packetizer_t packetizer;
 
     /* */
-    bool    b_slice;
     struct
     {
         block_t *p_head;
@@ -109,8 +108,8 @@ typedef struct
     uint8_t i_dpb_output_delay;
     unsigned i_recovery_frame_cnt;
 
-    /* Useful values of the Slice Header */
-    h264_slice_t slice;
+    /* Current Slice Header */
+    h264_slice_t *p_slice;
 
     /* */
     int i_next_block_flags;
@@ -152,50 +151,43 @@ static block_t * PacketizeDrain( void *p_private );
 static block_t *ParseNALBlock( decoder_t *, bool *pb_ts_used, block_t * );
 
 static block_t *OutputPicture( decoder_t *p_dec );
-static void PutSPS( decoder_t *p_dec, block_t *p_frag );
-static void PutPPS( decoder_t *p_dec, block_t *p_frag );
-static void PutSPSEXT( decoder_t *p_dec, block_t *p_frag );
-static bool ParseSliceHeader( decoder_t *p_dec, const block_t *p_frag, h264_slice_t *p_slice );
+static void ReleaseXPS( decoder_sys_t *p_sys );
+static bool PutXPS( decoder_t *p_dec, uint8_t i_nal_type, block_t *p_frag );
+static h264_slice_t * ParseSliceHeader( decoder_t *p_dec, const block_t *p_frag );
 static bool ParseSeiCallback( const hxxx_sei_data_t *, void * );
 
 
-static const uint8_t p_h264_startcode[3] = { 0x00, 0x00, 0x01 };
 
 /*****************************************************************************
  * Helpers
  *****************************************************************************/
-
-static void StoreSPS( decoder_sys_t *p_sys, uint8_t i_id,
-                      block_t *p_block, h264_sequence_parameter_set_t *p_sps )
+static void LastAppendXPSCopy( const block_t *p_block, block_t ***ppp_last )
 {
-    if( p_sys->sps[i_id].p_block )
-        block_Release( p_sys->sps[i_id].p_block );
-    if( p_sys->sps[i_id].p_sps )
-        h264_release_sps( p_sys->sps[i_id].p_sps );
-    if( p_sys->sps[i_id].p_sps == p_sys->p_active_sps )
-        p_sys->p_active_sps = NULL;
-    p_sys->sps[i_id].p_block = p_block;
-    p_sys->sps[i_id].p_sps = p_sps;
+    if( !p_block )
+        return;
+    block_t *p_dup = block_Alloc( 4 + p_block->i_buffer );
+    if( p_dup )
+    {
+        memcpy( &p_dup->p_buffer[0], annexb_startcode4, 4 );
+        memcpy( &p_dup->p_buffer[4], p_block->p_buffer, p_block->i_buffer );
+        block_ChainLastAppend( ppp_last, p_dup );
+    }
 }
 
-static void StorePPS( decoder_sys_t *p_sys, uint8_t i_id,
-                      block_t *p_block, h264_picture_parameter_set_t *p_pps )
+static block_t * GatherSets( decoder_sys_t *p_sys, bool b_need_sps, bool b_need_pps )
 {
-    if( p_sys->pps[i_id].p_block )
-        block_Release( p_sys->pps[i_id].p_block );
-    if( p_sys->pps[i_id].p_pps )
-        h264_release_pps( p_sys->pps[i_id].p_pps );
-    if( p_sys->pps[i_id].p_pps == p_sys->p_active_pps )
-        p_sys->p_active_pps = NULL;
-    p_sys->pps[i_id].p_block = p_block;
-    p_sys->pps[i_id].p_pps = p_pps;
-}
-
-static void StoreSPSEXT( decoder_sys_t *p_sys, uint8_t i_id, block_t *p_block )
-{
-    if( p_sys->spsext[i_id].p_block )
-        block_Release( p_sys->spsext[i_id].p_block );
-    p_sys->spsext[i_id].p_block = p_block;
+    block_t *p_xpsnal = NULL;
+    block_t **pp_xpsnal_tail = &p_xpsnal;
+    for( int i = 0; i <= H264_SPS_ID_MAX && b_need_sps; i++ )
+    {
+        LastAppendXPSCopy( p_sys->sps[i].p_block, &pp_xpsnal_tail );
+        /* 7.4.1.2.3,  shall be the next NAL unit after a sequence parameter set NAL unit
+         * having the same value of seq_parameter_set_id */
+        LastAppendXPSCopy( p_sys->spsext[i].p_block, &pp_xpsnal_tail );
+    }
+    for( int i = 0; i < H264_PPS_ID_MAX && b_need_pps; i++ )
+        LastAppendXPSCopy( p_sys->pps[i].p_block, &pp_xpsnal_tail );
+    return p_xpsnal;
 }
 
 static void ActivateSets( decoder_t *p_dec, const h264_sequence_parameter_set_t *p_sps,
@@ -208,39 +200,39 @@ static void ActivateSets( decoder_t *p_dec, const h264_sequence_parameter_set_t 
 
     if( p_sps )
     {
-        p_dec->fmt_out.i_profile = p_sps->i_profile;
-        p_dec->fmt_out.i_level = p_sps->i_level;
+        uint8_t pl[2];
+        if( h264_get_sps_profile_tier_level( p_sps, pl, &pl[1] ) )
+        {
+            p_dec->fmt_out.i_profile = pl[0];
+            p_dec->fmt_out.i_level = pl[1];
+        }
 
-        (void) h264_get_picture_size( p_sps, &p_dec->fmt_out.video.i_width,
+        (void) h264_get_picture_size( p_sps,
+                                      &p_dec->fmt_out.video.i_x_offset,
+                                      &p_dec->fmt_out.video.i_y_offset,
+                                      &p_dec->fmt_out.video.i_width,
                                       &p_dec->fmt_out.video.i_height,
                                       &p_dec->fmt_out.video.i_visible_width,
                                       &p_dec->fmt_out.video.i_visible_height );
 
-        if( p_sps->vui.i_sar_num != 0 && p_sps->vui.i_sar_den != 0 )
-        {
-            p_dec->fmt_out.video.i_sar_num = p_sps->vui.i_sar_num;
-            p_dec->fmt_out.video.i_sar_den = p_sps->vui.i_sar_den;
-        }
+        h264_get_aspect_ratio( p_sps,
+                              &p_dec->fmt_out.video.i_sar_num,
+                              &p_dec->fmt_out.video.i_sar_den );
 
         if( !p_dec->fmt_out.video.i_frame_rate ||
             !p_dec->fmt_out.video.i_frame_rate_base )
         {
             /* on first run == if fmt_in does not provide frame rate info */
             /* If we have frame rate info in the stream */
-            if(p_sps->vui.b_valid &&
-               p_sps->vui.i_num_units_in_tick > 0 &&
-               p_sps->vui.i_time_scale > 1 )
-            {
-                date_Change( &p_sys->dts, p_sps->vui.i_time_scale,
-                                          p_sps->vui.i_num_units_in_tick );
-            }
+            unsigned nd[2];
+            if( h264_get_frame_rate( p_sps, nd, &nd[1] ) )
+                date_Change( &p_sys->dts, nd[0], nd[1] );
             /* else use the default num/den */
             p_dec->fmt_out.video.i_frame_rate = p_sys->dts.i_divider_num >> 1; /* num_clock_ts == 2 */
             p_dec->fmt_out.video.i_frame_rate_base = p_sys->dts.i_divider_den;
         }
 
-        if( p_dec->fmt_in->video.primaries == COLOR_PRIMARIES_UNDEF &&
-            p_sps->vui.b_valid )
+        if( p_dec->fmt_in->video.primaries == COLOR_PRIMARIES_UNDEF )
         {
             h264_get_colorimetry( p_sps, &p_dec->fmt_out.video.primaries,
                                   &p_dec->fmt_out.video.transfer,
@@ -250,60 +242,21 @@ static void ActivateSets( decoder_t *p_dec, const h264_sequence_parameter_set_t 
 
         if( p_dec->fmt_out.i_extra == 0 && p_pps )
         {
-            const block_t *p_spsblock = p_sys->sps[p_sps->i_id].p_block;
-            const block_t *p_ppsblock = p_sys->pps[p_pps->i_id].p_block;
-            const block_t *p_spsextblock = p_sys->spsext[p_sps->i_id].p_block;
-
-            if( p_spsblock && p_ppsblock )
+            block_t *p_xpsblocks = GatherSets( p_sys, true, true );
+            if( p_xpsblocks )
             {
-                size_t i_alloc = p_ppsblock->i_buffer + p_spsblock->i_buffer;
-                if( p_spsextblock )
-                    i_alloc += p_spsextblock->i_buffer;
-                p_dec->fmt_out.p_extra = malloc( i_alloc );
+                size_t i_total;
+                block_ChainProperties( p_xpsblocks, NULL, &i_total, NULL );
+                p_dec->fmt_out.p_extra = malloc( i_total );
                 if( p_dec->fmt_out.p_extra )
                 {
-                    uint8_t*p_buf = p_dec->fmt_out.p_extra;
-                    p_dec->fmt_out.i_extra = i_alloc;
-                    memcpy( p_buf, p_spsblock->p_buffer, p_spsblock->i_buffer );
-                    p_buf += p_spsblock->i_buffer;
-                    if( p_spsextblock )
-                    {
-                        memcpy( p_buf, p_spsextblock->p_buffer, p_spsextblock->i_buffer );
-                        p_buf += p_spsextblock->i_buffer;
-                    }
-                    memcpy( p_buf, p_ppsblock->p_buffer, p_ppsblock->i_buffer );
+                    p_dec->fmt_out.i_extra = i_total;
+                    block_ChainExtract( p_xpsblocks, p_dec->fmt_out.p_extra, i_total );
                 }
+                block_ChainRelease( p_xpsblocks );
             }
         }
     }
-}
-
-static bool IsFirstVCLNALUnit( const h264_slice_t *p_prev, const h264_slice_t *p_cur )
-{
-    /* Detection of the first VCL NAL unit of a primary coded picture
-     * (cf. 7.4.1.2.4) */
-    if( p_cur->i_frame_num != p_prev->i_frame_num ||
-        p_cur->i_pic_parameter_set_id != p_prev->i_pic_parameter_set_id ||
-        p_cur->i_field_pic_flag != p_prev->i_field_pic_flag ||
-       !p_cur->i_nal_ref_idc != !p_prev->i_nal_ref_idc )
-        return true;
-    if( (p_cur->i_bottom_field_flag != -1) &&
-        (p_prev->i_bottom_field_flag != -1) &&
-        (p_cur->i_bottom_field_flag != p_prev->i_bottom_field_flag) )
-        return true;
-    if( p_cur->i_pic_order_cnt_type == 0 &&
-       ( p_cur->i_pic_order_cnt_lsb != p_prev->i_pic_order_cnt_lsb ||
-         p_cur->i_delta_pic_order_cnt_bottom != p_prev->i_delta_pic_order_cnt_bottom ) )
-        return true;
-    else if( p_cur->i_pic_order_cnt_type == 1 &&
-           ( p_cur->i_delta_pic_order_cnt0 != p_prev->i_delta_pic_order_cnt0 ||
-             p_cur->i_delta_pic_order_cnt1 != p_prev->i_delta_pic_order_cnt1 ) )
-        return true;
-    if( ( p_cur->i_nal_type == H264_NAL_SLICE_IDR || p_prev->i_nal_type == H264_NAL_SLICE_IDR ) &&
-        ( p_cur->i_nal_type != p_prev->i_nal_type || p_cur->i_idr_pic_id != p_prev->i_idr_pic_id ) )
-        return true;
-
-    return false;
 }
 
 static void DropStoredNAL( decoder_sys_t *p_sys )
@@ -348,12 +301,12 @@ static int Open( vlc_object_t *p_this )
     }
 
     packetizer_Init( &p_sys->packetizer,
-                     p_h264_startcode, sizeof(p_h264_startcode), startcode_FindAnnexB,
-                     p_h264_startcode, 1, 5,
+                     annexb_startcode3, 3, startcode_FindAnnexB,
+                     annexb_startcode3, 1, 5,
                      PacketizeReset, PacketizeParse, PacketizeValidate, PacketizeDrain,
                      p_dec );
 
-    p_sys->b_slice = false;
+    p_sys->p_slice = NULL;
     p_sys->frame.p_head = NULL;
     p_sys->frame.pp_append = &p_sys->frame.p_head;
     p_sys->leading.p_head = NULL;
@@ -376,8 +329,6 @@ static int Open( vlc_object_t *p_this )
     for( i = 0; i <= H264_SPSEXT_ID_MAX; i++ )
         p_sys->spsext[i].p_block = NULL;
     p_sys->i_recovery_frame_cnt = UINT_MAX;
-
-    h264_slice_init( &p_sys->slice );
 
     p_sys->i_next_block_flags = 0;
     p_sys->b_recovered = false;
@@ -485,15 +436,12 @@ static void Close( vlc_object_t *p_this )
 {
     decoder_t *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys = p_dec->p_sys;
-    int i;
 
     DropStoredNAL( p_sys );
-    for( i = 0; i <= H264_SPS_ID_MAX; i++ )
-        StoreSPS( p_sys, i, NULL, NULL );
-    for( i = 0; i <= H264_PPS_ID_MAX; i++ )
-        StorePPS( p_sys, i, NULL, NULL );
-    for( i = 0; i <= H264_SPSEXT_ID_MAX; i++ )
-        StoreSPSEXT( p_sys, i, NULL );
+    ReleaseXPS( p_sys );
+
+    if( p_sys->p_slice )
+        h264_slice_release( p_sys->p_slice );
 
     packetizer_Clean( &p_sys->packetizer );
 
@@ -550,10 +498,11 @@ static void ResetOutputVariables( decoder_sys_t *p_sys )
 {
     p_sys->i_frame_dts = VLC_TICK_INVALID;
     p_sys->i_frame_pts = VLC_TICK_INVALID;
-    p_sys->slice.type = H264_SLICE_TYPE_UNKNOWN;
+    if( p_sys->p_slice )
+        h264_slice_release( p_sys->p_slice );
+    p_sys->p_slice = NULL;
     p_sys->b_new_sps = false;
     p_sys->b_new_pps = false;
-    p_sys->b_slice = false;
     /* From SEI */
     p_sys->i_dpb_output_delay = 0;
     p_sys->i_pic_struct = UINT8_MAX;
@@ -565,7 +514,7 @@ static void PacketizeReset( void *p_private, bool b_flush )
     decoder_t *p_dec = p_private;
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    if( b_flush || !p_sys->b_slice )
+    if( b_flush || !p_sys->p_slice )
     {
         DropStoredNAL( p_sys );
         ResetOutputVariables( p_sys );
@@ -602,7 +551,7 @@ static block_t * PacketizeDrain( void *p_private )
     decoder_t *p_dec = p_private;
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    if( !p_sys->b_slice )
+    if( !p_sys->p_slice )
         return NULL;
 
     block_t *p_out = OutputPicture( p_dec );
@@ -630,7 +579,7 @@ static block_t *ParseNALBlock( decoder_t *p_dec, bool *pb_ts_used, block_t *p_fr
     bool b_au_end = p_frag->i_flags & BLOCK_FLAG_AU_END;
     p_frag->i_flags &= ~BLOCK_FLAG_AU_END;
 
-    if( p_sys->b_slice && (!p_sys->p_active_pps || !p_sys->p_active_sps) )
+    if( p_sys->p_slice && (!p_sys->p_active_pps || !p_sys->p_active_sps) )
     {
         msg_Warn( p_dec, "waiting for SPS/PPS" );
 
@@ -649,7 +598,7 @@ static block_t *ParseNALBlock( decoder_t *p_dec, bool *pb_ts_used, block_t *p_fr
         case H264_NAL_SLICE_DPC:
         case H264_NAL_SLICE_IDR:
         {
-            h264_slice_t newslice;
+            h264_slice_t *p_newslice;
 
             if( i_nal_type == H264_NAL_SLICE_IDR )
             {
@@ -658,13 +607,12 @@ static block_t *ParseNALBlock( decoder_t *p_dec, bool *pb_ts_used, block_t *p_fr
                 p_sys->i_recoveryfnum = UINT_MAX;
             }
 
-            if( ParseSliceHeader( p_dec, p_frag, &newslice ) )
+            if( (p_newslice = ParseSliceHeader( p_dec, p_frag )) )
             {
                 /* Only IDR carries the id, to be propagated */
-                if( newslice.i_idr_pic_id == -1 )
-                    newslice.i_idr_pic_id = p_sys->slice.i_idr_pic_id;
+                h264_slice_copy_idr_id( p_sys->p_slice, p_newslice );
 
-                bool b_new_picture = IsFirstVCLNALUnit( &p_sys->slice, &newslice );
+                bool b_new_picture = h264_IsFirstVCLNALUnit( p_sys->p_slice, p_newslice );
                 if( b_new_picture )
                 {
                     /* Parse SEI for that frame now we should have matched SPS/PPS */
@@ -676,19 +624,19 @@ static block_t *ParseNALBlock( decoder_t *p_dec, bool *pb_ts_used, block_t *p_fr
                                               1 /* nal header */, ParseSeiCallback, p_dec );
                     }
 
-                    if( p_sys->b_slice )
+                    if( p_sys->p_slice )
                         p_pic = OutputPicture( p_dec );
                 }
 
                 /* */
-                p_sys->slice = newslice;
+                h264_slice_release( p_sys->p_slice );
+                p_sys->p_slice = p_newslice;
             }
             else
             {
                 p_sys->p_active_pps = NULL;
                 /* Fragment will be discarded later on */
             }
-            p_sys->b_slice = true;
 
             block_ChainLastAppend( &p_sys->frame.pp_append, p_frag );
         } break;
@@ -696,7 +644,7 @@ static block_t *ParseNALBlock( decoder_t *p_dec, bool *pb_ts_used, block_t *p_fr
         /*** Prefix NALs ***/
 
         case H264_NAL_AU_DELIMITER:
-            if( p_sys->b_slice )
+            if( p_sys->p_slice )
                 p_pic = OutputPicture( p_dec );
 
             /* clear junk if no pic, we're always the first nal */
@@ -709,24 +657,18 @@ static block_t *ParseNALBlock( decoder_t *p_dec, bool *pb_ts_used, block_t *p_fr
 
         case H264_NAL_SPS:
         case H264_NAL_PPS:
-            if( p_sys->b_slice )
+            if( p_sys->p_slice )
                 p_pic = OutputPicture( p_dec );
 
             /* Stored for insert on keyframes */
             if( i_nal_type == H264_NAL_SPS )
-            {
-                PutSPS( p_dec, p_frag );
-                p_sys->b_new_sps = true;
-            }
+                p_sys->b_new_sps |= PutXPS( p_dec, i_nal_type, p_frag );
             else
-            {
-                PutPPS( p_dec, p_frag );
-                p_sys->b_new_pps = true;
-            }
+                p_sys->b_new_pps |= PutXPS( p_dec, i_nal_type, p_frag );
         break;
 
         case H264_NAL_SEI:
-            if( p_sys->b_slice )
+            if( p_sys->p_slice )
                 p_pic = OutputPicture( p_dec );
 
             p_frag->i_flags |= BLOCK_FLAG_PRIVATE_SEI;
@@ -734,8 +676,8 @@ static block_t *ParseNALBlock( decoder_t *p_dec, bool *pb_ts_used, block_t *p_fr
         break;
 
         case H264_NAL_SPS_EXT:
-            PutSPSEXT( p_dec, p_frag );
-            if( p_sys->b_slice )
+            PutXPS( p_dec, i_nal_type, p_frag );
+            if( p_sys->p_slice )
                 p_pic = OutputPicture( p_dec );
             break;
 
@@ -744,7 +686,7 @@ static block_t *ParseNALBlock( decoder_t *p_dec, bool *pb_ts_used, block_t *p_fr
         case H264_NAL_DEPTH_PS:
         case H264_NAL_RESERVED_17:
         case H264_NAL_RESERVED_18:
-            if( p_sys->b_slice )
+            if( p_sys->p_slice )
                 p_pic = OutputPicture( p_dec );
 
             block_ChainLastAppend( &p_sys->leading.pp_append, p_frag );
@@ -759,7 +701,7 @@ static block_t *ParseNALBlock( decoder_t *p_dec, bool *pb_ts_used, block_t *p_fr
 
             /* important for still pictures/menus */
             p_sys->i_next_block_flags |= BLOCK_FLAG_END_OF_SEQUENCE;
-            if( p_sys->b_slice )
+            if( p_sys->p_slice )
                 p_pic = OutputPicture( p_dec );
         break;
 
@@ -786,7 +728,7 @@ static block_t *ParseNALBlock( decoder_t *p_dec, bool *pb_ts_used, block_t *p_fr
             date_Set( &p_sys->dts, i_frag_dts );
     }
 
-    if( p_sys->b_slice && b_au_end && !p_pic )
+    if( p_sys->p_slice && b_au_end && !p_pic )
     {
         p_pic = OutputPicture( p_dec );
     }
@@ -798,17 +740,6 @@ static block_t *ParseNALBlock( decoder_t *p_dec, bool *pb_ts_used, block_t *p_fr
     }
 
     return p_pic;
-}
-
-static bool CanSwapPTSwithDTS( const h264_slice_t *p_slice,
-                               const h264_sequence_parameter_set_t *p_sps )
-{
-    if( p_slice->i_nal_ref_idc == 0 && p_slice->type == H264_SLICE_TYPE_B )
-        return true;
-    else if( p_sps->vui.b_valid )
-        return p_sps->vui.i_max_num_reorder_frames == 0;
-    else
-        return p_sps->i_profile == PROFILE_H264_CAVLC_INTRA;
 }
 
 static block_t *OutputPicture( decoder_t *p_dec )
@@ -838,21 +769,23 @@ static block_t *OutputPicture( decoder_t *p_dec )
     }
 
     if( !p_sys->b_recovered && p_sys->i_recoveryfnum == UINT_MAX &&
-         p_sys->i_recovery_frame_cnt == UINT_MAX && p_sys->slice.type == H264_SLICE_TYPE_I )
+        p_sys->i_recovery_frame_cnt == UINT_MAX && h264_get_slice_type(p_sys->p_slice) == H264_SLICE_TYPE_I )
     {
         /* No way to recover using SEI, just sync on I Slice */
         p_sys->b_recovered = true;
     }
 
-    bool b_need_sps_pps = p_sys->slice.type == H264_SLICE_TYPE_I &&
+    bool b_need_sps_pps = h264_get_slice_type(p_sys->p_slice) == H264_SLICE_TYPE_I &&
                           p_sys->p_active_pps && p_sys->p_active_sps;
+
+    const unsigned i_frame_num = h264_get_frame_num(p_sys->p_slice);
 
     /* Handle SEI recovery */
     if ( !p_sys->b_recovered && p_sys->i_recovery_frame_cnt != UINT_MAX &&
          p_sys->i_recoveryfnum == UINT_MAX )
     {
-        p_sys->i_recoveryfnum = p_sys->slice.i_frame_num + p_sys->i_recovery_frame_cnt;
-        p_sys->i_recoverystartfnum = p_sys->slice.i_frame_num;
+        p_sys->i_recoveryfnum = i_frame_num + p_sys->i_recovery_frame_cnt;
+        p_sys->i_recoverystartfnum = i_frame_num;
         b_need_sps_pps = true; /* SPS/PPS must be inserted for SEI recovery */
         msg_Dbg( p_dec, "Recovering using SEI, prerolling %u reference pics", p_sys->i_recovery_frame_cnt );
     }
@@ -860,13 +793,13 @@ static block_t *OutputPicture( decoder_t *p_dec )
     if( p_sys->i_recoveryfnum != UINT_MAX )
     {
         assert(p_sys->b_recovered == false);
-        const unsigned maxFrameNum = 1 << (p_sps->i_log2_max_frame_num + 4);
+        const unsigned maxFrameNum = h264_get_max_frame_num( p_sps );
 
         if( ( p_sys->i_recoveryfnum > maxFrameNum &&
-              p_sys->slice.i_frame_num < p_sys->i_recoverystartfnum &&
-              p_sys->slice.i_frame_num >= p_sys->i_recoveryfnum % maxFrameNum ) ||
+              i_frame_num < p_sys->i_recoverystartfnum &&
+              i_frame_num >= p_sys->i_recoveryfnum % maxFrameNum ) ||
             ( p_sys->i_recoveryfnum <= maxFrameNum &&
-              p_sys->slice.i_frame_num >= p_sys->i_recoveryfnum ) )
+              i_frame_num >= p_sys->i_recoveryfnum ) )
         {
             p_sys->i_recoveryfnum = UINT_MAX;
             p_sys->b_recovered = true;
@@ -875,25 +808,8 @@ static block_t *OutputPicture( decoder_t *p_dec )
     }
 
     /* Gather PPS/SPS if required */
-    block_t *p_xpsnal = NULL;
-    block_t **pp_xpsnal_tail = &p_xpsnal;
-    if( b_need_sps_pps || p_sys->b_new_sps || p_sys->b_new_pps )
-    {
-        for( int i = 0; i <= H264_SPS_ID_MAX && (b_need_sps_pps || p_sys->b_new_sps); i++ )
-        {
-            if( p_sys->sps[i].p_block )
-                block_ChainLastAppend( &pp_xpsnal_tail, block_Duplicate( p_sys->sps[i].p_block ) );
-            /* 7.4.1.2.3,  shall be the next NAL unit after a sequence parameter set NAL unit
-             * having the same value of seq_parameter_set_id */
-            if( p_sys->spsext[i].p_block )
-                block_ChainLastAppend( &pp_xpsnal_tail, block_Duplicate( p_sys->spsext[i].p_block ) );
-        }
-        for( int i = 0; i < H264_PPS_ID_MAX && (b_need_sps_pps || p_sys->b_new_pps); i++ )
-        {
-            if( p_sys->pps[i].p_block )
-                block_ChainLastAppend( &pp_xpsnal_tail, block_Duplicate( p_sys->pps[i].p_block ) );
-        }
-    }
+    block_t *p_xpsnal = GatherSets( p_sys, b_need_sps_pps|p_sys->b_new_sps,
+                                           b_need_sps_pps|p_sys->b_new_pps );
 
     /* Now rebuild NAL Sequence, inserting PPS/SPS if any */
     if( p_sys->leading.p_head &&
@@ -935,11 +851,11 @@ static block_t *OutputPicture( decoder_t *p_dec )
 
     /* for PTS Fixup, interlaced fields (multiple AU/block) */
     int tFOC = 0, bFOC = 0, PictureOrderCount = 0;
-    h264_compute_poc( p_sps, &p_sys->slice, &p_sys->pocctx, &PictureOrderCount, &tFOC, &bFOC );
+    h264_compute_poc( p_sps, p_sys->p_slice, &p_sys->pocctx, &PictureOrderCount, &tFOC, &bFOC );
 
-    unsigned i_num_clock_ts = h264_get_num_ts( p_sps, &p_sys->slice, p_sys->i_pic_struct, tFOC, bFOC );
+    unsigned i_num_clock_ts = h264_get_num_ts( p_sps, p_sys->p_slice, p_sys->i_pic_struct, tFOC, bFOC );
 
-    if( p_sps->frame_mbs_only_flag == 0 && p_sps->vui.b_pic_struct_present_flag )
+    if( !h264_is_frames_only( p_sps ) && p_sys->i_pic_struct != UINT8_MAX )
     {
         switch( p_sys->i_pic_struct )
         {
@@ -947,8 +863,8 @@ static block_t *OutputPicture( decoder_t *p_dec )
         case 1:
         case 2:
             p_pic->i_flags |= BLOCK_FLAG_SINGLE_FIELD;
-            p_pic->i_flags |= (!p_sys->slice.i_bottom_field_flag) ? BLOCK_FLAG_TOP_FIELD_FIRST
-                                                                  : BLOCK_FLAG_BOTTOM_FIELD_FIRST;
+            p_pic->i_flags |= h264_slice_top_field(p_sys->p_slice) ? BLOCK_FLAG_TOP_FIELD_FIRST
+                                                                   : BLOCK_FLAG_BOTTOM_FIELD_FIRST;
             break;
         /* Each of the following slices contains multiple fields */
         case 3:
@@ -976,7 +892,7 @@ static block_t *OutputPicture( decoder_t *p_dec )
     if( p_pic->i_dts == VLC_TICK_INVALID )
         p_pic->i_dts = date_Get( &p_sys->dts );
 
-    if( p_sys->slice.type == H264_SLICE_TYPE_I )
+    if( h264_get_slice_type( p_sys->p_slice ) == H264_SLICE_TYPE_I )
         p_sys->prevdatedpoc.pts = VLC_TICK_INVALID;
 
     if( p_pic->i_pts == VLC_TICK_INVALID )
@@ -999,11 +915,11 @@ static block_t *OutputPicture( decoder_t *p_dec )
                 p_pic->i_pts = p_pic->i_dts;
         }
         /* In case there's no PTS at all */
-        else if( CanSwapPTSwithDTS( &p_sys->slice, p_sps ) )
+        else if( h264_CanSwapPTSWithDTS( p_sys->p_slice, p_sps ) )
         {
             p_pic->i_pts = p_pic->i_dts;
         }
-        else if( p_sys->slice.type == H264_SLICE_TYPE_I &&
+        else if( h264_get_slice_type( p_sys->p_slice ) == H264_SLICE_TYPE_I &&
                  date_Get( &p_sys->dts ) != VLC_TICK_INVALID )
         {
             /* Hell no PTS on IDR. We're totally blind */
@@ -1013,7 +929,7 @@ static block_t *OutputPicture( decoder_t *p_dec )
         }
     }
     else if( p_pic->i_dts == VLC_TICK_INVALID &&
-             CanSwapPTSwithDTS( &p_sys->slice, p_sps ) )
+             h264_CanSwapPTSWithDTS( p_sys->p_slice, p_sps ) )
     {
         p_pic->i_dts = p_pic->i_pts;
         if( date_Get( &p_sys->dts ) == VLC_TICK_INVALID )
@@ -1034,10 +950,11 @@ static block_t *OutputPicture( decoder_t *p_dec )
     }
 
 #if 0
-    msg_Err(p_dec, "F/BOC %d/%d POC %d %d rec %d flags %x ref%d fn %d fp %d %d pts %ld len %ld",
+    msg_Err(p_dec, "F/BOC %d/%d POC %d %d rec %d flags %x ref%d fn %d fp %d %ld pts %ld len %ld",
                     tFOC, bFOC, PictureOrderCount,
-                    p_sys->slice.type, p_sys->b_recovered, p_pic->i_flags,
-                    p_sys->slice.i_nal_ref_idc, p_sys->slice.i_frame_num, p_sys->slice.i_field_pic_flag,
+                    h264_get_slice_type(p_sys->p_slice), p_sys->b_recovered, p_pic->i_flags,
+                    h264_get_nal_ref_idc(p_sys->p_slice), h264_get_frame_num(p_sys->p_slice),
+                    h264_is_field_pic(p_sys->p_slice),
                     p_pic->i_pts - p_pic->i_dts, p_pic->i_pts % VLC_TICK_FROM_SEC(100), p_pic->i_length);
 #endif
 
@@ -1056,7 +973,7 @@ static block_t *OutputPicture( decoder_t *p_dec )
         p_sys->i_next_block_flags = 0;
     }
 
-    switch( p_sys->slice.type )
+    switch( h264_get_slice_type( p_sys->p_slice ) )
     {
         case H264_SLICE_TYPE_P:
             p_pic->i_flags |= BLOCK_FLAG_TYPE_P;
@@ -1089,90 +1006,130 @@ static block_t *OutputPicture( decoder_t *p_dec )
     return p_pic;
 }
 
-static void PutSPS( decoder_t *p_dec, block_t *p_frag )
+static int CmpXPS( const block_t *p_ref, const block_t *p_nal )
 {
-    decoder_sys_t *p_sys = p_dec->p_sys;
-
-    const uint8_t *p_buffer = p_frag->p_buffer;
-    size_t i_buffer = p_frag->i_buffer;
-
-    if( !hxxx_strip_AnnexB_startcode( &p_buffer, &i_buffer ) )
-    {
-        block_Release( p_frag );
-        return;
-    }
-
-    h264_sequence_parameter_set_t *p_sps = h264_decode_sps( p_buffer, i_buffer, true );
-    if( !p_sps )
-    {
-        msg_Warn( p_dec, "invalid SPS" );
-        block_Release( p_frag );
-        return;
-    }
-
-    /* We have a new SPS */
-    if( !p_sys->sps[p_sps->i_id].p_sps )
-        msg_Dbg( p_dec, "found NAL_SPS (sps_id=%d)", p_sps->i_id );
-
-    StoreSPS( p_sys, p_sps->i_id, p_frag, p_sps );
+    return p_ref == NULL ||
+           p_ref->i_buffer != p_nal->i_buffer ||
+           memcmp( p_ref->p_buffer, p_nal->p_buffer, p_nal->i_buffer );
 }
 
-static void PutPPS( decoder_t *p_dec, block_t *p_frag )
+#define wrap_h264_xps_decode(funcname ) \
+    static void *funcname ## _wrapper ( const uint8_t *a, size_t b, bool c ) \
+    { return funcname(a,b,c); }
+
+wrap_h264_xps_decode(h264_decode_sps)
+wrap_h264_xps_decode(h264_decode_pps)
+
+#define wrap_h264_xps_release(funcname, typecast) \
+    static void funcname ## _wrapper ( void *a ) { funcname((typecast *)a); }
+
+wrap_h264_xps_release(h264_release_sps, h264_sequence_parameter_set_t)
+wrap_h264_xps_release(h264_release_pps, h264_picture_parameter_set_t)
+
+static void ReleaseXPS( decoder_sys_t *p_sys )
 {
-    decoder_sys_t *p_sys = p_dec->p_sys;
-    const uint8_t *p_buffer = p_frag->p_buffer;
-    size_t i_buffer = p_frag->i_buffer;
-
-    if( !hxxx_strip_AnnexB_startcode( &p_buffer, &i_buffer ) )
+    for( int i = 0; i <= H264_SPS_ID_MAX; i++ )
     {
-        block_Release( p_frag );
-        return;
+        if( !p_sys->sps[i].p_block )
+            continue;
+        block_Release( p_sys->sps[i].p_block );
+        h264_release_sps( p_sys->sps[i].p_sps );
     }
-
-    h264_picture_parameter_set_t *p_pps = h264_decode_pps( p_buffer, i_buffer, true );
-    if( !p_pps )
+    for( int i = 0; i <= H264_PPS_ID_MAX; i++ )
     {
-        msg_Warn( p_dec, "invalid PPS" );
-        block_Release( p_frag );
-        return;
+        if( !p_sys->pps[i].p_block )
+            continue;
+        block_Release( p_sys->pps[i].p_block );
+        h264_release_pps( p_sys->pps[i].p_pps );
     }
-
-    /* We have a new PPS */
-    if( !p_sys->pps[p_pps->i_id].p_pps )
-        msg_Dbg( p_dec, "found NAL_PPS (pps_id=%d sps_id=%d)", p_pps->i_id, p_pps->i_sps_id );
-
-    StorePPS( p_sys, p_pps->i_id, p_frag, p_pps );
+    for( int i = 0; i <= H264_SPSEXT_ID_MAX; i++ )
+    {
+        if( p_sys->spsext[i].p_block )
+            block_Release( p_sys->spsext[i].p_block );
+    }
+    p_sys->p_active_sps = NULL;
+    p_sys->p_active_pps = NULL;
 }
 
-static void PutSPSEXT( decoder_t *p_dec, block_t *p_frag )
+static bool PutXPS( decoder_t *p_dec, uint8_t i_nal_type, block_t *p_frag )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
-    const uint8_t *p_buffer = p_frag->p_buffer;
-    size_t i_buffer = p_frag->i_buffer;
 
-    if( !hxxx_strip_AnnexB_startcode( &p_buffer, &i_buffer ) )
+    uint8_t i_id;
+    if( !hxxx_strip_AnnexB_startcode( (const uint8_t **)&p_frag->p_buffer,
+                                      &p_frag->i_buffer ) ||
+        !h264_get_xps_id( p_frag->p_buffer, p_frag->i_buffer, &i_id ) )
     {
         block_Release( p_frag );
-        return;
+        return false;
     }
 
-    h264_sequence_parameter_set_extension_t *p_spsext =
-            h264_decode_sps_extension( p_buffer, i_buffer, true );
-    if( !p_spsext )
+    const char * rgsz_types[3] = {"SPS", "PPS", "SPSEXT"};
+    const char *psz_type;
+    block_t **pp_block_dst;
+    /* all depend on pp_xps_dst */
+    void **pp_xps_dst = NULL;
+    const void **pp_active = NULL; /* optional */
+    void * (* pf_decode_xps)(const uint8_t *, size_t, bool) = NULL;
+    void   (* pf_release_xps)(void *) = NULL;
+
+    switch( i_nal_type )
     {
-        msg_Warn( p_dec, "invalid SPSEXT" );
-        block_Release( p_frag );
-        return;
+        case H264_NAL_SPS:
+            psz_type = rgsz_types[0];
+            pp_active = (const void **) &p_sys->p_active_sps;
+            pp_block_dst = &p_sys->sps[i_id].p_block;
+            pp_xps_dst = (void **) &p_sys->sps[i_id].p_sps;
+            pf_decode_xps = h264_decode_sps_wrapper;
+            pf_release_xps = h264_release_sps_wrapper;
+            break;
+        case H264_NAL_PPS:
+            psz_type = rgsz_types[1];
+            pp_active = (const void **) &p_sys->p_active_pps;
+            pp_block_dst = &p_sys->pps[i_id].p_block;
+            pp_xps_dst = (void **) &p_sys->pps[i_id].p_pps;
+            pf_decode_xps = h264_decode_pps_wrapper;
+            pf_release_xps = h264_release_pps_wrapper;
+            break;
+        case H264_NAL_SPS_EXT:
+            psz_type = rgsz_types[2];
+            pp_block_dst = &p_sys->spsext[i_id].p_block;
+            break;
+        default:
+            block_Release( p_frag );
+            return false;
     }
 
-    /* We have a new SPSEXT */
-    if( !p_sys->spsext[p_spsext->i_sps_id].p_block )
-        msg_Dbg( p_dec, "found NAL_SPSEXT (sps_id=%d)", p_spsext->i_sps_id );
+    if( !CmpXPS( *pp_block_dst, p_frag ) )
+    {
+        block_Release( p_frag );
+        return false;
+    }
 
-    StoreSPSEXT( p_sys, p_spsext->i_sps_id, p_frag );
+    msg_Dbg( p_dec, "found NAL_%s (id=%" PRIu8 ")", psz_type, i_id );
 
-    /* we don't need a decoded one */
-    h264_release_sps_extension( p_spsext );
+    if( pp_xps_dst != NULL )
+    {
+        void *p_xps = pf_decode_xps( p_frag->p_buffer, p_frag->i_buffer, true );
+        if( !p_xps )
+        {
+            block_Release( p_frag );
+            return false;
+        }
+        if( *pp_xps_dst )
+        {
+            if( pp_active && *pp_active == *pp_xps_dst )
+                *pp_active = NULL;
+            pf_release_xps( *pp_xps_dst );
+        }
+        *pp_xps_dst = p_xps;
+    }
+
+    if( *pp_block_dst )
+        block_Release( *pp_block_dst );
+    *pp_block_dst = p_frag;
+
+    return true;
 }
 
 static void GetSPSPPS( uint8_t i_pps_id, void *priv,
@@ -1185,10 +1142,10 @@ static void GetSPSPPS( uint8_t i_pps_id, void *priv,
     if( *pp_pps == NULL )
         *pp_sps = NULL;
     else
-        *pp_sps = p_sys->sps[(*pp_pps)->i_sps_id].p_sps;
+        *pp_sps = p_sys->sps[h264_get_pps_sps_id(*pp_pps)].p_sps;
 }
 
-static bool ParseSliceHeader( decoder_t *p_dec, const block_t *p_frag, h264_slice_t *p_slice )
+static h264_slice_t * ParseSliceHeader( decoder_t *p_dec, const block_t *p_frag )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
@@ -1196,20 +1153,24 @@ static bool ParseSliceHeader( decoder_t *p_dec, const block_t *p_frag, h264_slic
     size_t i_stripped = p_frag->i_buffer;
 
     if( !hxxx_strip_AnnexB_startcode( &p_stripped, &i_stripped ) || i_stripped < 2 )
-        return false;
+        return NULL;
 
-    if( !h264_decode_slice( p_stripped, i_stripped, GetSPSPPS, p_sys, p_slice ) )
-        return false;
+    h264_slice_t *p_slice = h264_decode_slice( p_stripped, i_stripped, GetSPSPPS, p_sys );
+    if( !p_slice )
+        return NULL;
 
     const h264_sequence_parameter_set_t *p_sps;
     const h264_picture_parameter_set_t *p_pps;
-    GetSPSPPS( p_slice->i_pic_parameter_set_id, p_sys, &p_sps, &p_pps );
+    GetSPSPPS( h264_get_slice_pps_id( p_slice ), p_sys, &p_sps, &p_pps );
     if( unlikely( !p_sps || !p_pps) )
-        return false;
+    {
+        h264_slice_release( p_slice );
+        return NULL;
+    }
 
     ActivateSets( p_dec, p_sps, p_pps );
 
-    return true;
+    return p_slice;
 }
 
 static bool ParseSeiCallback( const hxxx_sei_data_t *p_sei_data, void *cbdata )
@@ -1229,19 +1190,9 @@ static bool ParseSeiCallback( const hxxx_sei_data_t *p_sei_data, void *cbdata )
                 break;
             }
 
-            if( p_sps->vui.b_valid )
-            {
-                if( p_sps->vui.b_hrd_parameters_present_flag )
-                {
-                    bs_read( p_sei_data->p_bs, p_sps->vui.i_cpb_removal_delay_length_minus1 + 1 );
-                    p_sys->i_dpb_output_delay =
-                            bs_read( p_sei_data->p_bs, p_sps->vui.i_dpb_output_delay_length_minus1 + 1 );
-                }
-
-                if( p_sps->vui.b_pic_struct_present_flag )
-                    p_sys->i_pic_struct = bs_read( p_sei_data->p_bs, 4 );
-                /* + unparsed remains */
-            }
+            h264_decode_sei_pic_timing( p_sei_data->p_bs, p_sps,
+                                       &p_sys->i_pic_struct,
+                                       &p_sys->i_dpb_output_delay );
         } break;
 
             /* Look for user_data_registered_itu_t_t35 */

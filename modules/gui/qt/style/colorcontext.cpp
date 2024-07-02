@@ -282,7 +282,7 @@ bool ColorContext::setInheritedState(std::shared_ptr<ColorContextState>& state)
         connect(m_state.get(), &ColorContextState::pressedChanged, this, &ColorContext::pressedChanged);
     }
 
-    emit sharedStateChanged({});
+    emit sharedStateChanged(QPrivateSignal());
     if (m_initialized)
         emit colorsChanged();
     return true;
@@ -400,6 +400,11 @@ QColor ColorContext::border() const
 QColor ColorContext::separator() const
 {
     return getColor(Decoration, Separator);
+}
+
+QColor ColorContext::indicator() const
+{
+    return getColor(Decoration, Indicator);
 }
 
 QColor ColorContext::shadow() const

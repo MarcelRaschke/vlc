@@ -24,7 +24,7 @@
 #include "avcommon.h"
 
 /* VLC <-> avcodec tables */
-bool GetFfmpegCodec( enum es_format_category_e cat, vlc_fourcc_t i_fourcc,
+bool GetFfmpegCodec( const es_format_t *,
                      enum AVCodecID *pi_ffmpeg_codec, const char **ppsz_name );
 vlc_fourcc_t GetVlcFourcc( enum AVCodecID i_ffmpeg_codec );
 vlc_fourcc_t GetVlcAudioFormat( int i_sample_fmt );
@@ -35,6 +35,7 @@ void EndVideoEnc( encoder_t * );
 
 /* Video Decoder */
 int InitVideoDec( vlc_object_t * );
+int InitVideoHwDec( vlc_object_t * );
 void EndVideoDec( vlc_object_t * );
 
 /* Audio Decoder */
@@ -216,8 +217,3 @@ int ffmpeg_OpenCodec( decoder_t *p_dec, AVCodecContext *, const AVCodec * );
    "for encoding the audio bitstream. It takes the following options: " \
    "main, low, ssr (not supported),ltp, hev1, hev2 (default: low). " \
    "hev1 and hev2 are currently supported only with libfdk-aac enabled libavcodec" )
-
-#ifndef AV_VERSION_INT
-#   define AV_VERSION_INT(a, b, c) ((a)<<16 | (b)<<8 | (c))
-#endif
-

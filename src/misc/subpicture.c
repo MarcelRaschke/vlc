@@ -34,6 +34,8 @@
 #include <vlc_subpicture.h>
 #include "subpicture.h"
 
+#include <limits.h>
+
 struct subpicture_private_t
 {
     video_format_t src;
@@ -47,11 +49,10 @@ subpicture_t *subpicture_New( const subpicture_updater_t *p_upd )
         return NULL;
 
     p_subpic->i_order    = 0;
-    p_subpic->b_absolute = true;
     p_subpic->b_fade     = false;
     p_subpic->b_subtitle = false;
     p_subpic->i_alpha    = 0xFF;
-    p_subpic->p_region   = NULL;
+    vlc_spu_regions_init(&p_subpic->regions);
 
     if( p_upd )
     {
@@ -70,22 +71,21 @@ subpicture_t *subpicture_New( const subpicture_updater_t *p_upd )
     else
     {
         p_subpic->p_private = NULL;
-
-        p_subpic->updater.pf_validate = NULL;
-        p_subpic->updater.pf_update   = NULL;
-        p_subpic->updater.pf_destroy  = NULL;
-        p_subpic->updater.p_sys       = NULL;
+        p_subpic->updater.ops = NULL;
+        p_subpic->updater.sys = NULL;
     }
     return p_subpic;
 }
 
 void subpicture_Delete( subpicture_t *p_subpic )
 {
-    subpicture_region_ChainDelete( p_subpic->p_region );
-    p_subpic->p_region = NULL;
+    vlc_spu_regions_Clear( &p_subpic->regions );
 
-    if( p_subpic->updater.pf_destroy )
-        p_subpic->updater.pf_destroy( p_subpic );
+    if (p_subpic->updater.ops != NULL &&
+        p_subpic->updater.ops->destroy != NULL)
+    {
+        p_subpic->updater.ops->destroy(p_subpic);
+    }
 
     if( p_subpic->p_private )
     {
@@ -94,6 +94,27 @@ void subpicture_Delete( subpicture_t *p_subpic )
     }
 
     free( p_subpic->p_private );
+    free( p_subpic );
+}
+
+vlc_render_subpicture *vlc_render_subpicture_New( void )
+{
+    vlc_render_subpicture *p_subpic = malloc( sizeof(*p_subpic) );
+    if( unlikely(p_subpic == NULL ) )
+        return NULL;
+    vlc_vector_init(&p_subpic->regions);
+    return p_subpic;
+}
+
+void vlc_render_subpicture_Delete( vlc_render_subpicture *p_subpic )
+{
+    struct subpicture_region_rendered *p_region;
+    vlc_vector_foreach(p_region, &p_subpic->regions)
+    {
+        picture_Release( p_region->p_picture );
+        free( p_region );
+    }
+    vlc_vector_clear( &p_subpic->regions );
     free( p_subpic );
 }
 
@@ -121,7 +142,7 @@ subpicture_t *subpicture_NewFromPicture( vlc_object_t *p_obj,
         return NULL;
 
     subpicture_t *p_subpic = subpicture_New( NULL );
-    if( !p_subpic )
+    if( unlikely(!p_subpic) )
     {
          picture_Release( p_pip );
          return NULL;
@@ -130,19 +151,24 @@ subpicture_t *subpicture_NewFromPicture( vlc_object_t *p_obj,
     p_subpic->i_original_picture_width  = fmt_out.i_visible_width;
     p_subpic->i_original_picture_height = fmt_out.i_visible_height;
 
-    fmt_out.i_sar_num =
-    fmt_out.i_sar_den = 0;
+    subpicture_region_t *p_region = subpicture_region_ForPicture( NULL, p_pip );
+    picture_Release( p_pip );
 
-    p_subpic->p_region = subpicture_region_New( &fmt_out );
-    if( p_subpic->p_region )
+    if (likely(p_region == NULL))
     {
-        picture_Release( p_subpic->p_region->p_picture );
-        p_subpic->p_region->p_picture = p_pip;
+        subpicture_Delete(p_subpic);
+        return NULL;
     }
-    else
-    {
-        picture_Release( p_pip );
-    }
+
+    p_region->b_absolute = true;
+    p_region->fmt.i_sar_num =
+    p_region->fmt.i_sar_den = 0;
+
+    // margin to the center or to the top/left if the subpicture is absolute
+    p_region->i_x = 0;
+    p_region->i_y = 0;
+
+    vlc_spu_regions_push( &p_subpic->regions, p_region );
     return p_subpic;
 }
 
@@ -154,20 +180,13 @@ void subpicture_Update( subpicture_t *p_subpicture,
     subpicture_updater_t *p_upd = &p_subpicture->updater;
     subpicture_private_t *p_private = p_subpicture->p_private;
 
-    if( !p_upd->pf_validate )
-        return;
-    if( !p_upd->pf_validate( p_subpicture,
-                          !video_format_IsSimilar( p_fmt_src,
-                                                   &p_private->src ), p_fmt_src,
-                          !video_format_IsSimilar( p_fmt_dst,
-                                                   &p_private->dst ), p_fmt_dst,
-                          i_ts ) )
+    if (p_upd->ops == NULL)
         return;
 
-    subpicture_region_ChainDelete( p_subpicture->p_region );
-    p_subpicture->p_region = NULL;
-
-    p_upd->pf_update( p_subpicture, p_fmt_src, p_fmt_dst, i_ts );
+    p_upd->ops->update(p_subpicture,
+                       &p_private->src, p_fmt_src,
+                       &p_private->dst, p_fmt_dst,
+                       i_ts);
 
     video_format_Clean( &p_private->src );
     video_format_Clean( &p_private->dst );
@@ -202,24 +221,45 @@ void subpicture_region_private_Delete( subpicture_region_private_t *p_private )
     free( p_private );
 }
 
-subpicture_region_t * subpicture_region_NewInternal( const video_format_t *p_fmt )
+static subpicture_region_t * subpicture_region_NewInternal( void )
 {
     subpicture_region_t *p_region = calloc( 1, sizeof(*p_region ) );
+    if( unlikely(p_region == NULL) )
+        return NULL;
+
+    p_region->i_alpha = 0xff;
+    p_region->i_x = INT_MAX;
+    p_region->i_y = INT_MAX;
+
+    return p_region;
+}
+
+subpicture_region_t *subpicture_region_New( const video_format_t *p_fmt )
+{
+    assert(p_fmt->i_chroma != VLC_CODEC_TEXT);
+    subpicture_region_t *p_region = subpicture_region_NewInternal( );
     if( !p_region )
         return NULL;
 
-    p_region->zoom_h.den = p_region->zoom_h.num = 1;
-    p_region->zoom_v.den = p_region->zoom_v.num = 1;
-
-    if ( p_fmt->i_chroma == VLC_CODEC_YUVP )
+    video_format_Copy( &p_region->fmt, p_fmt );
+    p_region->p_picture = picture_NewFromFormat( &p_region->fmt );
+    if( !p_region->p_picture )
     {
-        video_format_Copy( &p_region->fmt, p_fmt );
-        /* YUVP should have a palette */
-        if( p_region->fmt.p_palette == NULL )
+        video_format_Clean( &p_region->fmt );
+        free( p_region );
+        return NULL;
+    }
+
+    if ( p_fmt->i_chroma == VLC_CODEC_YUVP || p_fmt->i_chroma == VLC_CODEC_RGBP )
+    {
+        /* YUVP/RGBP should have a palette */
+        if( p_region->p_picture->format.p_palette == NULL )
         {
-            p_region->fmt.p_palette = calloc( 1, sizeof(*p_region->fmt.p_palette) );
-            if( p_region->fmt.p_palette == NULL )
+            p_region->p_picture->format.p_palette = calloc( 1, sizeof(*p_region->p_picture->format.p_palette) );
+            if( p_region->p_picture->format.p_palette == NULL )
             {
+                video_format_Clean( &p_region->fmt );
+                picture_Release( p_region->p_picture );
                 free( p_region );
                 return NULL;
             }
@@ -227,33 +267,59 @@ subpicture_region_t * subpicture_region_NewInternal( const video_format_t *p_fmt
     }
     else
     {
-        p_region->fmt = *p_fmt;
-        p_region->fmt.p_palette = NULL;
+        assert(p_fmt->p_palette == NULL);
     }
-
-    p_region->i_alpha = 0xff;
-    p_region->b_balanced_text = true;
 
     return p_region;
 }
 
-subpicture_region_t *subpicture_region_New( const video_format_t *p_fmt )
+subpicture_region_t *subpicture_region_NewText( void )
 {
-    subpicture_region_t *p_region =
-        subpicture_region_NewInternal( p_fmt );
+    subpicture_region_t *p_region = subpicture_region_NewInternal( );
     if( !p_region )
         return NULL;
 
-    if( p_fmt->i_chroma == VLC_CODEC_TEXT )
-        return p_region;
+    p_region->text_flags |= VLC_SUBPIC_TEXT_FLAG_IS_TEXT;
 
-    p_region->p_picture = picture_NewFromFormat( p_fmt );
-    if( !p_region->p_picture )
-    {
-        video_format_Clean( &p_region->fmt );
-        free( p_region );
+    video_format_Init( &p_region->fmt, 0 );
+
+    return p_region;
+}
+
+subpicture_region_t *subpicture_region_ForPicture( const video_format_t *p_fmt, picture_t *pic )
+{
+    assert( !p_fmt || video_format_IsSameChroma( p_fmt, &pic->format ) );
+    if ( p_fmt && !video_format_IsSameChroma( p_fmt, &pic->format ) )
         return NULL;
+
+    subpicture_region_t *p_region = subpicture_region_NewInternal( );
+    if( !p_region )
+        return NULL;
+
+    if (p_fmt == NULL)
+        p_fmt = &pic->format;
+
+    video_format_Copy( &p_region->fmt, p_fmt );
+    if ( pic->format.i_chroma == VLC_CODEC_YUVP || pic->format.i_chroma == VLC_CODEC_RGBP )
+    {
+        /* YUVP/RGBP should have a palette */
+        if( pic->format.p_palette == NULL )
+        {
+            pic->format.p_palette = calloc( 1, sizeof(*pic->format.p_palette) );
+            if( pic->format.p_palette == NULL )
+            {
+                video_format_Clean( &pic->format );
+                free( p_region );
+                return NULL;
+            }
+        }
     }
+    else
+    {
+        assert(pic->format.p_palette == NULL);
+    }
+
+    p_region->p_picture = picture_Hold(pic);
 
     return p_region;
 }
@@ -274,33 +340,32 @@ void subpicture_region_Delete( subpicture_region_t *p_region )
     free( p_region );
 }
 
-void subpicture_region_ChainDelete( subpicture_region_t *p_head )
+void vlc_spu_regions_Clear( vlc_spu_regions *regions )
 {
-    while( p_head )
+    subpicture_region_t *p_head;
+    vlc_spu_regions_foreach(p_head, regions)
     {
-        subpicture_region_t *p_next = p_head->p_next;
-
+        vlc_spu_regions_remove( regions, p_head );
         subpicture_region_Delete( p_head );
-
-        p_head = p_next;
     }
 }
 
 #include <vlc_filter.h>
 
 unsigned picture_BlendSubpicture(picture_t *dst,
-                                 vlc_blender_t *blend, subpicture_t *src)
+                                 vlc_blender_t *blend, vlc_render_subpicture *src)
 {
     unsigned done = 0;
 
-    assert(src && !src->b_fade && src->b_absolute);
+    assert(src);
 
-    for (subpicture_region_t *r = src->p_region; r != NULL; r = r->p_next) {
-        assert(r->p_picture && r->i_align == 0);
+    struct subpicture_region_rendered *r;
+    vlc_vector_foreach(r, &src->regions) {
+        assert(r->p_picture);
+
         if (filter_ConfigureBlend(blend, dst->format.i_width,
-                                  dst->format.i_height,  &r->fmt)
-         || filter_Blend(blend, dst, r->i_x, r->i_y, r->p_picture,
-                         src->i_alpha * r->i_alpha / 255))
+                                  dst->format.i_height,  &r->p_picture->format)
+         || filter_Blend(blend, dst, r->place.x, r->place.y, r->p_picture, r->i_alpha))
             msg_Err(blend, "blending %4.4s to %4.4s failed",
                     (char *)&blend->fmt_in.video.i_chroma,
                     (char *)&blend->fmt_out.video.i_chroma );
@@ -308,27 +373,4 @@ unsigned picture_BlendSubpicture(picture_t *dst,
             done++;
     }
     return done;
-}
-
-subpicture_region_t* subpicture_region_Copy( subpicture_region_t *p_region_src )
-{
-    if (!p_region_src)
-        return NULL;
-    subpicture_region_t *p_region_dst = subpicture_region_New(&p_region_src->fmt);
-    if (unlikely(!p_region_dst))
-        return NULL;
-
-    p_region_dst->i_x      = p_region_src->i_x;
-    p_region_dst->i_y      = p_region_src->i_y;
-    p_region_dst->i_align  = p_region_src->i_align;
-    p_region_dst->i_alpha  = p_region_src->i_alpha;
-
-    p_region_dst->p_text = text_segment_Copy( p_region_src->p_text );
-
-    //Palette is already copied by subpicture_region_New, we just have to duplicate p_pixels
-    for (int i = 0; i < p_region_src->p_picture->i_planes; i++)
-        memcpy(p_region_dst->p_picture->p[i].p_pixels,
-               p_region_src->p_picture->p[i].p_pixels,
-               p_region_src->p_picture->p[i].i_lines * p_region_src->p_picture->p[i].i_pitch);
-    return p_region_dst;
 }

@@ -1,5 +1,5 @@
 # PNG
-PNG_VERSION := 1.6.39
+PNG_VERSION := 1.6.40
 PNG_URL := $(SF)/libpng/libpng16/$(PNG_VERSION)/libpng-$(PNG_VERSION).tar.xz
 
 PKGS += png
@@ -14,7 +14,7 @@ $(TARBALLS)/libpng-$(PNG_VERSION).tar.xz:
 
 png: libpng-$(PNG_VERSION).tar.xz .sum-png
 	$(UNPACK)
-	sed -i.orig 's,set(CMAKE_DEBUG_POSTFIX ,#set(CMAKE_DEBUG_POSTFIX ,' "$(UNPACK_DIR)/CMakeLists.txt"
+	$(APPLY) $(SRC)/png/0001-Put-the-build-include-include-before-the-CMake-Platf.patch
 	$(call pkg_static,"libpng.pc.in")
 	$(MOVE)
 
@@ -27,6 +27,10 @@ ifneq ($(filter arm aarch64, $(ARCH)),)
 # TODO this might be set globally and for all targets where intrinsincs are used
 PNG_CONF += -DCMAKE_ASM_FLAGS="$(CFLAGS)"
 endif
+endif
+
+ifdef HAVE_WIN32
+PNG_CONF += -DPNG_DEBUG_POSTFIX:STRING=
 endif
 
 ifeq ($(ARCH),arm)
@@ -48,7 +52,7 @@ endif
 
 .png: png toolchain.cmake
 	$(CMAKECLEAN)
-	$(HOSTVARS) $(CMAKE) $(PNG_CONF)
+	$(HOSTVARS_CMAKE) $(CMAKE) $(PNG_CONF)
 	+$(CMAKEBUILD)
 	$(CMAKEINSTALL)
 	touch $@

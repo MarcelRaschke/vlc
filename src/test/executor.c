@@ -27,6 +27,7 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_executor.h>
 #include <vlc_tick.h>
 
@@ -61,9 +62,8 @@ static void RunIncrement(void *userdata)
 
     vlc_mutex_lock(&data->lock);
     ++data->ended;
-    vlc_mutex_unlock(&data->lock);
-
     vlc_cond_signal(&data->cond);
+    vlc_mutex_unlock(&data->lock);
 }
 
 static void test_single_runnable(void)

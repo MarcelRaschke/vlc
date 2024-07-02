@@ -28,6 +28,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 #include <vlc_vout.h>
@@ -103,7 +104,7 @@ static int Create( filter_t *p_filter )
     QueueInit( &p_sys->atomic );
     QueueInit( &p_sys->pending );
     QueueInit( &p_sys->processed );
-    do_ListInit( &p_sys->overlays );
+    vlc_vector_init( &p_sys->overlays );
 
     p_sys->i_inputfd = -1;
     p_sys->i_outputfd = -1;
@@ -142,7 +143,12 @@ static void Destroy( filter_t *p_filter )
     QueueDestroy( &p_sys->atomic );
     QueueDestroy( &p_sys->pending );
     QueueDestroy( &p_sys->processed );
-    do_ListDestroy( &p_sys->overlays );
+    overlay_t *p_cur;
+    vlc_vector_foreach(p_cur, &p_sys->overlays)
+    {
+        OverlayDestroy( p_cur );
+    }
+    vlc_vector_destroy( &p_sys->overlays );
     UnregisterCommand( p_filter );
 
     var_DelCallback( p_filter, "overlay-input", AdjustCallback, p_sys );
@@ -334,45 +340,49 @@ static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
         return NULL;
 
     subpicture_t *p_spu = NULL;
-    overlay_t *p_overlay = NULL;
+    overlay_t *p_overlay;
 
     p_spu = filter_NewSubpicture( p_filter );
     if( !p_spu )
         return NULL;
 
-    p_spu->b_absolute = true;
     p_spu->i_start = date;
-    p_spu->i_stop = 0;
+    p_spu->i_stop = VLC_TICK_INVALID;
     p_spu->b_ephemer = true;
 
-    subpicture_region_t **pp_region = &p_spu->p_region;
-    while( (p_overlay = ListWalk( &p_sys->overlays )) )
+    vlc_vector_foreach(p_overlay, &p_sys->overlays)
     {
+        if (!p_overlay->b_active || p_overlay->type == OVERLAY_UNSET)
+            continue;
+
         subpicture_region_t *p_region;
 
-        *pp_region = p_region = subpicture_region_New( &p_overlay->format );
-        if( !p_region )
+        if( p_overlay->type == OVERLAY_IS_TEXT )
+            p_region = subpicture_region_NewText();
+        else
+            p_region = subpicture_region_ForPicture( NULL, p_overlay->data.p_pic );
+        if( unlikely(p_region == NULL) )
+        {
             break;
+        }
 
         msg_Dbg( p_filter, "Displaying overlay: %4.4s, %d, %d, %d",
-                 (char*)&p_overlay->format.i_chroma, p_overlay->i_x, p_overlay->i_y,
+                 p_overlay->type == OVERLAY_IS_TEXT ? "TEXT" : (char*)&p_overlay->data.p_pic->format.i_chroma,
+                 p_overlay->i_x, p_overlay->i_y,
                  p_overlay->i_alpha );
 
-        if( p_overlay->format.i_chroma == VLC_CODEC_TEXT )
+        if( p_overlay->type == OVERLAY_IS_TEXT )
         {
+            video_format_Setup( &p_region->fmt, 0, 0, 0, 0, 0, 0, 1 );
             p_region->p_text = text_segment_New( p_overlay->data.p_text );
             p_region->p_text->style = text_style_Duplicate( p_overlay->p_fontstyle );
         }
-        else
-        {
-            /* FIXME the copy is probably not needed anymore */
-            picture_Copy( p_region->p_picture, p_overlay->data.p_pic );
-        }
         p_region->i_x = p_overlay->i_x;
         p_region->i_y = p_overlay->i_y;
+        p_region->b_absolute = true;
         p_region->i_align = SUBPICTURE_ALIGN_LEFT | SUBPICTURE_ALIGN_TOP;
         p_region->i_alpha = p_overlay->i_alpha;
-        pp_region = &p_region->p_next;
+        vlc_spu_regions_push( &p_spu->regions, p_region );
     }
 
     p_sys->b_updated = false;

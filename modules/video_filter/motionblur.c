@@ -32,6 +32,7 @@
 #include <stdatomic.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 #include <vlc_filter.h>
@@ -90,7 +91,8 @@ static int Create( filter_t *p_filter )
 {
     const vlc_chroma_description_t *p_chroma =
         vlc_fourcc_GetChromaDescription( p_filter->fmt_in.video.i_chroma );
-    if( p_chroma == NULL || p_chroma->plane_count == 0 )
+    assert( p_chroma != NULL );
+    if( p_chroma->plane_count == 0 )
         return VLC_EGENERIC;
 
     /* Allocate structure */

@@ -66,6 +66,8 @@ static void FlushPacketizer( decoder_t *p_dec )
 {
     avparser_ClosePacketizer( VLC_OBJECT( p_dec ) );
     p_dec->p_sys = NULL;
+    es_format_Clean( &p_dec->fmt_out );
+    es_format_Init( &p_dec->fmt_out, p_dec->fmt_in->i_cat, 0 );
     int res = avparser_OpenPacketizer( VLC_OBJECT( p_dec ) );
     if ( res != VLC_SUCCESS )
     {
@@ -87,12 +89,13 @@ int avparser_OpenPacketizer( vlc_object_t *p_this )
 
     /* Restrict to VP9 for now */
     if( p_dec->fmt_in->i_codec != VLC_CODEC_VP9 )
-        return VLC_EGENERIC;
+        return VLC_ENOTSUP;
+    if( p_dec->fmt_in->i_level != 0 && p_dec->fmt_in->i_level != -1 ) // contains alpha extradata
+        return VLC_ENOTSUP;
 
     enum AVCodecID i_avcodec_id;
 
-    if( !GetFfmpegCodec( p_dec->fmt_in->i_cat, p_dec->fmt_in->i_codec,
-                         &i_avcodec_id, NULL ) )
+    if( !GetFfmpegCodec( p_dec->fmt_in, &i_avcodec_id, NULL ) )
         return VLC_EGENERIC;
 
     /* init avcodec */

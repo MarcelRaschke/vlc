@@ -43,15 +43,16 @@
 
 #define SRC_FOURCC  "I420,IYUV,YV12"
 
-#if defined (PLUGIN_PLAIN)
-#    define DEST_FOURCC "YUY2,YUNV,YVYU,UYVY,UYNV,Y422,Y211"
-#    define VLC_TARGET
-#elif defined (PLUGIN_SSE2)
+#if defined (PLUGIN_SSE2)
 #    define DEST_FOURCC "YUY2,YUNV,YVYU,UYVY,UYNV,Y422"
 #    define VLC_TARGET VLC_SSE
 #elif defined (PLUGIN_ALTIVEC)
 #    define DEST_FOURCC "YUY2,YUNV,YVYU,UYVY,UYNV,Y422"
 #    define VLC_TARGET VLC_ALTIVEC
+#else
+#    define PLUGIN_PLAIN
+#    define DEST_FOURCC "YUY2,YUNV,YVYU,UYVY,UYNV,Y422,Y211"
+#    define VLC_TARGET
 #endif
 
 /*****************************************************************************
@@ -72,7 +73,7 @@ vlc_module_begin ()
     set_callback_video_converter( Activate, 250 )
 # define vlc_CPU_capable() vlc_CPU_SSE2()
 #elif defined (PLUGIN_ALTIVEC)
-    set_description( N_("AltiVec conversions from " SRC_FOURCC " to " DEST_FOURCC) );
+    set_description( N_("AltiVec conversions from " SRC_FOURCC " to " DEST_FOURCC) )
     set_callback_video_converter( Activate, 250 )
 # define vlc_CPU_capable() vlc_CPU_ALTIVEC()
 #endif

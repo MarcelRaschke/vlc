@@ -24,7 +24,12 @@
 # include <config.h>
 #endif
 
+#include <stdbit.h>
+
 #include <vlc_common.h>
+#include <vlc_arrays.h>
+#include <vlc_threads.h>
+#include <vlc_poll.h>
 #include <vlc_plugin.h>
 #include <vlc_modules.h>
 #include <vlc_configuration.h>
@@ -97,8 +102,12 @@ static int human(uint64_t *i)
 {
     if (i == 0)
         return 0;
-    unsigned exp = (63 - clz(*i)) / 10;
-    exp = (exp < ARRAY_SIZE(binary_prefixes)) ? exp : ARRAY_SIZE(binary_prefixes);
+
+    unsigned exp = (stdc_bit_width(*i) - 1) / 10;
+
+    if (exp >= ARRAY_SIZE(binary_prefixes))
+        exp = ARRAY_SIZE(binary_prefixes) - 1;
+
     *i >>= (10 * exp);
     return exp;
 }
@@ -124,7 +133,7 @@ static input_item_t *input_item_NewDrive(const char *drive_label, const char *pa
         return NULL;
 
     int prefix = human(&size);
-    r = asprintf(&label, "%s (%ld %s)", print_label(drive_label, removable), size, vlc_gettext(binary_prefixes[prefix]));
+    r = asprintf(&label, "%s (%" PRIu64 " %s)", print_label(drive_label, removable), size, vlc_gettext(binary_prefixes[prefix]));
     if(r == -1)
     {
         free(uri);

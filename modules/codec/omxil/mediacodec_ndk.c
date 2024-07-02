@@ -46,8 +46,8 @@ static_assert(MC_API_NO_QUIRKS == OMXCODEC_NO_QUIRKS
     && MC_API_AUDIO_QUIRKS_NEED_CHANNELS == OMXCODEC_AUDIO_QUIRKS_NEED_CHANNELS,
     "mediacodec.h/omx_utils.h mismatch");
 
-char* MediaCodec_GetName(vlc_object_t *p_obj, const char *psz_mime,
-                         int hxxx_profile, int *p_quirks);
+char* MediaCodec_GetName(vlc_object_t *p_obj, vlc_fourcc_t codec,
+                         const char *psz_mime, int profile, int *p_quirks);
 
 #define THREAD_NAME "mediacodec_ndk"
 
@@ -266,6 +266,8 @@ static int ConfigureDecoder(mc_api *api, union mc_api_args *p_args)
         return MC_API_ERROR;
     }
 
+    if (p_args->video.b_low_latency)
+        syms.AMediaFormat.setInt32(p_sys->p_format, "low-latency", 1);
     syms.AMediaFormat.setInt32(p_sys->p_format, "encoder", 0);
     syms.AMediaFormat.setString(p_sys->p_format, "mime", api->psz_mime);
     /* No limits for input size */
@@ -580,7 +582,7 @@ static int Prepare(mc_api * api, int i_profile)
     free(api->psz_name);
 
     api->i_quirks = 0;
-    api->psz_name = MediaCodec_GetName(api->p_obj, api->psz_mime,
+    api->psz_name = MediaCodec_GetName(api->p_obj, api->i_codec, api->psz_mime,
                                        i_profile, &api->i_quirks);
     if (!api->psz_name)
         return MC_API_ERROR;

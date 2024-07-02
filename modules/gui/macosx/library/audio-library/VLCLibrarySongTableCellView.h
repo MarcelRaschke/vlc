@@ -22,12 +22,15 @@
 
 #import <Cocoa/Cocoa.h>
 
+#import "library/VLCLibraryTableCellViewProtocol.h"
+
 NS_ASSUME_NONNULL_BEGIN
 
 @class VLCTrackingView;
 @class VLCMediaLibraryMediaItem;
+@class VLCLibraryRepresentedItem;
 
-@interface VLCLibrarySongTableCellView : NSTableCellView
+@interface VLCLibrarySongTableCellView : NSTableCellView<VLCLibraryTableCellViewProtocol>
 
 extern NSString *VLCAudioLibrarySongCellIdentifier;
 
@@ -39,7 +42,7 @@ extern NSString *VLCAudioLibrarySongCellIdentifier;
 @property (readwrite, assign) IBOutlet NSTextField *trackNumberTextField;
 @property (readwrite, assign) IBOutlet NSButton *playInstantlyButton;
 
-@property (readwrite, assign, nonatomic) VLCMediaLibraryMediaItem *representedMediaItem;
+@property (readwrite, nonatomic) VLCLibraryRepresentedItem *representedItem;
 
 - (IBAction)playInstantly:(id)sender;
 

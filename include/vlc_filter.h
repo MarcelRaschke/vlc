@@ -100,9 +100,12 @@ struct vlc_filter_operations
         /** Filter a subpicture (sub filter) */
         subpicture_t *(*filter_sub)(filter_t *, subpicture_t *);
 
-        /** Render text (text renderer) */
-        int (*render)(filter_t *, subpicture_region_t *,
-                      subpicture_region_t *, const vlc_fourcc_t *);
+        /** Render text (text renderer)
+         *
+         * \return a picture-based region or NULL
+         */
+        subpicture_region_t * (*render)(filter_t *,
+                      const subpicture_region_t *, const vlc_fourcc_t *);
     };
 
     union
@@ -367,6 +370,8 @@ static inline int filter_GetInputAttachments( filter_t *p_filter,
  * This function duplicates every variables from the filter, and adds a proxy
  * callback to trigger filter events from obj.
  *
+ * \param obj the object to add the callback proxy to
+ * \param filter the filter object for which the callback will be proxified
  * \param restart_cb a vlc_callback_t to call if the event means restarting the
  * filter (i.e. an event on a non-command variable)
  */
@@ -379,6 +384,8 @@ VLC_API void filter_AddProxyCallbacks( vlc_object_t *obj, filter_t *filter,
  * This function removes the callbacks previously added to every duplicated
  * variables, and removes them afterward.
  *
+ * \param obj the object to remove the callback proxy from
+ * \param filter the filter object for which the callback was proxified
  * \param restart_cb the same vlc_callback_t passed to filter_AddProxyCallbacks
  */
 VLC_API void filter_DelProxyCallbacks( vlc_object_t *obj, filter_t *filter,
@@ -473,7 +480,7 @@ typedef struct filter_chain_t filter_chain_t;
  * \param psz_capability vlc capability of filters in filter chain
  * \return pointer to a filter chain
  */
-filter_chain_t * filter_chain_NewSPU( vlc_object_t *obj, const char *psz_capability )
+filter_chain_t * filter_chain_NewSPU(vlc_object_t *obj, const char *psz_capability)
 VLC_USED;
 #define filter_chain_NewSPU( a, b ) filter_chain_NewSPU( VLC_OBJECT( a ), b )
 
@@ -495,9 +502,9 @@ VLC_USED;
  * Delete filter chain will delete all filters in the chain and free all
  * allocated data. The pointer to the filter chain is then no longer valid.
  *
- * \param p_chain pointer to filter chain
+ * \param chain pointer to filter chain
  */
-VLC_API void filter_chain_Delete( filter_chain_t * );
+VLC_API void filter_chain_Delete(filter_chain_t *chain);
 
 /**
  * Reset filter chain will delete all filters in the chain and
@@ -505,7 +512,7 @@ VLC_API void filter_chain_Delete( filter_chain_t * );
  *
  * \param p_chain pointer to filter chain
  * \param p_fmt_in new fmt_in params
- * \paramt vctx_in new input video context
+ * \param vctx_in new input video context
  * \param p_fmt_out new fmt_out params
  */
 VLC_API void filter_chain_Reset( filter_chain_t *p_chain,
@@ -525,6 +532,7 @@ VLC_API void filter_chain_Clear(filter_chain_t *);
  *
  * \param chain filter chain to append a filter to
  * \param name filter name
+ * \param cfg the configuration chain for the filter
  * \param fmt_out filter output format
  * \return a pointer to the filter or NULL on error
  */
@@ -537,8 +545,7 @@ VLC_API filter_t *filter_chain_AppendFilter(filter_chain_t *chain,
  *
  * \param chain filter chain to append a filter to
  * \param fmt_out filter output format
- * \retval 0 on success
- * \retval -1 on failure
+ * \retval VLC_SUCCESS on success
  */
 VLC_API int filter_chain_AppendConverter(filter_chain_t *chain,
     const es_format_t *fmt_out);
@@ -559,6 +566,9 @@ VLC_API int filter_chain_AppendFromString(filter_chain_t *chain,
  *
  * \param chain filter chain to remove the filter from
  * \param filter filter to remove from the chain and delete
+ *
+ * \note the filter must be created with filter_chain_AppendConverter() or
+ * filter_chain_AppendFilter().
  */
 VLC_API void filter_chain_DeleteFilter(filter_chain_t *chain,
                                        filter_t *filter);
@@ -600,25 +610,6 @@ VLC_API picture_t *filter_chain_VideoFilter(filter_chain_t *chain,
  * Flush a video filter chain.
  */
 VLC_API void filter_chain_VideoFlush( filter_chain_t * );
-
-/**
- * Generate subpictures from a chain of subpicture source "filters".
- *
- * \param chain filter chain
- * \param display_date of subpictures
- */
-void filter_chain_SubSource(filter_chain_t *chain, spu_t *,
-                            vlc_tick_t display_date);
-
-/**
- * Apply filter chain to subpictures.
- *
- * \param chain filter chain
- * \param subpic subpicture to apply filters on
- * \return modified subpicture after applying all subpicture filters
- */
-VLC_API subpicture_t *filter_chain_SubFilter(filter_chain_t *chain,
-                                             subpicture_t *subpic);
 
 /**
  * Apply the filter chain to a mouse state.

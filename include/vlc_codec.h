@@ -186,7 +186,7 @@ struct decoder_t
      * If set, it *may* be called after pf_packetize returned data. It should
      * return CC for the pictures returned by the last pf_packetize call only,
      * channel bitmaps will be used to known which cc channel are present (but
-     * globaly, not necessary for the current packet. Video decoders should use
+     * globally, not necessary for the current packet. Video decoders should use
      * the decoder_QueueCc() function to pass closed captions. */
     vlc_frame_t *       ( * pf_get_cc )      ( decoder_t *, decoder_cc_desc_t * );
 
@@ -516,6 +516,8 @@ static inline subpicture_t *decoder_NewSubpicture( decoder_t *dec,
     subpicture_t *p_subpicture = dec->cbs->spu.buffer_new( dec, p_dyn );
     if( !p_subpicture )
         msg_Warn( dec, "can't get output subpicture" );
+    else
+        p_subpicture->b_subtitle = true;
     return p_subpicture;
 }
 

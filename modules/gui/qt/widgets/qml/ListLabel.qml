@@ -15,11 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as T
+import QtQuick
 import "qrc:///style/"
 
-T.Label {
+LabelExt {
     elide: Text.ElideRight
     font.pixelSize: VLCStyle.fontSize_normal
     font.weight: Font.DemiBold

@@ -25,7 +25,6 @@
 
 #include "mlbasemodel.hpp"
 
-#include <vlc_media_library.h>
 #include "mlhelper.hpp"
 #include "mlqmltypes.hpp"
 
@@ -51,9 +50,10 @@ public:
     enum Roles {
         URL_ID = Qt::UserRole + 1,
         URL_URL,
-        URL_LAST_PLAYED_DATE
+        URL_LAST_PLAYED_DATE,
+        URL_IS_DELETABLE
     };
-    Q_ENUM(Roles);
+    Q_ENUM(Roles)
 
     explicit MLUrlModel(QObject *parent = nullptr);
 
@@ -63,20 +63,22 @@ public:
 
     Q_INVOKABLE void addAndPlay( const QString& url );
 
+    Q_INVOKABLE void deleteStream( const MLItemId itemId );
+
 protected:
     QVariant itemRoleData(MLItem *item, int role) const override;
 
-    std::unique_ptr<MLBaseModel::BaseLoader> createLoader() const override;
+    std::unique_ptr<MLListCacheLoader> createMLLoader() const override;
 
 private:
     vlc_ml_sorting_criteria_t roleToCriteria(int role) const override;
-    virtual void onVlcMlEvent( const MLEvent &event ) override;
+    void onVlcMlEvent( const MLEvent &event ) override;
 
-    struct Loader : public BaseLoader
+    struct Loader : public MLListCacheLoader::MLOp
     {
-        Loader(const MLUrlModel &model) : BaseLoader(model) {}
-        size_t count(vlc_medialibrary_t* ml) const override;
-        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, size_t index, size_t count) const override;
+        using MLListCacheLoader::MLOp::MLOp;
+        size_t count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const override;
+        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const override;
         std::unique_ptr<MLItem> loadItemById(vlc_medialibrary_t* ml, MLItemId itemId) const override;
     };
 };

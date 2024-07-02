@@ -20,6 +20,8 @@
 #ifndef WEBVTT_H
 #define WEBVTT_H
 
+#include <vlc_tick.h>
+
 int  webvtt_OpenDecoder   ( vlc_object_t * );
 void webvtt_CloseDecoder  ( vlc_object_t * );
 
@@ -29,7 +31,17 @@ void webvtt_CloseDemux    ( vlc_object_t * );
 
 #ifdef ENABLE_SOUT
 int  webvtt_OpenEncoder   ( vlc_object_t * );
+
+int  webvtt_OpenMuxer   ( vlc_object_t * );
+void webvtt_CloseMuxer  ( vlc_object_t * );
 #endif
+
+#define ATOM_iden VLC_FOURCC('i', 'd', 'e', 'n')
+#define ATOM_payl VLC_FOURCC('p', 'a', 'y', 'l')
+#define ATOM_sttg VLC_FOURCC('s', 't', 't', 'g')
+#define ATOM_vttc VLC_FOURCC('v', 't', 't', 'c')
+#define ATOM_vtte VLC_FOURCC('v', 't', 't', 'e')
+#define ATOM_vttx VLC_FOURCC('v', 't', 't', 'x')
 
 typedef struct webvtt_text_parser_t webvtt_text_parser_t;
 

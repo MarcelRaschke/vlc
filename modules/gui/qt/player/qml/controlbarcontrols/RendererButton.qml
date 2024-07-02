@@ -18,20 +18,20 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 
-Widgets.IconControlButton {
+Widgets.IconToolButton {
     id: root
 
     signal requestLockUnlockAutoHide(bool lock)
 
-    iconText: VLCIcons.renderer
-    text: I18n.qtr("Renderer")
+    text: VLCIcons.renderer
+    description: qsTr("Renderer")
 
     // NOTE: We want to pop the menu above the button.
     onClicked: menu.popup(this.mapToGlobal(0, 0), true)

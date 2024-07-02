@@ -26,6 +26,7 @@
 #include <vlc_common.h>
 #include <vlc_filter.h>
 #include <vlc_text_style.h>
+#include <vlc_vector.h>
 
 /*****************************************************************************
  * buffer_t: Command and response buffer
@@ -54,7 +55,7 @@ char *BufferGetToken( buffer_t *p_buffer );
 /** struct commandparams_t - command params structure */
 typedef struct commandparams_t
 {
-    int32_t i_id;       /*< overlay id */
+    size_t  i_id;       /*< overlay id */
     int32_t i_shmid;    /*< shared memory identifier */
 
     vlc_fourcc_t fourcc;/*< chroma */
@@ -132,7 +133,11 @@ typedef struct overlay_t
     int i_alpha;
     bool b_active;
 
-    video_format_t format;
+    enum {
+        OVERLAY_UNSET,
+        OVERLAY_IS_TEXT,
+        OVERLAY_IS_PICTURE,
+    } type;
     text_style_t *p_fontstyle;
     union {
         picture_t *p_pic;
@@ -141,23 +146,13 @@ typedef struct overlay_t
 } overlay_t;
 
 overlay_t *OverlayCreate( void );
-int OverlayDestroy( overlay_t *p_ovl );
+void OverlayDestroy( overlay_t *p_ovl );
 
 /*****************************************************************************
  * list_t: Command queue
  *****************************************************************************/
 
-typedef struct list_t
-{
-    overlay_t **pp_head, **pp_tail;
-} list_t;
-
-int do_ListInit( list_t *p_list );
-int do_ListDestroy( list_t *p_list );
-ssize_t ListAdd( list_t *p_list, overlay_t *p_new );
-int ListRemove( list_t *p_list, size_t i_idx );
-overlay_t *ListGet( list_t *p_list, size_t i_idx );
-overlay_t *ListWalk( list_t *p_list );
+typedef struct VLC_VECTOR(overlay_t *) list_t;
 
 /*****************************************************************************
  * filter_sys_t: adjust filter method descriptor

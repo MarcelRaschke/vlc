@@ -27,23 +27,80 @@
 
 #include <vlc_filter.h>
 #include <vlc_modules.h>
+#include <vlc_configuration.h>
+
+#include <vlc_memstream.h>
+
+static void
+LogShader(vlc_object_t *obj, const char *prefix, const opengl_vtable_t *vt, GLuint id)
+{
+    GLint size;
+    vt->GetShaderiv(id, GL_SHADER_SOURCE_LENGTH, &size);
+    char *sources = malloc(size + 1);
+    if (sources == NULL)
+        return;
+
+    vt->GetShaderSource(id, size + 1, NULL, sources);
+
+    struct vlc_memstream stream;
+    int ret = vlc_memstream_open(&stream);
+
+    /* This is debugging code, we don't want an hard failure if
+     * the allocation failed. */
+    if (ret != 0)
+    {
+        free(sources);
+        return;
+    }
+
+    const char *cursor = sources;
+    size_t line = 1;
+    while (cursor != NULL && *cursor != '\0')
+    {
+        const char *end = strchr(cursor, '\n');
+        if (end != NULL)
+        {
+            vlc_memstream_printf(&stream, "%4zu: %.*s\n", line, (int)(ptrdiff_t)(end - cursor), cursor);
+            cursor = end + 1;
+        }
+        else
+        {
+            vlc_memstream_printf(&stream, "%4zu: %s", line, cursor);
+            break;
+        }
+        line++;
+    }
+    free(sources);
+
+    ret = vlc_memstream_close(&stream);
+    if (ret != 0)
+    {
+        return;
+    }
+
+    msg_Err(obj, "%s%s", prefix, stream.ptr);
+    free(stream.ptr);
+}
 
 static void
 LogShaderErrors(vlc_object_t *obj, const opengl_vtable_t *vt, GLuint id)
 {
     GLint info_len;
     vt->GetShaderiv(id, GL_INFO_LOG_LENGTH, &info_len);
-    if (info_len > 0)
-    {
-        char *info_log = malloc(info_len);
-        if (info_log)
-        {
-            GLsizei written;
-            vt->GetShaderInfoLog(id, info_len, &written, info_log);
-            msg_Err(obj, "shader: %s", info_log);
-            free(info_log);
-        }
-    }
+    if (info_len <= 0)
+        return;
+
+    char *info_log = malloc(info_len);
+    if (info_log == NULL)
+        return;
+
+    GLsizei written;
+    vt->GetShaderInfoLog(id, info_len, &written, info_log);
+
+    LogShader(obj, "Shader source:\n", vt, id);
+
+    msg_Err(obj, "shader: %s", info_log);
+    free(info_log);
 }
 
 static void
@@ -51,17 +108,32 @@ LogProgramErrors(vlc_object_t *obj, const opengl_vtable_t *vt, GLuint id)
 {
     GLint info_len;
     vt->GetProgramiv(id, GL_INFO_LOG_LENGTH, &info_len);
-    if (info_len > 0)
+    if (info_len <= 0)
+        return;
+    char *info_log = malloc(info_len);
+    if (info_log == NULL)
+        return;
+
+
+    GLsizei shader_count;
+    GLuint shaders[3];
+    vt->GetAttachedShaders(id, 2, &shader_count, shaders);
+    for (GLsizei i = 0; i < shader_count; ++i)
     {
-        char *info_log = malloc(info_len);
-        if (info_log)
-        {
-            GLsizei written;
-            vt->GetProgramInfoLog(id, info_len, &written, info_log);
-            msg_Err(obj, "program: %s", info_log);
-            free(info_log);
-        }
+        GLint shader_type;
+        vt->GetShaderiv(shaders[i], GL_SHADER_TYPE, &shader_type);
+
+        const char *prefix =
+            shader_type == GL_VERTEX_SHADER ? "vertex shader:\n" :
+            shader_type == GL_FRAGMENT_SHADER ? "fragment shader:\n" :
+            "unknown shader:\n";
+        LogShader(obj, prefix, vt, shaders[i]);
     }
+
+    GLsizei written;
+    vt->GetProgramInfoLog(id, info_len, &written, info_log);
+    msg_Err(obj, "program: %s", info_log);
+    free(info_log);
 }
 
 static GLuint

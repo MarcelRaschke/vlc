@@ -51,28 +51,10 @@ static_assert(VLC_PLAYER_TITLE_MENU == INPUT_TITLE_MENU &&
 #define vlc_player_foreach_inputs(it) \
     for (struct vlc_player_input *it = player->input; it != NULL; it = NULL)
 
-void
-vlc_player_PrepareNextMedia(vlc_player_t *player)
-{
-    vlc_player_assert_locked(player);
-
-    if (!player->media_provider
-     || player->media_stopped_action == VLC_PLAYER_MEDIA_STOPPED_STOP
-     || player->next_media_requested)
-        return;
-
-    assert(player->next_media == NULL);
-    player->next_media =
-        player->media_provider->get_next(player, player->media_provider_data);
-    player->next_media_requested = true;
-}
-
 int
 vlc_player_OpenNextMedia(vlc_player_t *player)
 {
     assert(player->input == NULL);
-
-    player->next_media_requested = false;
 
     /* Tracks string ids are only remembered for one media */
     free(player->video_string_ids);
@@ -223,7 +205,12 @@ vlc_player_destructor_Thread(void *data)
                                          VLC_TICK_INVALID);
             vlc_player_destructor_AddStoppingInput(player, input);
 
+            /* Note: no need to hold the media here, it will be valid
+             * until input_Close() and the event is sent from the thread
+             * that will call this function. */
+            input_item_t *media = input_GetItem(input->thread);
             input_Stop(input->thread);
+            vlc_player_SendEvent(player, on_stopping_current_media, media);
         }
 
         bool keep_sout = true;
@@ -998,6 +985,17 @@ vlc_player_RemoveListener(vlc_player_t *player,
     free(id);
 }
 
+static void
+vlc_player_InvalidateNextMedia(vlc_player_t *player)
+{
+    vlc_player_assert_locked(player);
+    if (player->next_media)
+    {
+        input_item_Release(player->next_media);
+        player->next_media = NULL;
+    }
+}
+
 int
 vlc_player_SetCurrentMedia(vlc_player_t *player, input_item_t *media)
 {
@@ -1012,14 +1010,12 @@ vlc_player_SetCurrentMedia(vlc_player_t *player, input_item_t *media)
         /* Switch to this new media when the current input is stopped */
         player->next_media = input_item_Hold(media);
         player->releasing_media = false;
-        player->next_media_requested = true;
     }
     else if (player->media)
     {
         /* The current media will be set to NULL once the current input is
          * stopped */
         player->releasing_media = true;
-        player->next_media_requested = false;
     }
     else
         return VLC_SUCCESS;
@@ -1039,6 +1035,28 @@ vlc_player_SetCurrentMedia(vlc_player_t *player, input_item_t *media)
 
     /* We can switch to the next media directly */
     return vlc_player_OpenNextMedia(player);
+}
+
+void
+vlc_player_SetNextMedia(vlc_player_t *player, input_item_t *media)
+{
+    vlc_player_assert_locked(player);
+
+    /* Order is important, hold the new media before releasing the old one */
+    input_item_t *next_media = media != NULL ? input_item_Hold(media) : NULL;
+
+    if (player->next_media != NULL)
+        input_item_Release(player->next_media);
+
+    player->next_media = next_media;
+}
+
+input_item_t *
+vlc_player_GetNextMedia(vlc_player_t *player)
+{
+    vlc_player_assert_locked(player);
+
+    return player->next_media;
 }
 
 input_item_t *
@@ -1121,19 +1139,6 @@ vlc_player_GetAssociatedSubsFPS(vlc_player_t *player)
     return var_GetFloat(player, "sub-fps");
 }
 
-void
-vlc_player_InvalidateNextMedia(vlc_player_t *player)
-{
-    vlc_player_assert_locked(player);
-    if (player->next_media)
-    {
-        input_item_Release(player->next_media);
-        player->next_media = NULL;
-    }
-    player->next_media_requested = false;
-
-}
-
 int
 vlc_player_Start(vlc_player_t *player)
 {
@@ -1151,12 +1156,33 @@ vlc_player_Start(vlc_player_t *player)
             player->started = true;
             return VLC_SUCCESS;
         }
+        else if (unlikely(player->media != NULL))
+        {
+            /* The current media is being stopped while the user requested to
+             * play it again. Tell the thread to play the same media when
+             * ready. */
+            player->started = true;
+            player->next_media = input_item_Hold(player->media);
+            player->releasing_media = false;
+            return VLC_SUCCESS;
+        }
         else
             return VLC_EGENERIC;
     }
 
     if (!player->media)
-        return VLC_EGENERIC;
+    {
+        if (player->next_media != NULL)
+        {
+            /* The user called only SetNextMedia() and not SetCurrentMedia(),
+             * so open the next media directly from here. */
+            int ret = vlc_player_OpenNextMedia(player);
+            if (ret != VLC_SUCCESS)
+                return ret;
+        }
+        else
+            return VLC_EGENERIC;
+    }
 
     if (!player->input)
     {
@@ -1199,17 +1225,6 @@ vlc_player_Stop(vlc_player_t *player)
     vlc_player_destructor_AddInput(player, input);
     player->input = NULL;
     return VLC_SUCCESS;
-}
-
-void
-vlc_player_SetMediaStoppedAction(vlc_player_t *player,
-                                 enum vlc_player_media_stopped_action action)
-{
-    vlc_player_assert_locked(player);
-    player->media_stopped_action = action;
-    var_SetBool(player, "play-and-pause",
-                action == VLC_PLAYER_MEDIA_STOPPED_PAUSE);
-    vlc_player_SendEvent(player, on_media_stopped_action_changed, action);
 }
 
 void
@@ -1362,7 +1377,7 @@ vlc_player_GetTime(vlc_player_t *player)
     if (!input)
         return VLC_TICK_INVALID;
 
-    return vlc_player_input_GetTime(input);
+    return vlc_player_input_GetTime(input, false, vlc_tick_now());
 }
 
 double
@@ -1370,18 +1385,7 @@ vlc_player_GetPosition(vlc_player_t *player)
 {
     struct vlc_player_input *input = vlc_player_get_input_locked(player);
 
-    return input ? vlc_player_input_GetPos(input) : -1.f;
-}
-
-static inline void
-vlc_player_assert_seek_params(enum vlc_player_seek_speed speed,
-                              enum vlc_player_whence whence)
-{
-    assert(speed == VLC_PLAYER_SEEK_PRECISE
-        || speed == VLC_PLAYER_SEEK_FAST);
-    assert(whence == VLC_PLAYER_WHENCE_ABSOLUTE
-        || whence == VLC_PLAYER_WHENCE_RELATIVE);
-    (void) speed; (void) whence;
+    return input ? vlc_player_input_GetPos(input, false, vlc_tick_now()) : -1.f;
 }
 
 void
@@ -1390,10 +1394,11 @@ vlc_player_DisplayPosition(vlc_player_t *player)
     struct vlc_player_input *input = vlc_player_get_input_locked(player);
     if (!input)
         return;
+
+    vlc_tick_t now = vlc_tick_now();
     vlc_player_osd_Position(player, input,
-                            vlc_player_input_GetTime(input),
-                            vlc_player_input_GetPos(input),
-                            VLC_PLAYER_WHENCE_ABSOLUTE);
+                            vlc_player_input_GetTime(input, false, now),
+                            vlc_player_input_GetPos(input, false, now));
 }
 
 void
@@ -1401,24 +1406,9 @@ vlc_player_SeekByPos(vlc_player_t *player, double position,
                      enum vlc_player_seek_speed speed,
                      enum vlc_player_whence whence)
 {
-    vlc_player_assert_seek_params(speed, whence);
-
     struct vlc_player_input *input = vlc_player_get_input_locked(player);
-    if (!input)
-        return;
-
-    const int type =
-        whence == VLC_PLAYER_WHENCE_ABSOLUTE ? INPUT_CONTROL_SET_POSITION
-                                             : INPUT_CONTROL_JUMP_POSITION;
-    int ret = input_ControlPush(input->thread, type,
-        &(input_control_param_t) {
-            .pos.f_val = position,
-            .pos.b_fast_seek = speed == VLC_PLAYER_SEEK_FAST,
-    });
-
-    if (ret == VLC_SUCCESS)
-        vlc_player_osd_Position(player, input, VLC_TICK_INVALID, position,
-                                whence);
+    if (input != NULL)
+        vlc_player_input_SeekByPos(input, position, speed, whence);
 }
 
 void
@@ -1426,23 +1416,9 @@ vlc_player_SeekByTime(vlc_player_t *player, vlc_tick_t time,
                       enum vlc_player_seek_speed speed,
                       enum vlc_player_whence whence)
 {
-    vlc_player_assert_seek_params(speed, whence);
-
     struct vlc_player_input *input = vlc_player_get_input_locked(player);
-    if (!input)
-        return;
-
-    const int type =
-        whence == VLC_PLAYER_WHENCE_ABSOLUTE ? INPUT_CONTROL_SET_TIME
-                                             : INPUT_CONTROL_JUMP_TIME;
-    int ret = input_ControlPush(input->thread, type,
-        &(input_control_param_t) {
-            .time.i_val = time,
-            .time.b_fast_seek = speed == VLC_PLAYER_SEEK_FAST,
-    });
-
-    if (ret == VLC_SUCCESS)
-        vlc_player_osd_Position(player, input, time, -1, whence);
+    if (input != NULL)
+        vlc_player_input_SeekByTime(input, time, speed, whence);
 }
 
 void
@@ -1596,16 +1572,8 @@ vlc_player_UpdateViewpoint(vlc_player_t *player,
                            enum vlc_player_whence whence)
 {
     struct vlc_player_input *input = vlc_player_get_input_locked(player);
-    if (input)
-    {
-        input_control_param_t param = { .viewpoint = *viewpoint };
-        if (whence == VLC_PLAYER_WHENCE_ABSOLUTE)
-            input_ControlPush(input->thread, INPUT_CONTROL_SET_VIEWPOINT,
-                              &param);
-        else
-            input_ControlPush(input->thread, INPUT_CONTROL_UPDATE_VIEWPOINT,
-                              &param);
-    }
+    if (input != NULL)
+        vlc_player_input_UpdateViewpoint(input, viewpoint, whence);
 }
 
 bool
@@ -1651,7 +1619,7 @@ vlc_player_SetCategoryDelay(vlc_player_t *player, enum es_format_category_e cat,
     if (!input)
         return VLC_EGENERIC;
 
-    if (cat != AUDIO_ES && cat != SPU_ES)
+    if (cat != AUDIO_ES && cat != SPU_ES && cat != VIDEO_ES)
         return VLC_EGENERIC;
     vlc_tick_t *cat_delay = &input->cat_delays[cat];
 
@@ -1663,9 +1631,7 @@ vlc_player_SetCategoryDelay(vlc_player_t *player, enum es_format_category_e cat,
         delay = *cat_delay;
     }
 
-    const input_control_param_t param = { .cat_delay = { cat, delay } };
-    int ret = input_ControlPush(input->thread, INPUT_CONTROL_SET_CATEGORY_DELAY,
-                                &param);
+    int ret = input_SetEsCatDelay(input->thread, cat, delay);
     if (ret == VLC_SUCCESS)
     {
         vlc_player_osd_Message(player, _("%s delay: %i ms"),
@@ -1936,16 +1902,12 @@ vlc_player_Delete(vlc_player_t *player)
 }
 
 vlc_player_t *
-vlc_player_New(vlc_object_t *parent, enum vlc_player_lock_type lock_type,
-               const struct vlc_player_media_provider *media_provider,
-               void *media_provider_data)
+vlc_player_New(vlc_object_t *parent, enum vlc_player_lock_type lock_type)
 {
     audio_output_t *aout = NULL;
     vlc_player_t *player = vlc_custom_create(parent, sizeof(*player), "player");
     if (!player)
         return NULL;
-
-    assert(!media_provider || media_provider->get_next);
 
     vlc_list_init(&player->listeners);
     vlc_list_init(&player->metadata_listeners);
@@ -1954,13 +1916,10 @@ vlc_player_New(vlc_object_t *parent, enum vlc_player_lock_type lock_type,
     vlc_list_init(&player->destructor.inputs);
     vlc_list_init(&player->destructor.stopping_inputs);
     vlc_list_init(&player->destructor.joinable_inputs);
-    player->media_stopped_action = VLC_PLAYER_MEDIA_STOPPED_CONTINUE;
     player->start_paused = false;
     player->pause_on_cork = false;
     player->corked = false;
     player->renderer = NULL;
-    player->media_provider = media_provider;
-    player->media_provider_data = media_provider_data;
     player->media = NULL;
     player->input = NULL;
     player->global_state = VLC_PLAYER_STATE_STOPPED;
@@ -1970,7 +1929,6 @@ vlc_player_New(vlc_object_t *parent, enum vlc_player_lock_type lock_type,
     player->eos_burst_count = 0;
 
     player->releasing_media = false;
-    player->next_media_requested = false;
     player->next_media = NULL;
 
     player->video_string_ids = player->audio_string_ids =

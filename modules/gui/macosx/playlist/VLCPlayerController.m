@@ -22,6 +22,7 @@
 
 #import "VLCPlayerController.h"
 
+#import <vlc_configuration.h>
 #import <vlc_url.h>
 
 #import "extensions/NSString+Helpers.h"
@@ -128,7 +129,6 @@ const CGFloat VLCVolumeDefault = 1.;
 - (void)programListChanged;
 - (void)programSelectionChanged:(int)selectedID;
 - (void)ABLoopStateChanged:(enum vlc_player_abloop)abLoopState;
-- (void)stopActionChanged:(enum vlc_player_media_stopped_action)stoppedAction;
 - (void)metaDataChangedForInput:(input_item_t *)inputItem;
 - (void)voutListUpdated;
 
@@ -429,17 +429,6 @@ static void cb_player_atobloop_changed(vlc_player_t *p_player,
     });
 }
 
-static void cb_player_media_stopped_action_changed(vlc_player_t *p_player,
-                                                   enum vlc_player_media_stopped_action newAction,
-                                                   void *p_data)
-{
-    VLC_UNUSED(p_player);
-    dispatch_async(dispatch_get_main_queue(), ^{
-        VLCPlayerController *playerController = (__bridge VLCPlayerController *)p_data;
-        [playerController stopActionChanged:newAction];
-    });
-}
-
 static void cb_player_item_meta_changed(vlc_player_t *p_player,
                                         input_item_t *p_mediaItem,
                                         void *p_data)
@@ -473,39 +462,38 @@ static void cb_player_vout_changed(vlc_player_t *p_player,
 }
 
 static const struct vlc_player_cbs player_callbacks = {
-    cb_player_current_media_changed,
-    cb_player_state_changed,
-    cb_player_error_changed,
-    cb_player_buffering,
-    cb_player_rate_changed,
-    cb_player_capabilities_changed,
-    cb_player_position_changed,
-    cb_player_length_changed,
-    cb_player_track_list_changed,
-    cb_player_track_selection_changed,
-    cb_player_track_delay_changed,
-    cb_player_program_list_changed,
-    cb_player_program_selection_changed,
-    cb_player_titles_changed,
-    cb_player_title_selection_changed,
-    cb_player_chapter_selection_changed,
-    cb_player_teletext_menu_availability_changed,
-    cb_player_teletext_enabled_changed,
-    cb_player_teletext_page_changed,
-    cb_player_teletext_transparency_changed,
-    cb_player_category_delay_changed,
-    cb_player_associated_subs_fps_changed,
-    cb_player_renderer_changed,
-    cb_player_record_changed,
-    NULL, //cb_player_signal_changed,
-    cb_player_stats_changed,
-    cb_player_atobloop_changed,
-    cb_player_media_stopped_action_changed,
-    cb_player_item_meta_changed,
-    NULL, //cb_player_item_epg_changed,
-    NULL, //cb_player_subitems_changed,
-    cb_player_vout_changed,
-    NULL, //on_cork_changed
+    .on_current_media_changed = cb_player_current_media_changed,
+    .on_state_changed = cb_player_state_changed,
+    .on_error_changed = cb_player_error_changed,
+    .on_buffering_changed = cb_player_buffering,
+    .on_rate_changed = cb_player_rate_changed,
+    .on_capabilities_changed = cb_player_capabilities_changed,
+    .on_position_changed = cb_player_position_changed,
+    .on_length_changed = cb_player_length_changed,
+    .on_track_list_changed = cb_player_track_list_changed,
+    .on_track_selection_changed = cb_player_track_selection_changed,
+    .on_track_delay_changed = cb_player_track_delay_changed,
+    .on_program_list_changed = cb_player_program_list_changed,
+    .on_program_selection_changed = cb_player_program_selection_changed,
+    .on_titles_changed = cb_player_titles_changed,
+    .on_title_selection_changed = cb_player_title_selection_changed,
+    .on_chapter_selection_changed = cb_player_chapter_selection_changed,
+    .on_teletext_menu_changed = cb_player_teletext_menu_availability_changed,
+    .on_teletext_enabled_changed = cb_player_teletext_enabled_changed,
+    .on_teletext_page_changed = cb_player_teletext_page_changed,
+    .on_teletext_transparency_changed = cb_player_teletext_transparency_changed,
+    .on_category_delay_changed = cb_player_category_delay_changed,
+    .on_associated_subs_fps_changed = cb_player_associated_subs_fps_changed,
+    .on_renderer_changed = cb_player_renderer_changed,
+    .on_recording_changed = cb_player_record_changed,
+    .on_signal_changed = NULL,
+    .on_statistics_changed = cb_player_stats_changed,
+    .on_atobloop_changed = cb_player_atobloop_changed,
+    .on_media_meta_changed = cb_player_item_meta_changed,
+    .on_media_epg_changed = NULL,
+    .on_media_subitems_changed = NULL,
+    .on_vout_changed = cb_player_vout_changed,
+    .on_cork_changed = NULL,
 };
 
 #pragma mark - video specific callback implementations
@@ -570,7 +558,7 @@ static int BossCallback(vlc_object_t *p_this,
         dispatch_async(dispatch_get_main_queue(), ^{
             VLCPlayerController *playerController = (__bridge VLCPlayerController *)p_data;
             [playerController pause];
-            [[NSApplication sharedApplication] hide:nil];
+            [NSApplication.sharedApplication hide:nil];
         });
         return VLC_SUCCESS;
     }
@@ -584,7 +572,7 @@ static int BossCallback(vlc_object_t *p_this,
 {
     self = [super init];
     if (self) {
-        _defaultNotificationCenter = [NSNotificationCenter defaultCenter];
+        _defaultNotificationCenter = NSNotificationCenter.defaultCenter;
         [_defaultNotificationCenter addObserver:self
                                        selector:@selector(applicationWillTerminate:)
                                            name:NSApplicationWillTerminateNotification
@@ -608,8 +596,13 @@ static int BossCallback(vlc_object_t *p_this,
         _playerVoutListenerID = vlc_player_vout_AddListener(_p_player,
                                                             &player_vout_callbacks,
                                                             (__bridge void *)self);
-        
+
         _volume = VLCVolumeDefault;
+
+        _aLoopTime = -1;
+        _bLoopTime = -1;
+        _aLoopPosition = -1;
+        _bLoopPosition = -1;
 
         libvlc_int_t *libvlc = vlc_object_instance(getIntf());
         var_AddCallback(libvlc, "intf-boss", BossCallback, (__bridge void *)self);
@@ -721,18 +714,6 @@ static int BossCallback(vlc_object_t *p_this,
 {
     vlc_player_Lock(_p_player);
     vlc_player_Stop(_p_player);
-    vlc_player_Unlock(_p_player);
-}
-
-- (void)stopActionChanged:(enum vlc_player_media_stopped_action)stoppedAction
-{
-    _actionAfterStop = stoppedAction;
-}
-
-- (void)setActionAfterStop:(enum vlc_player_media_stopped_action)actionAfterStop
-{
-    vlc_player_Lock(_p_player);
-    vlc_player_SetMediaStoppedAction(_p_player, actionAfterStop);
     vlc_player_Unlock(_p_player);
 }
 
@@ -1414,7 +1395,7 @@ static int BossCallback(vlc_object_t *p_this,
 
 - (void)trackListChanged
 {
-    [_defaultNotificationCenter postNotificationName:VLCPlayerTrackListChanged object:nil];
+    [_defaultNotificationCenter postNotificationName:VLCPlayerTrackListChanged object:self];
 }
 
 - (void)selectTrack:(VLCTrackMetaData *)track exclusively:(BOOL)exclusiveSelection
@@ -1547,6 +1528,21 @@ static int BossCallback(vlc_object_t *p_this,
 - (void)ABLoopStateChanged:(enum vlc_player_abloop)abLoopState
 {
     _abLoopState = abLoopState;
+
+    vlc_tick_t a_time = -1;
+    vlc_tick_t b_time = -1;
+    float a_pos = -1;
+    float b_pos = -1;
+    
+    vlc_player_Lock(_p_player);
+    const enum vlc_player_abloop state = vlc_player_GetAtoBLoop(_p_player, &a_time, &a_pos, &b_time, &b_pos);
+    vlc_player_Unlock(_p_player);
+
+    _aLoopTime = a_time;
+    _bLoopTime = b_time;
+    _aLoopPosition = a_pos;
+    _bLoopPosition = b_pos;
+
     [_defaultNotificationCenter postNotificationName:VLCPlayerABLoopStateChanged
                                               object:self];
 }
@@ -1735,7 +1731,7 @@ static int BossCallback(vlc_object_t *p_this,
 
 - (void)toggleMute
 {
-    vlc_player_aout_Mute(_p_player, !_mute);
+    vlc_player_aout_ToggleMute(_p_player);
 }
 
 - (audio_output_t *)mainAudioOutput

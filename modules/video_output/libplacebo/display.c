@@ -28,10 +28,10 @@
 #endif
 
 #include <vlc_common.h>
-#include <vlc_ancillary.h>
 #include <vlc_plugin.h>
 #include <vlc_vout_display.h>
 #include <vlc_fs.h>
+#include <vlc_subpicture.h>
 
 #include "utils.h"
 #include "instance.h"
@@ -46,6 +46,7 @@ typedef struct vout_display_sys_t
     vlc_placebo_t *pl;
     pl_renderer renderer;
     pl_tex plane_tex[4];
+    pl_tex fbo;
 
     // Pool of textures for the subpictures
     struct pl_overlay *overlays;
@@ -74,13 +75,11 @@ typedef struct vout_display_sys_t
     const struct pl_hook *hook;
     char *hook_path;
 
-#if PL_API_VER >= 185
     struct pl_dovi_metadata dovi_metadata;
-#endif
 } vout_display_sys_t;
 
 // Display callbacks
-static void PictureRender(vout_display_t *, picture_t *, subpicture_t *, vlc_tick_t);
+static void PictureRender(vout_display_t *, picture_t *, const vlc_render_subpicture *, vlc_tick_t);
 static void PictureDisplay(vout_display_t *, picture_t *);
 static int Control(vout_display_t *, int);
 static void Close(vout_display_t *);
@@ -158,18 +157,16 @@ static int Open(vout_display_t *vd,
     static const vlc_fourcc_t subfmts[] = {
         VLC_CODEC_RGBA,
         VLC_CODEC_BGRA,
-        VLC_CODEC_RGB8,
-        VLC_CODEC_RGB12,
-        VLC_CODEC_RGB15,
-        VLC_CODEC_RGB16,
+        VLC_CODEC_RGB555LE,
+        VLC_CODEC_RGB565LE,
         VLC_CODEC_RGB24,
-        VLC_CODEC_RGB32,
+        VLC_CODEC_XRGB,
+        VLC_CODEC_RGB233,
         VLC_CODEC_GREY,
         0
     };
 
     vd->info.subpicture_chromas = subfmts;
-
     vd->ops = &ops;
 
     UpdateParams(vd);
@@ -213,7 +210,8 @@ static void Close(vout_display_t *vd)
 }
 
 static void PictureRender(vout_display_t *vd, picture_t *pic,
-                          subpicture_t *subpicture, vlc_tick_t date)
+                          const vlc_render_subpicture *subpicture,
+                          vlc_tick_t date)
 {
     VLC_UNUSED(date);
     vout_display_sys_t *sys = vd->sys;
@@ -228,6 +226,7 @@ static void PictureRender(vout_display_t *vd, picture_t *pic,
         vlc_placebo_ReleaseCurrent(sys->pl);
         return; // Probably benign error, ignore it
     }
+    sys->fbo = frame.fbo;
 
 #if PL_API_VER >= 199
     bool need_vflip = false;
@@ -247,9 +246,7 @@ static void PictureRender(vout_display_t *vd, picture_t *pic,
         },
     };
 
-#if PL_API_VER >= 185
     vlc_placebo_frame_DoviMetadata(&img, pic, &sys->dovi_metadata);
-#endif
 
     struct vlc_ancillary *iccp = picture_GetAncillary(pic, VLC_ANCILLARY_ID_ICC);
     if (iccp) {
@@ -267,7 +264,7 @@ static void PictureRender(vout_display_t *vd, picture_t *pic,
 
     // Upload the image data for each plane
     struct pl_plane_data data[4];
-    if (!vlc_placebo_PlaneData(pic, data, NULL)) {
+    if (!vlc_placebo_PlaneData(pic, data)) {
         // This should never happen, in theory
         assert(!"Failed processing the picture_t into pl_plane_data!?");
     }
@@ -289,35 +286,24 @@ static void PictureRender(vout_display_t *vd, picture_t *pic,
     struct pl_frame target;
     pl_frame_from_swapchain(&target, &frame);
     if (vd->cfg->icc_profile) {
-        target.profile.signature = sys->target_icc_signature;
         target.profile.data = vd->cfg->icc_profile->data;
         target.profile.len = vd->cfg->icc_profile->size;
+        target.profile.signature = sys->target_icc_signature;
+        if (!target.profile.signature) {
+            pl_icc_profile_compute_signature(&target.profile);
+            sys->target_icc_signature = target.profile.signature;
+        }
     }
 
     // Set the target crop dynamically based on the swapchain flip state
     vout_display_place_t place;
-    struct vout_display_placement dp = vd->cfg->display;
-    dp.width = frame.fbo->params.w;
-    dp.height = frame.fbo->params.h;
-    if (need_vflip) {
-        switch (dp.align.vertical) {
-        case VLC_VIDEO_ALIGN_TOP:
-            dp.align.vertical = VLC_VIDEO_ALIGN_BOTTOM;
-            break;
-        case VLC_VIDEO_ALIGN_BOTTOM:
-            dp.align.vertical = VLC_VIDEO_ALIGN_TOP;
-            break;
-        default:
-            break;
-        }
-    }
-    vout_display_PlacePicture(&place, vd->fmt, &dp);
-    if (need_vflip) {
-        place.y = frame.fbo->params.h - place.y;
+    vout_display_PlacePicture(&place, vd->fmt, &vd->cfg->display);
+    if (need_vflip)
+    {
+        place.y = place.height + place.y;
         place.height = -place.height;
     }
 
-#if PL_API_VER >= 162
 #define SWAP(a, b) { float _tmp = (a); (a) = (b); (b) = _tmp; }
     switch (vd->fmt->orientation) {
     case ORIENT_HFLIPPED:
@@ -345,7 +331,6 @@ static void PictureRender(vout_display_t *vd, picture_t *pic,
     default:
         break;
     }
-#endif
 
     target.crop = (struct pl_rect2df) {
         place.x, place.y, place.x + place.width, place.y + place.height,
@@ -354,12 +339,8 @@ static void PictureRender(vout_display_t *vd, picture_t *pic,
     // Override the target colorimetry only if the user requests it
     if (sys->target.primaries)
         target.color.primaries = sys->target.primaries;
-    if (sys->target.transfer) {
+    if (sys->target.transfer)
         target.color.transfer = sys->target.transfer;
-#if PL_API_VER < 189
-        target.color.light = PL_COLOR_LIGHT_UNKNOWN; // re-infer
-#endif
-    }
     if (sys->dither_depth > 0) {
         // override the sample depth without affecting the color encoding
         struct pl_bit_encoding *bits = &target.repr.bits;
@@ -369,9 +350,8 @@ static void PictureRender(vout_display_t *vd, picture_t *pic,
     }
 
     if (subpicture) {
-        int num_regions = 0;
-        for (subpicture_region_t *r = subpicture->p_region; r; r = r->p_next)
-            num_regions++;
+        int num_regions = subpicture->regions.size;
+        const struct subpicture_region_rendered *r;
 
         // Grow the overlays array if needed
         if (num_regions > sys->num_overlays) {
@@ -391,11 +371,11 @@ static void PictureRender(vout_display_t *vd, picture_t *pic,
         }
 
         // Upload all of the regions
-        subpicture_region_t *r = subpicture->p_region;
-        for (int i = 0; i < num_regions; i++, r = r->p_next) {
+        int i = 0;
+        vlc_vector_foreach(r, &subpicture->regions) {
             assert(r->p_picture->i_planes == 1);
             struct pl_plane_data subdata[4];
-            if (!vlc_placebo_PlaneData(r->p_picture, subdata, NULL))
+            if (!vlc_placebo_PlaneData(r->p_picture, subdata))
                 assert(!"Failed processing the subpicture_t into pl_plane_data!?");
 
             if (!pl_upload_plane(gpu, NULL, &sys->overlay_tex[i], subdata)) {
@@ -408,24 +388,25 @@ static void PictureRender(vout_display_t *vd, picture_t *pic,
             sys->overlays[i] = (struct pl_overlay) {
                 .tex   = sys->overlay_tex[i],
                 .mode  = PL_OVERLAY_NORMAL,
-                .color = vlc_placebo_ColorSpace(&r->fmt),
-                .repr  = vlc_placebo_ColorRepr(&r->fmt),
+                .color = vlc_placebo_ColorSpace(&r->p_picture->format),
+                .repr  = vlc_placebo_ColorRepr(&r->p_picture->format),
                 .parts = &sys->overlay_parts[i],
                 .num_parts = 1,
             };
 
             sys->overlay_parts[i] = (struct pl_overlay_part) {
                 .src = {
-                    .x1 = r->fmt.i_visible_width,
-                    .y1 = r->fmt.i_visible_height,
+                    .x1 = r->p_picture->format.i_visible_width,
+                    .y1 = r->p_picture->format.i_visible_height,
                 },
                 .dst = {
-                    .x0 = place.x + r->i_x,
-                    .y0 = place.y + r->i_y * ysign,
-                    .x1 = place.x + r->i_x + r->fmt.i_visible_width,
-                    .y1 = place.y + (r->i_y + r->fmt.i_visible_height) * ysign,
+                    .x0 = r->place.x,
+                    .y0 = r->place.y * ysign,
+                    .x1 = (r->place.x + r->place.width ),
+                    .y1 = (r->place.y + r->place.height) * ysign,
                 },
             };
+            i++;
         }
 
         // Update the target information to reference the subpictures
@@ -434,13 +415,13 @@ static void PictureRender(vout_display_t *vd, picture_t *pic,
     }
 
     // If we don't cover the entire output, clear it first
-    struct pl_rect2d full = {0, 0, frame.fbo->params.w, frame.fbo->params.h };
-    struct pl_rect2d norm = {place.x, place.y, place.x + place.width, place.y + place.height };
-    pl_rect2d_normalize(&norm);
-    if (!pl_rect2d_eq(norm, full)) {
+    // struct pl_rect2d full = {0, 0, frame.fbo->params.w, frame.fbo->params.h };
+    // struct pl_rect2d norm = {place.x, place.y, place.x + place.width, place.y + place.height };
+    // pl_rect2d_normalize(&norm);
+    // if (!pl_rect2d_eq(norm, full)) {
         // TODO: make background color configurable?
         pl_tex_clear(gpu, frame.fbo, (float[4]){ 0.0, 0.0, 0.0, 0.0 });
-    }
+    // }
 
     switch (sys->lut_mode) {
     case LUT_DECODING:
@@ -465,8 +446,7 @@ done:
     if (failed)
         pl_tex_clear(gpu, frame.fbo, (float[4]){ 1.0, 0.0, 0.0, 1.0 });
 
-    if (!pl_swapchain_submit_frame(sys->pl->swapchain))
-        msg_Err(vd, "Failed rendering frame!");
+    pl_gpu_flush(gpu);
 
     vlc_placebo_ReleaseCurrent(sys->pl);
 }
@@ -475,7 +455,13 @@ static void PictureDisplay(vout_display_t *vd, picture_t *pic)
 {
     VLC_UNUSED(pic);
     vout_display_sys_t *sys = vd->sys;
+    if (!sys->fbo)
+        return;
+
+    sys->fbo = NULL;
     if (vlc_placebo_MakeCurrent(sys->pl) == VLC_SUCCESS) {
+        if (!pl_swapchain_submit_frame(sys->pl->swapchain))
+            msg_Err(vd, "Failed rendering frame!");
         pl_swapchain_swap_buffers(sys->pl->swapchain);
         vlc_placebo_ReleaseCurrent(sys->pl);
     }
@@ -524,7 +510,7 @@ static void UpdateColorspaceHint(vout_display_t *vd, const video_format_t *fmt)
 static void UpdateIccProfile(vout_display_t *vd, const vlc_icc_profile_t *prof)
 {
     vout_display_sys_t *sys = vd->sys;
-    sys->target_icc_signature++;
+    sys->target_icc_signature = 0; /* recompute signature on next PictureRender */
     (void) prof; /* we get the current value from vout_display_cfg_t */
 }
 
@@ -535,10 +521,6 @@ static int Control(vout_display_t *vd, int query)
     switch (query)
     {
     case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
-    case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
-    case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
-    case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
-    case VOUT_DISPLAY_CHANGE_ZOOM: {
         /* The following resize should be automatic on most platforms but can
          * trigger bugs on some platform with some drivers, that have been seen
          * on Windows in particular. Doing it right now enforces the correct
@@ -546,7 +528,6 @@ static int Control(vout_display_t *vd, int query)
          * In addition, platforms like Wayland need the call as the size of the
          * window is defined by the size of the content, and not the opposite.
          * The swapchain creation won't be done twice with this call. */
-        if (query == VOUT_DISPLAY_CHANGE_DISPLAY_SIZE)
         {
             int width = (int) vd->cfg->display.width;
             int height = (int) vd->cfg->display.height;
@@ -565,7 +546,10 @@ static int Control(vout_display_t *vd, int query)
             */
         }
         return VLC_SUCCESS;
-    }
+    case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
+    case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
+    case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
+        return VLC_SUCCESS;
 
     default:
         msg_Err (vd, "Unknown request %d", query);
@@ -736,6 +720,13 @@ vlc_module_begin ()
     add_float("pl-scene-threshold-high", pl_peak_detect_default_params.scene_threshold_high,
             SCENE_THRESHOLD_HIGH_TEXT, SCENE_THRESHOLD_HIGH_LONGTEXT)
 
+#if PL_API_VER >= 285
+    add_float_with_range("pl-contrast-recovery", pl_color_map_default_params.contrast_recovery,
+            0., 3., CONTRAST_RECOVERY_TEXT, CONTRAST_RECOVERY_LONGTEXT)
+    add_float_with_range("pl-contrast-smoothness", pl_color_map_default_params.contrast_smoothness,
+            0., 10., CONTRAST_SMOOTHNESS_TEXT, CONTRAST_SMOOTHNESS_LONGTEXT)
+#endif
+
     set_section("Dithering", NULL)
     add_integer("pl-dither", -1,
             DITHER_TEXT, DITHER_LONGTEXT)
@@ -833,10 +824,18 @@ static void UpdateParams(vout_display_t *vd)
     sys->peak_detect.smoothing_period = var_InheritFloat(vd, "pl-peak-period");
     sys->peak_detect.scene_threshold_low = var_InheritFloat(vd, "pl-scene-threshold-low");
     sys->peak_detect.scene_threshold_high = var_InheritFloat(vd, "pl-scene-threshold-high");
-    if (sys->peak_detect.smoothing_period > 0.0) {
+#if PL_API_VER >= 254
+    sys->peak_detect.allow_delayed = var_InheritBool(vd, "pl-delayed-peak");
+#else
+    sys->params.allow_delayed_peak_detect = var_InheritBool(vd, "pl-delayed-peak");
+#endif
+    if (sys->peak_detect.smoothing_period > 0.0)
         sys->params.peak_detect_params = &sys->peak_detect;
-        sys->params.allow_delayed_peak_detect = var_InheritBool(vd, "pl-delayed-peak");
-    }
+
+#if PL_API_VER >= 285
+    sys->color_map.contrast_recovery = var_InheritFloat(vd, "pl-contrast-recovery");
+    sys->color_map.contrast_smoothness = var_InheritFloat(vd, "pl-contrast-smoothness");
+#endif
 
     int preset = var_InheritInteger(vd, "pl-upscaler-preset");
     sys->params.upscaler = scale_config[preset];

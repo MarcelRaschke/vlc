@@ -96,7 +96,7 @@ static void CLUTIdxToYUV(const struct subs_format_t *subs,
 {
     for( int i = 0; i < 4 ; i++ )
     {
-        uint32_t i_ayvu = subs->spu.palette[1+idx[i]];
+        uint32_t i_ayvu = subs->spu.palette[idx[i]];
         /* FIXME: this job should be done sooner */
         yuv[3-i][0] = i_ayvu>>16;
         yuv[3-i][1] = i_ayvu;
@@ -105,10 +105,13 @@ static void CLUTIdxToYUV(const struct subs_format_t *subs,
 }
 
 static void ParsePXCTLI( decoder_t *p_dec, const subpicture_data_t *p_spu_data,
-                         subpicture_t *p_spu )
+                         subpicture_region_t *p_region )
 {
-    plane_t *p_plane = &p_spu->p_region->p_picture->p[0];
-    video_palette_t *p_palette = p_spu->p_region->fmt.p_palette;
+    plane_t *p_plane = &p_region->p_picture->p[0];
+    video_palette_t *p_palette = p_region->p_picture->format.p_palette;
+
+    if( !p_dec->fmt_in->subs.spu.b_palette )
+        return;
 
     for( size_t i=0;i<p_spu_data->i_pxclti; i++ )
     {
@@ -116,72 +119,66 @@ static void ParsePXCTLI( decoder_t *p_dec, const subpicture_data_t *p_spu_data,
         uint16_t i_color = GetWBE(&p_spu_data->p_pxctli[i*6 + 2]);
         uint16_t i_contrast = GetWBE(&p_spu_data->p_pxctli[i*6 + 4]);
 
-        if(p_palette->i_entries +4 >= VIDEO_PALETTE_COLORS_MAX)
-            break;
+        /* Lookup the CLUT palette for the YUV values */
+        uint8_t idx[4];
+        uint8_t yuv[4][3];
+        uint8_t alpha[4];
+        idx[0] = (i_color >> 12)&0x0f;
+        idx[1] = (i_color >>  8)&0x0f;
+        idx[2] = (i_color >>  4)&0x0f;
+        idx[3] = i_color&0x0f;
+        CLUTIdxToYUV( &p_dec->fmt_in->subs, idx, yuv );
 
-        if( p_dec->fmt_in->subs.spu.palette[0] == SPU_PALETTE_DEFINED )
+        /* Process the contrast */
+        alpha[3] = (i_contrast >> 12)&0x0f;
+        alpha[2] = (i_contrast >>  8)&0x0f;
+        alpha[1] = (i_contrast >>  4)&0x0f;
+        alpha[0] = i_contrast&0x0f;
+
+        /* Create a new YUVA palette entries for the picture */
+        int index_map[4];
+        for( int j=0; j<4; j++ )
         {
-            /* Lookup the CLUT palette for the YUV values */
-            uint8_t idx[4];
-            uint8_t yuv[4][3];
-            uint8_t alpha[4];
-            idx[0] = (i_color >> 12)&0x0f;
-            idx[1] = (i_color >>  8)&0x0f;
-            idx[2] = (i_color >>  4)&0x0f;
-            idx[3] = i_color&0x0f;
-            CLUTIdxToYUV( &p_dec->fmt_in->subs, idx, yuv );
-
-            /* Process the contrast */
-            alpha[3] = (i_contrast >> 12)&0x0f;
-            alpha[2] = (i_contrast >>  8)&0x0f;
-            alpha[1] = (i_contrast >>  4)&0x0f;
-            alpha[0] = i_contrast&0x0f;
-
-            /* Create a new YUVA palette entries for the picture */
-            int index_map[4];
-            for( int j=0; j<4; j++ )
+            uint8_t yuvaentry[4];
+            yuvaentry[0] = yuv[j][0];
+            yuvaentry[1] = yuv[j][1];
+            yuvaentry[2] = yuv[j][2];
+            yuvaentry[3] = alpha[j] * 0x11;
+            int i_index = VIDEO_PALETTE_COLORS_MAX;
+            for( int k = p_palette->i_entries; k > 0; k-- )
             {
-                uint8_t yuvaentry[4];
-                yuvaentry[0] = yuv[j][0];
-                yuvaentry[1] = yuv[j][1];
-                yuvaentry[2] = yuv[j][2];
-                yuvaentry[3] = alpha[j] * 0x11;
-                int i_index = VIDEO_PALETTE_COLORS_MAX;
-                for( int k = p_palette->i_entries; k > 0; k-- )
+                if( !memcmp( p_palette->palette[k], yuvaentry, sizeof(uint8_t [4]) ) )
                 {
-                    if( !memcmp( &p_palette->palette[k], yuvaentry, sizeof(uint8_t [4]) ) )
-                    {
-                        i_index = VIDEO_PALETTE_COLORS_MAX;
-                        break;
-                    }
+                    i_index = i;
+                    break;
                 }
-
-                /* Add an entry in out palette */
-                if( i_index == VIDEO_PALETTE_COLORS_MAX )
-                {
-                    if(p_palette->i_entries == VIDEO_PALETTE_COLORS_MAX)
-                    {
-                        msg_Warn( p_dec, "Cannot create new color, skipping PXCTLI" );
-                        return;
-                    }
-                    i_index = p_palette->i_entries++;
-                    memcpy( p_palette->palette[ i_index ], yuvaentry, sizeof(uint8_t [4]) );
-                }
-                index_map[j] = i_index;
             }
 
-            if( p_spu->p_region->i_x >= i_col )
-                i_col -= p_spu->p_region->i_x;
-
-            for( int j=0; j<p_plane->i_visible_lines; j++ )
+            /* Add an entry in out palette */
+            if( i_index == VIDEO_PALETTE_COLORS_MAX )
             {
-                uint8_t *p_line = &p_plane->p_pixels[j * p_plane->i_pitch];
-                /* Extends to end of the line */
-                for( int k=i_col; k<p_plane->i_visible_pitch; k++ )
+                if(p_palette->i_entries == VIDEO_PALETTE_COLORS_MAX)
                 {
-                    if( p_line[k] < 4 ) /* can forge write-again */
-                        p_line[k] = index_map[ p_line[k] ];
+                    msg_Warn( p_dec, "Cannot create new color, skipping PXCTLI" );
+                    return;
                 }
+                i_index = p_palette->i_entries++;
+                memcpy( p_palette->palette[ i_index ], yuvaentry, sizeof(uint8_t [4]) );
+            }
+            index_map[j] = i_index;
+        }
+
+        if( p_region->i_x >= i_col )
+            i_col -= p_region->i_x;
+
+        for( int j=0; j<p_plane->i_visible_lines; j++ )
+        {
+            uint8_t *p_line = &p_plane->p_pixels[j * p_plane->i_pitch];
+            /* Extends to end of the line */
+            for( int k=i_col; k<p_plane->i_visible_pitch; k++ )
+            {
+                if( p_line[k] < 4 ) /* can forge write-again */
+                    p_line[k] = index_map[ p_line[k] ];
             }
         }
     }
@@ -213,7 +210,8 @@ static void OutputPicture( decoder_t *p_dec,
     p_spu->b_ephemer = p_spu_properties->b_ephemer;
     p_spu->b_subtitle = p_spu_properties->b_subtitle;
 
-    if( p_spu->i_stop <= p_spu->i_start && !p_spu->b_ephemer )
+    if( (p_spu->i_stop == VLC_TICK_INVALID || p_spu->i_stop <= p_spu->i_start) &&
+        !p_spu->b_ephemer )
     {
         /* This subtitle will live for 5 seconds or until the next subtitle */
         p_spu->i_stop = p_spu->i_start + VLC_TICK_FROM_MS(500 * 11);
@@ -256,7 +254,8 @@ static void OutputPicture( decoder_t *p_dec,
     free( p_pixeldata );
 
     if( p_spu_data->p_pxctli && p_spu )
-        ParsePXCTLI( p_dec, p_spu_data, p_spu );
+        ParsePXCTLI( p_dec, p_spu_data,
+                    vlc_spu_regions_first_or_null(&p_spu->regions) );
 
     pf_queue( p_dec, p_spu );
 }
@@ -437,7 +436,7 @@ static int ParseControlSeq( decoder_t *p_dec, vlc_tick_t i_pts,
                 return VLC_EGENERIC;
             }
 
-            if( p_dec->fmt_in->subs.spu.palette[0] == SPU_PALETTE_DEFINED )
+            if( p_dec->fmt_in->subs.spu.b_palette )
             {
                 uint8_t idx[4];
 
@@ -843,15 +842,15 @@ static int Render( decoder_t *p_dec, subpicture_t *p_spu,
     const uint16_t *p_source = p_pixeldata;
     video_format_t fmt;
     video_palette_t palette;
+    const int width = p_spu_properties->i_width;
+    const int height = p_spu_properties->i_height -
+        p_spu_data->i_y_top_offset - p_spu_data->i_y_bottom_offset;
 
     /* Create a new subpicture region */
     video_format_Init( &fmt, VLC_CODEC_YUVP );
-    fmt.i_sar_num = 0; /* 0 means use aspect ratio of background video */
-    fmt.i_sar_den = 1;
-    fmt.i_width = fmt.i_visible_width = p_spu_properties->i_width;
-    fmt.i_height = fmt.i_visible_height = p_spu_properties->i_height -
-        p_spu_data->i_y_top_offset - p_spu_data->i_y_bottom_offset;
-    fmt.i_x_offset = fmt.i_y_offset = 0;
+    video_format_Setup( &fmt, VLC_CODEC_YUVP, width, height, width, height,
+                        0, /* 0 means use aspect ratio of background video */
+                        1 );
     fmt.p_palette = &palette;
     fmt.p_palette->i_entries = 4;
     for( i_x = 0; i_x < fmt.p_palette->i_entries; i_x++ )
@@ -862,25 +861,27 @@ static int Render( decoder_t *p_dec, subpicture_t *p_spu,
         fmt.p_palette->palette[i_x][3] = p_spu_data->pi_alpha[i_x] * 0x11;
     }
 
-    p_spu->p_region = subpicture_region_New( &fmt );
-    if( !p_spu->p_region )
+    subpicture_region_t *p_region = subpicture_region_New( &fmt );
+    fmt.p_palette = NULL;
+    video_format_Clean( &fmt );
+    if( !p_region )
     {
-        fmt.p_palette = NULL;
-        video_format_Clean( &fmt );
         msg_Err( p_dec, "cannot allocate SPU region" );
         return VLC_EGENERIC;
     }
+    vlc_spu_regions_push(&p_spu->regions, p_region);
 
-    p_spu->p_region->i_x = p_spu_properties->i_x;
-    p_spu->p_region->i_y = p_spu_properties->i_y + p_spu_data->i_y_top_offset;
-    p_p = p_spu->p_region->p_picture->p->p_pixels;
-    i_pitch = p_spu->p_region->p_picture->p->i_pitch;
+    p_region->b_absolute = true;
+    p_region->i_x = p_spu_properties->i_x;
+    p_region->i_y = p_spu_properties->i_y + p_spu_data->i_y_top_offset;
+    p_p = p_region->p_picture->p->p_pixels;
+    i_pitch = p_region->p_picture->p->i_pitch;
 
     /* Draw until we reach the bottom of the subtitle */
-    for( i_y = 0; i_y < (int)fmt.i_height * i_pitch; i_y += i_pitch )
+    for( i_y = 0; i_y < height * i_pitch; i_y += i_pitch )
     {
         /* Draw until we reach the end of the line */
-        for( i_x = 0 ; i_x < (int)fmt.i_width; i_x += i_len )
+        for( i_x = 0 ; i_x < width; i_x += i_len )
         {
             /* Get the RLE part, then draw the line */
             i_color = *p_source & 0x3;
@@ -888,9 +889,6 @@ static int Render( decoder_t *p_dec, subpicture_t *p_spu,
             memset( p_p + i_x + i_y, i_color, i_len );
         }
     }
-
-    fmt.p_palette = NULL;
-    video_format_Clean( &fmt );
 
     return VLC_SUCCESS;
 }

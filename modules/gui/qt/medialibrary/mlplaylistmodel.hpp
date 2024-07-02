@@ -26,6 +26,8 @@ class MLPlaylistModel : public MLBaseModel
 {
     Q_OBJECT
 
+    Q_PROPERTY(bool transactionPending READ transactionPending NOTIFY transactionPendingChanged FINAL)
+
 public:
     enum Role
     {
@@ -55,8 +57,13 @@ public: // Interface
 
     Q_INVOKABLE void remove(const QModelIndexList & indexes);
 
+    bool transactionPending() const { return m_transactionPending; };
+
 public: // QAbstractItemModel implementation
     QHash<int, QByteArray> roleNames() const override;
+
+signals:
+    void transactionPendingChanged();
 
 protected: // MLBaseModel implementation
     QVariant itemRoleData(MLItem *item, int role = Qt::DisplayRole) const override;
@@ -67,7 +74,7 @@ protected: // MLBaseModel implementation
 
     QByteArray criteriaToName(vlc_ml_sorting_criteria_t criteria) const override;
 
-    std::unique_ptr<MLBaseModel::BaseLoader> createLoader() const override;
+    std::unique_ptr<MLListCacheLoader> createMLLoader() const override;
 
 protected: // MLBaseModel reimplementation
     void onVlcMlEvent(const MLEvent & event) override;
@@ -95,19 +102,21 @@ private: // Functions
 
     void endTransaction();
 
+    void setTransactionPending(bool);
+
     void generateThumbnail(const MLItemId& itemid) const;
 
     bool m_transactionPending = false;
     bool m_resetAfterTransaction = false;
 
 private:
-    struct Loader : public MLBaseModel::BaseLoader
+    struct Loader : public MLListCacheLoader::MLOp
     {
-        Loader(const MLPlaylistModel & model);
+        using MLListCacheLoader::MLOp::MLOp;
 
-        size_t count(vlc_medialibrary_t* ml) const override;
+        size_t count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const override;
 
-        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, size_t index, size_t count) const override;
+        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const override;
 
         std::unique_ptr<MLItem> loadItemById(vlc_medialibrary_t* ml, MLItemId itemId) const override;
     };

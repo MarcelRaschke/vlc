@@ -47,6 +47,8 @@
 
 #define TIMING_REPORT_DELAY_TICKS VLC_TICK_FROM_MS(1000)
 
+#define JARRAY_SIZE_US VLC_TICK_FROM_MS(50)
+
 typedef struct
 {
     jobject p_audiotrack; /* AudioTrack ref */
@@ -87,7 +89,6 @@ typedef struct
         WRITE_BYTEARRAY,
         WRITE_BYTEARRAYV23,
         WRITE_SHORTARRAYV23,
-        WRITE_BYTEBUFFER,
         WRITE_FLOATARRAY
     } i_write_type;
 
@@ -118,6 +119,7 @@ typedef struct
     size_t timing_report_last_written_bytes;
     /* Number of bytes to write before sending a timing report */
     size_t timing_report_delay_bytes;
+    vlc_tick_t first_pts;
 } aout_sys_t;
 
 
@@ -165,10 +167,17 @@ static struct
         jint WRITE_NON_BLOCKING;
     } AudioTrack;
     struct {
+        jint USAGE_MEDIA;
+        jint CONTENT_TYPE_MOVIE;
+        jint CONTENT_TYPE_MUSIC;
+    } AudioAttributes;
+    struct {
         jclass clazz;
         jmethodID ctor;
         jmethodID build;
         jmethodID setLegacyStreamType;
+        jmethodID setUsage;
+        jmethodID setContentType;
     } AudioAttributes_Builder;
     struct {
         jint ENCODING_PCM_8BIT;
@@ -337,6 +346,17 @@ AudioTrack_InitJNI( vlc_object_t *p_aout)
                 "()Landroid/media/AudioAttributes;", true );
         GET_ID( GetMethodID, AudioAttributes_Builder.setLegacyStreamType, "setLegacyStreamType",
                 "(I)Landroid/media/AudioAttributes$Builder;", true );
+        GET_ID( GetMethodID, AudioAttributes_Builder.setUsage, "setUsage",
+                "(I)Landroid/media/AudioAttributes$Builder;", true );
+        GET_ID( GetMethodID, AudioAttributes_Builder.setContentType, "setContentType",
+                "(I)Landroid/media/AudioAttributes$Builder;", true );
+
+        /* AudioAttributes class init */
+        GET_CLASS( "android/media/AudioAttributes", true );
+        GET_CONST_INT( AudioAttributes.USAGE_MEDIA, "USAGE_MEDIA", true );
+        GET_CONST_INT( AudioAttributes.CONTENT_TYPE_MUSIC, "CONTENT_TYPE_MUSIC", true );
+        GET_CONST_INT( AudioAttributes.CONTENT_TYPE_MOVIE, "CONTENT_TYPE_MOVIE", true );
+
 
         /* AudioFormat_Builder class init */
         GET_CLASS( "android/media/AudioFormat$Builder", true );
@@ -555,6 +575,7 @@ AudioTrack_Reset( JNIEnv *env, aout_stream_t *stream )
     p_sys->i_samples_written = 0;
     p_sys->timing_report_last_written_bytes = 0;
     p_sys->timing_report_delay_bytes = 0;
+    p_sys->first_pts = VLC_TICK_INVALID;
 }
 
 static vlc_tick_t
@@ -615,6 +636,27 @@ AudioTrack_GetChanOrder( uint16_t i_physical_channels, uint32_t p_chans_out[] )
 #undef HAS_CHAN
 }
 
+struct role {
+    char vlc[16];
+};
+
+static const struct role video_roles[] = {
+    { "production" },
+    { "test" },
+    { "video" },
+};
+
+static int role_cmp(const void *r1, const void *entry) {
+    const struct role *role = entry;
+    return strcmp(r1, role->vlc);
+}
+
+static inline bool RoleHasVideoContent( char *role ) {
+    char *res = bsearch(role, video_roles, ARRAY_SIZE(video_roles), sizeof(*video_roles), role_cmp);
+
+    return res != NULL;
+}
+
 static jobject
 AudioTrack_New21( JNIEnv *env, aout_stream_t *stream, unsigned int i_rate,
                   int i_channel_config, int i_format, int i_size,
@@ -634,9 +676,24 @@ AudioTrack_New21( JNIEnv *env, aout_stream_t *stream, unsigned int i_rate,
     if( !p_aattr_builder )
         return NULL;
 
+    bool hasVideo = false;
+
+    char *vlc_role = var_InheritString(stream, "role");
+    if (vlc_role != NULL) {
+    hasVideo = RoleHasVideoContent(vlc_role);
+    free(vlc_role);
+    }
+
     ref = JNI_CALL_OBJECT( p_aattr_builder,
-                           jfields.AudioAttributes_Builder.setLegacyStreamType,
-                           jfields.AudioManager.STREAM_MUSIC );
+                         jfields.AudioAttributes_Builder.setUsage,
+                         jfields.AudioAttributes.USAGE_MEDIA );
+    (*env)->DeleteLocalRef( env, ref );
+
+    ref = JNI_CALL_OBJECT( p_aattr_builder,
+                         jfields.AudioAttributes_Builder.setContentType,
+                         hasVideo ?
+                         jfields.AudioAttributes.CONTENT_TYPE_MOVIE :
+                         jfields.AudioAttributes.CONTENT_TYPE_MUSIC );
     (*env)->DeleteLocalRef( env, ref );
 
     p_audio_attributes =
@@ -850,10 +907,17 @@ AudioTrack_Create( JNIEnv *env, aout_stream_t *stream,
 }
 
 static void
-AudioTrack_ConsumeFrame(aout_stream_t *stream, vlc_frame_t *f)
+AudioTrack_ConsumeFrame(aout_stream_t *stream, vlc_frame_t *f, size_t size)
 {
     aout_sys_t *p_sys = stream->sys;
     assert(f != NULL && f == p_sys->frame_chain);
+
+    f->i_buffer -= size;
+    if (f->i_buffer > 0)
+    {
+        f->p_buffer += size;
+        return;
+    }
 
     p_sys->frame_chain = f->p_next;
     if (p_sys->frame_chain == NULL)
@@ -863,28 +927,24 @@ AudioTrack_ConsumeFrame(aout_stream_t *stream, vlc_frame_t *f)
 }
 
 static int
-AudioTrack_AllocJArray(JNIEnv *env, aout_stream_t *stream, size_t size,
+AudioTrack_AllocJArray(JNIEnv *env, aout_stream_t *stream, unsigned sample_size,
                        jarray (*new)(JNIEnv *env, jsize size))
 {
     aout_sys_t *p_sys = stream->sys;
 
-    if (size > p_sys->jbuffer.maxsize)
-    {
-        p_sys->jbuffer.maxsize = 0;
-        if (p_sys->jbuffer.array != NULL)
-            (*env)->DeleteLocalRef(env, p_sys->jbuffer.array);
+    size_t size = US_TO_BYTES(JARRAY_SIZE_US) / sample_size;
 
-        p_sys->jbuffer.array = new(env, size);
-        if (p_sys->jbuffer.array != NULL)
-            p_sys->jbuffer.maxsize = size;
-        else
-            msg_Err(stream, "jarray allocation failed");
-    }
+    jobject array = new(env, size);
+    if (array == NULL)
+        return jfields.AudioTrack.ERROR;
 
+    p_sys->jbuffer.array = (*env)->NewGlobalRef(env, array);
+    (*env)->DeleteLocalRef(env, array);
     if (p_sys->jbuffer.array == NULL)
         return jfields.AudioTrack.ERROR;
 
-    p_sys->jbuffer.size = size;
+    p_sys->jbuffer.maxsize = size;
+    p_sys->jbuffer.size = 0;
     p_sys->jbuffer.offset = 0;
 
     return 0;
@@ -902,21 +962,23 @@ AudioTrack_WriteByteArray( JNIEnv *env, aout_stream_t *stream, bool b_force )
     uint64_t i_samples;
     uint64_t i_audiotrack_pos;
     uint64_t i_samples_pending;
-
     int ret;
-    if (p_sys->jbuffer.offset == p_sys->jbuffer.size)
+
+    if (p_sys->jbuffer.size == 0)
     {
         vlc_frame_t *f = p_sys->frame_chain;
         assert(f != NULL);
-        ret = AudioTrack_AllocJArray(env, stream, f->i_buffer,
-                                     (*env)->NewByteArray);
-        if (ret != 0)
-            return ret;
 
-        (*env)->SetByteArrayRegion(env, p_sys->jbuffer.array,
-                                   0, f->i_buffer, (jbyte *)f->p_buffer);
-        AudioTrack_ConsumeFrame(stream, f);
+        size_t size = f->i_buffer > p_sys->jbuffer.maxsize ?
+                      p_sys->jbuffer.maxsize : f->i_buffer;
+        p_sys->jbuffer.size = size;
+        p_sys->jbuffer.offset = 0;
+        (*env)->SetByteArrayRegion(env, p_sys->jbuffer.array, 0,
+                                   size, (jbyte *)f->p_buffer);
+        AudioTrack_ConsumeFrame(stream, f, size);
     }
+    assert(p_sys->jbuffer.size > 0);
+    assert(p_sys->jbuffer.size > p_sys->jbuffer.offset);
 
     i_audiotrack_pos = AudioTrack_getPlaybackHeadPosition( env, stream );
 
@@ -944,7 +1006,11 @@ AudioTrack_WriteByteArray( JNIEnv *env, aout_stream_t *stream, bool b_force )
     ret = JNI_AT_CALL_INT( write, p_sys->jbuffer.array, p_sys->jbuffer.offset,
                            FRAMES_TO_BYTES( i_samples ) );
     if (ret > 0)
+    {
         p_sys->jbuffer.offset += ret;
+        if (p_sys->jbuffer.offset == p_sys->jbuffer.size)
+            p_sys->jbuffer.size = 0;
+    }
 
     return ret;
 }
@@ -958,73 +1024,33 @@ static int
 AudioTrack_WriteByteArrayV23(JNIEnv *env, aout_stream_t *stream)
 {
     aout_sys_t *p_sys = stream->sys;
-
     int ret;
-    if (p_sys->jbuffer.offset == p_sys->jbuffer.size)
+
+    if (p_sys->jbuffer.size == 0)
     {
         vlc_frame_t *f = p_sys->frame_chain;
         assert(f != NULL);
-        ret = AudioTrack_AllocJArray(env, stream, f->i_buffer,
-                                     (*env)->NewByteArray);
-        if (ret != 0)
-            return ret;
 
-        (*env)->SetByteArrayRegion(env, p_sys->jbuffer.array,
-                                   0, f->i_buffer, (jbyte *)f->p_buffer);
-        AudioTrack_ConsumeFrame(stream, f);
+        size_t size = f->i_buffer > p_sys->jbuffer.maxsize ?
+                      p_sys->jbuffer.maxsize : f->i_buffer;
+        p_sys->jbuffer.size = size;
+        p_sys->jbuffer.offset = 0;
+        (*env)->SetByteArrayRegion(env, p_sys->jbuffer.array, 0,
+                                   size, (jbyte *)f->p_buffer);
+        AudioTrack_ConsumeFrame(stream, f, size);
     }
+    assert(p_sys->jbuffer.size > 0);
+    assert(p_sys->jbuffer.size > p_sys->jbuffer.offset);
 
     ret = JNI_AT_CALL_INT( writeV23, p_sys->jbuffer.array,
                            p_sys->jbuffer.offset,
                            p_sys->jbuffer.size - p_sys->jbuffer.offset,
                            jfields.AudioTrack.WRITE_NON_BLOCKING );
     if (ret > 0)
-        p_sys->jbuffer.offset += ret;
-
-    return ret;
-}
-
-/**
- * Non blocking play function for Lollipop and after, run from
- * AudioTrack_Thread. It calls a new write method with WRITE_NON_BLOCKING
- * flags.
- */
-static int
-AudioTrack_WriteByteBuffer(JNIEnv *env, aout_stream_t *stream)
-{
-    aout_sys_t *p_sys = stream->sys;
-
-    if (p_sys->jbuffer.offset == p_sys->jbuffer.size)
-    {
-        vlc_frame_t *f = p_sys->frame_chain;
-        assert(f != NULL);
-        if (p_sys->jbuffer.array != NULL)
-            (*env)->DeleteLocalRef(env, p_sys->jbuffer.array);
-        p_sys->jbuffer.array = (*env)->NewDirectByteBuffer(env,
-                                                           f->p_buffer,
-                                                           f->i_buffer);
-        if (p_sys->jbuffer.array == NULL)
-        {
-            if ((*env)->ExceptionCheck(env))
-                (*env)->ExceptionClear(env);
-            return jfields.AudioTrack.ERROR;
-        }
-        p_sys->jbuffer.offset = 0;
-        p_sys->jbuffer.size = f->i_buffer;
-        /* Don't take account of the current frame for the delay */
-        f->i_buffer = 0;
-    }
-
-    int ret = JNI_AT_CALL_INT(writeBufferV21, p_sys->jbuffer.array,
-                              p_sys->jbuffer.size - p_sys->jbuffer.offset,
-                              jfields.AudioTrack.WRITE_NON_BLOCKING);
-    if (ret > 0)
     {
         p_sys->jbuffer.offset += ret;
-        /* The ByteBuffer reference directly the data from the frame, so it
-         * should stay allocated until all the data is written */
         if (p_sys->jbuffer.offset == p_sys->jbuffer.size)
-            AudioTrack_ConsumeFrame(stream, p_sys->frame_chain);
+            p_sys->jbuffer.size = 0;
     }
 
     return ret;
@@ -1039,21 +1065,24 @@ static int
 AudioTrack_WriteShortArrayV23(JNIEnv *env, aout_stream_t *stream)
 {
     aout_sys_t *p_sys = stream->sys;
-
     int ret;
-    if (p_sys->jbuffer.offset == p_sys->jbuffer.size)
+
+    if (p_sys->jbuffer.size == 0)
     {
         vlc_frame_t *f = p_sys->frame_chain;
         assert(f != NULL);
-        ret = AudioTrack_AllocJArray(env, stream, f->i_buffer / 2,
-                                     (*env)->NewShortArray);
-        if (ret != 0)
-            return ret;
 
-        (*env)->SetShortArrayRegion(env, p_sys->jbuffer.array,
-                                    0, f->i_buffer / 2, (jshort *)f->p_buffer);
-        AudioTrack_ConsumeFrame(stream, f);
+        size_t buffer_size_short = f->i_buffer / 2;
+        size_t size = buffer_size_short > p_sys->jbuffer.maxsize ?
+                      p_sys->jbuffer.maxsize : buffer_size_short;
+        p_sys->jbuffer.size = size;
+        p_sys->jbuffer.offset = 0;
+        (*env)->SetShortArrayRegion(env, p_sys->jbuffer.array, 0,
+                                    size, (jshort *)f->p_buffer);
+        AudioTrack_ConsumeFrame(stream, f, size * 2);
     }
+    assert(p_sys->jbuffer.size > 0);
+    assert(p_sys->jbuffer.size > p_sys->jbuffer.offset);
 
     ret = JNI_AT_CALL_INT( writeShortV23, p_sys->jbuffer.array,
                            p_sys->jbuffer.offset,
@@ -1062,6 +1091,8 @@ AudioTrack_WriteShortArrayV23(JNIEnv *env, aout_stream_t *stream)
     if (ret > 0)
     {
         p_sys->jbuffer.offset += ret;
+        if (p_sys->jbuffer.offset == p_sys->jbuffer.size)
+            p_sys->jbuffer.size = 0;
         ret *= 2;
     }
 
@@ -1079,28 +1110,32 @@ AudioTrack_WriteFloatArray(JNIEnv *env, aout_stream_t *stream)
     aout_sys_t *p_sys = stream->sys;
     int ret;
 
-    if (p_sys->jbuffer.offset == p_sys->jbuffer.size)
+    if (p_sys->jbuffer.size == 0)
     {
         vlc_frame_t *f = p_sys->frame_chain;
         assert(f != NULL);
-        ret = AudioTrack_AllocJArray(env, stream, f->i_buffer / 4,
-                                     (*env)->NewFloatArray);
-        if (ret != 0)
-            return ret;
 
-        (*env)->SetFloatArrayRegion(env, p_sys->jbuffer.array,
-                                   0, f->i_buffer / 4, (jfloat *)f->p_buffer);
-        AudioTrack_ConsumeFrame(stream, f);
+        size_t buffer_size_float = f->i_buffer / 4;
+        size_t size = buffer_size_float > p_sys->jbuffer.maxsize ?
+                      p_sys->jbuffer.maxsize : buffer_size_float;
+        p_sys->jbuffer.size = size;
+        p_sys->jbuffer.offset = 0;
+        (*env)->SetFloatArrayRegion(env, p_sys->jbuffer.array, 0,
+                                    size, (jfloat *)f->p_buffer);
+        AudioTrack_ConsumeFrame(stream, f, size * 4);
     }
+    assert(p_sys->jbuffer.size > 0);
+    assert(p_sys->jbuffer.size > p_sys->jbuffer.offset);
 
     ret = JNI_AT_CALL_INT(writeFloat, p_sys->jbuffer.array,
                           p_sys->jbuffer.offset,
                           p_sys->jbuffer.size - p_sys->jbuffer.offset,
                           jfields.AudioTrack.WRITE_NON_BLOCKING);
-
     if (ret > 0)
     {
         p_sys->jbuffer.offset += ret;
+        if (p_sys->jbuffer.offset == p_sys->jbuffer.size)
+            p_sys->jbuffer.size = 0;
         ret *= 4;
     }
 
@@ -1117,9 +1152,6 @@ AudioTrack_Write( JNIEnv *env, aout_stream_t *stream, bool b_force )
     {
     case WRITE_BYTEARRAYV23:
         i_ret = AudioTrack_WriteByteArrayV23(env, stream);
-        break;
-    case WRITE_BYTEBUFFER:
-        i_ret = AudioTrack_WriteByteBuffer(env, stream);
         break;
     case WRITE_SHORTARRAYV23:
         i_ret = AudioTrack_WriteShortArrayV23(env, stream);
@@ -1174,6 +1206,8 @@ AudioTrack_ReportTiming( JNIEnv *env, aout_stream_t *stream )
         vlc_tick_t frame_date_us =
             VLC_TICK_FROM_NS(JNI_AUDIOTIMESTAMP_GET_LONG( nanoTime ));
         jlong frame_post_last = JNI_AUDIOTIMESTAMP_GET_LONG( framePosition );
+        if( frame_post_last == 0 )
+            return VLC_EGENERIC;
 
         /* the low-order 32 bits of position is in wrapping frame units
          * similar to AudioTrack#getPlaybackHeadPosition. */
@@ -1184,7 +1218,8 @@ AudioTrack_ReportTiming( JNIEnv *env, aout_stream_t *stream )
                            + (p_sys->timestamp.i_frame_wrap_count << 32);
 
         aout_stream_TimingReport( stream, frame_date_us,
-                                  FRAMES_TO_US( frame_pos ) );
+                                  FRAMES_TO_US( frame_pos ) +
+                                  p_sys->first_pts );
         return VLC_SUCCESS;
     }
 
@@ -1235,7 +1270,7 @@ AudioTrack_Thread( void *p_data )
 
         /* Wait for more data in the jbuffer buffer */
         while (p_sys->b_thread_running
-            && p_sys->jbuffer.offset == p_sys->jbuffer.size
+            && p_sys->jbuffer.size == 0
             && p_sys->frame_chain == NULL)
             vlc_cond_wait( &p_sys->thread_cond, &p_sys->lock );
 
@@ -1299,12 +1334,6 @@ AudioTrack_Thread( void *p_data )
         }
 
         vlc_mutex_unlock( &p_sys->lock );
-    }
-
-    if (p_sys->jbuffer.array != NULL)
-    {
-        (*env)->DeleteLocalRef(env, p_sys->jbuffer.array);
-        p_sys->jbuffer.array = NULL;
     }
 
     return NULL;
@@ -1385,6 +1414,9 @@ Play( aout_stream_t *stream, block_t *p_buffer, vlc_tick_t i_date )
        aout_ChannelReorder( p_buffer->p_buffer, p_buffer->i_buffer,
                             p_sys->i_chans_to_reorder, p_sys->p_chan_table,
                             p_sys->fmt.i_format );
+
+    if( p_sys->first_pts == VLC_TICK_INVALID )
+        p_sys->first_pts = p_buffer->i_pts;
 
     vlc_frame_ChainLastAppend(&p_sys->frame_last, p_buffer);
     vlc_cond_signal(&p_sys->thread_cond);
@@ -1759,6 +1791,9 @@ Stop( aout_stream_t *stream )
     else
         vlc_mutex_unlock(  &p_sys->lock );
 
+    if (p_sys->jbuffer.array != NULL)
+        (*env)->DeleteGlobalRef(env, p_sys->jbuffer.array);
+
     /* Release the AudioTrack object */
     if( p_sys->p_audiotrack )
     {
@@ -1813,6 +1848,7 @@ Start( aout_stream_t *stream, audio_sample_format_t *restrict p_fmt,
 
     vlc_mutex_init(&p_sys->lock);
     vlc_cond_init(&p_sys->thread_cond);
+    p_sys->jbuffer.array = NULL;
 
     p_sys->volume = 1.0f;
     p_sys->mute = false;
@@ -1862,9 +1898,6 @@ Start( aout_stream_t *stream, audio_sample_format_t *restrict p_fmt,
             goto error;
     }
 
-    p_sys->jbuffer.array = NULL;
-    p_sys->jbuffer.size = p_sys->jbuffer.offset = 0;
-    p_sys->jbuffer.maxsize = 0;
     p_sys->frame_chain = NULL;
     p_sys->frame_last = &p_sys->frame_chain;
     AudioTrack_Reset( env, stream );
@@ -1873,27 +1906,32 @@ Start( aout_stream_t *stream, audio_sample_format_t *restrict p_fmt,
     {
         msg_Dbg( stream, "using WRITE_FLOATARRAY");
         p_sys->i_write_type = WRITE_FLOATARRAY;
+        i_ret = AudioTrack_AllocJArray(env, stream, 4, (*env)->NewFloatArray);
     }
     else if( p_sys->fmt.i_format == VLC_CODEC_SPDIFL )
     {
         assert( jfields.AudioFormat.has_ENCODING_IEC61937 );
         msg_Dbg( stream, "using WRITE_SHORTARRAYV23");
         p_sys->i_write_type = WRITE_SHORTARRAYV23;
+        i_ret = AudioTrack_AllocJArray(env, stream, 2, (*env)->NewShortArray);
     }
     else if( jfields.AudioTrack.writeV23 )
     {
         msg_Dbg( stream, "using WRITE_BYTEARRAYV23");
         p_sys->i_write_type = WRITE_BYTEARRAYV23;
-    }
-    else if( jfields.AudioTrack.writeBufferV21 )
-    {
-        msg_Dbg( stream, "using WRITE_BYTEBUFFER");
-        p_sys->i_write_type = WRITE_BYTEBUFFER;
+        i_ret = AudioTrack_AllocJArray(env, stream, 1, (*env)->NewByteArray);
     }
     else
     {
         msg_Dbg( stream, "using WRITE_BYTEARRAY");
         p_sys->i_write_type = WRITE_BYTEARRAY;
+        i_ret = AudioTrack_AllocJArray(env, stream, 1, (*env)->NewByteArray);
+    }
+
+    if (i_ret != 0)
+    {
+        msg_Err(stream, "jbuffer allocation failed");
+        goto error;
     }
 
     /* Run AudioTrack_Thread */
@@ -1901,6 +1939,7 @@ Start( aout_stream_t *stream, audio_sample_format_t *restrict p_fmt,
     p_sys->b_thread_paused = false;
     if ( vlc_clone( &p_sys->thread, AudioTrack_Thread, stream ) )
     {
+        p_sys->b_thread_running = false;
         msg_Err(stream, "vlc clone failed");
         goto error;
     }

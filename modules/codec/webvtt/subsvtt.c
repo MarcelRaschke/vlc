@@ -27,6 +27,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_charset.h>
 #include <vlc_subpicture.h>
 #include <vlc_codec.h>
@@ -159,13 +160,6 @@ typedef struct
     vlc_css_rule_t *p_css_rules;
 #endif
 } decoder_sys_t;
-
-#define ATOM_iden VLC_FOURCC('i', 'd', 'e', 'n')
-#define ATOM_payl VLC_FOURCC('p', 'a', 'y', 'l')
-#define ATOM_sttg VLC_FOURCC('s', 't', 't', 'g')
-#define ATOM_vttc VLC_FOURCC('v', 't', 't', 'c')
-#define ATOM_vtte VLC_FOURCC('v', 't', 't', 'e')
-#define ATOM_vttx VLC_FOURCC('v', 't', 't', 'x')
 
 /*****************************************************************************
  *
@@ -1223,6 +1217,22 @@ static webvtt_region_t * webvtt_region_GetByID( decoder_sys_t *p_sys,
 /*****************************************************************************
  *
  *****************************************************************************/
+static char * DuplicateUnescaped( const char *psz )
+{
+    char *s = strdup( psz );
+    if( s )
+        vlc_xml_decode( s );
+    return s;
+}
+
+static char * NDuplicateUnescaped( const char *psz, size_t len )
+{
+    char *s = strndup( psz, len );
+    if( s )
+        vlc_xml_decode( s );
+    return s;
+}
+
 static unsigned CountNewLines( const char *psz )
 {
     unsigned i = 0;
@@ -1249,7 +1259,7 @@ static webvtt_dom_node_t * CreateDomNodes( const char *psz_text, unsigned *pi_li
                 webvtt_dom_text_t *p_node = webvtt_dom_text_New( p_parent );
                 if( p_node )
                 {
-                    p_node->psz_text = strndup( psz_text, psz_tag - psz_text );
+                    p_node->psz_text = NDuplicateUnescaped( psz_text, psz_tag - psz_text );
                     *pi_lines += ((*pi_lines == 0) ? 1 : 0) + CountNewLines( p_node->psz_text );
                     *pp_append = (webvtt_dom_node_t *) p_node;
                     pp_append = &p_node->p_next;
@@ -1264,9 +1274,9 @@ static webvtt_dom_node_t * CreateDomNodes( const char *psz_text, unsigned *pi_li
                     const char *psz_attrs = NULL;
                     size_t i_name;
                     const char *psz_name = SplitTag( psz_tag, &i_name, &psz_attrs );
-                    p_node->psz_tag = strndup( psz_name, i_name );
+                    p_node->psz_tag = NDuplicateUnescaped( psz_name, i_name );
                     if( psz_attrs != psz_taglast )
-                        p_node->psz_attrs = strndup( psz_attrs, psz_taglast - psz_attrs );
+                        p_node->psz_attrs = NDuplicateUnescaped( psz_attrs, psz_taglast - psz_attrs );
                     /* <hh:mm::ss:fff> time tags */
                     if( p_node->psz_attrs && isdigit(p_node->psz_attrs[0]) )
                         (void) webvtt_scan_time( p_node->psz_attrs, &p_node->i_nzstart );
@@ -1282,7 +1292,7 @@ static webvtt_dom_node_t * CreateDomNodes( const char *psz_text, unsigned *pi_li
                     const char *psz_attrs = NULL;
                     size_t i_name;
                     const char *psz_name = SplitTag( psz_tag, &i_name, &psz_attrs );
-                    char *psz_tagname = strndup( psz_name, i_name );
+                    char *psz_tagname = NDuplicateUnescaped( psz_name, i_name );
 
                     /* Close at matched parent node level due to unclosed tags
                      * like <b><v stuff>foo</b> */
@@ -1308,7 +1318,7 @@ static webvtt_dom_node_t * CreateDomNodes( const char *psz_text, unsigned *pi_li
             webvtt_dom_text_t *p_node = webvtt_dom_text_New( p_parent );
             if( p_node )
             {
-                p_node->psz_text = strdup( psz_text );
+                p_node->psz_text = DuplicateUnescaped( psz_text );
                 *pi_lines += ((*pi_lines == 0) ? 1 : 0) + CountNewLines( p_node->psz_text );
                 *pp_append = (webvtt_dom_node_t *) p_node;
             }
@@ -1565,8 +1575,6 @@ static text_segment_t *ConvertNodesToSegments( decoder_t *p_dec,
             *pp_append = text_segment_New( p_textnode->psz_text );
             if( *pp_append )
             {
-                if( (*pp_append)->psz_text )
-                    vlc_xml_decode( (*pp_append)->psz_text );
                 (*pp_append)->style = ComputeStyle( p_dec, p_node );
             }
         }
@@ -1681,7 +1689,7 @@ static void CreateSpuOrNewUpdaterRegion( decoder_t *p_dec,
         *pp_spu = decoder_NewSubpictureText( p_dec );
         if( *pp_spu )
         {
-            subtext_updater_sys_t *p_spusys = (*pp_spu)->updater.p_sys;
+            subtext_updater_sys_t *p_spusys = (*pp_spu)->updater.sys;
             *pp_updtregion = &p_spusys->region;
         }
     }
@@ -1787,6 +1795,7 @@ static void RenderRegions( decoder_t *p_dec, vlc_tick_t i_nzstart, vlc_tick_t i_
                 continue;
             }
 
+            p_updtregion->b_absolute = false; /* can't be absolute as snap to lines can overlap ! */
             p_updtregion->align = SUBPICTURE_ALIGN_TOP|SUBPICTURE_ALIGN_LEFT;
             p_updtregion->inner_align = GetCueTextAlignment( (const webvtt_dom_cue_t *)p_vttregion->p_child );
             p_updtregion->origin.x = v.i_left;
@@ -1836,6 +1845,7 @@ static void RenderRegions( decoder_t *p_dec, vlc_tick_t i_nzstart, vlc_tick_t i_
                 continue;
             }
 
+            p_updtregion->b_absolute = false; /* can't be absolute as snap to lines can overlap ! */
             if( p_cue->settings.line.b_auto )
             {
                 p_updtregion->align = SUBPICTURE_ALIGN_BOTTOM;
@@ -1863,9 +1873,8 @@ static void RenderRegions( decoder_t *p_dec, vlc_tick_t i_nzstart, vlc_tick_t i_
         p_spu->i_start = VLC_TICK_0 + i_nzstart;
         p_spu->i_stop = VLC_TICK_0 + i_nzstop;
         p_spu->b_ephemer  = true; /* !important */
-        p_spu->b_absolute = false; /* can't be absolute as snap to lines can overlap ! */
 
-        subtext_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
+        subtext_updater_sys_t *p_spu_sys = p_spu->updater.sys;
         p_spu_sys->p_default_style->f_font_relsize = WEBVTT_DEFAULT_LINE_HEIGHT_VH /
                                                      WEBVTT_LINE_TO_HEIGHT_RATIO;
         decoder_QueueSub( p_dec, p_spu );
@@ -2018,7 +2027,7 @@ static void ParserHeaderHandler( void *priv, enum webvtt_header_line_e s,
 #ifdef HAVE_CSS
         else if( ctx->b_css_memstream_opened )
         {
-            if( vlc_memstream_close( &ctx->css ) == VLC_SUCCESS )
+            if( vlc_memstream_close( &ctx->css ) == 0 )
             {
                 vlc_css_parser_t p;
                 vlc_css_parser_Init(&p);

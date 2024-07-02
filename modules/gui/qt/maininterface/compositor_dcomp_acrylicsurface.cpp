@@ -18,6 +18,16 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
+// Win 8.1 for IDCompositionDevice3/IDCompositionVisual2
+# if !defined(_WIN32_WINNT) || (_WIN32_WINNT < 0x0603) // _WIN32_WINNT_WINBLUE
+#  undef _WIN32_WINNT
+#  define _WIN32_WINNT 0x0603
+# endif
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <dcomp.h>
+
 #include "compositor_dcomp_acrylicsurface.hpp"
 
 #include <QWindow>
@@ -26,6 +36,9 @@
 #include <versionhelpers.h>
 
 #include "compositor_dcomp.hpp"
+
+#include <windows.h>
+#include <ntdef.h>
 
 namespace
 {
@@ -87,14 +100,20 @@ bool isWinPreIron()
 namespace vlc
 {
 
-CompositorDCompositionAcrylicSurface::CompositorDCompositionAcrylicSurface(qt_intf_t *intf, CompositorDirectComposition *compositor, MainCtx *mainCtx, ID3D11Device *device, QObject *parent)
+CompositorDCompositionAcrylicSurface::CompositorDCompositionAcrylicSurface(qt_intf_t *intf, CompositorDirectComposition *compositor, MainCtx *mainCtx, IDCompositionDevice *device, QObject *parent)
     : QObject(parent)
     , m_intf {intf}
     , m_compositor {compositor}
     , m_mainCtx {mainCtx}
 {
-    if (!init(device))
-        return;
+    assert(device);
+    device->QueryInterface(IID_PPV_ARGS(&m_dcompDevice));
+
+    if (!m_dcompDevice)
+        throw std::runtime_error("DCompositionDevice is not DCompositionDevice3.");
+
+    if (!init())
+        throw std::exception();
 
     qApp->installNativeEventFilter(this);
 
@@ -103,6 +122,16 @@ CompositorDCompositionAcrylicSurface::CompositorDCompositionAcrylicSurface(qt_in
     {
         setActive(m_transparencyEnabled && m_mainCtx->acrylicActive());
     });
+
+    // CSDWin32EventHandler updates frame when window is maximized
+    connect(window(), &QWindow::windowStateChanged, this, [this]()
+    {
+        sync();
+        commitChanges();
+    }
+    // CSDWin32EventHandler changes client rect on window state change
+    // use queued connection so that we can get correct state.
+    , Qt::QueuedConnection);
 }
 
 CompositorDCompositionAcrylicSurface::~CompositorDCompositionAcrylicSurface()
@@ -113,7 +142,7 @@ CompositorDCompositionAcrylicSurface::~CompositorDCompositionAcrylicSurface()
         DestroyWindow(m_dummyWindow);
 }
 
-bool CompositorDCompositionAcrylicSurface::nativeEventFilter(const QByteArray &, void *message, long *)
+bool CompositorDCompositionAcrylicSurface::nativeEventFilter(const QByteArray &, void *message, qintptr *)
 {
     MSG* msg = static_cast<MSG*>( message );
 
@@ -129,8 +158,6 @@ bool CompositorDCompositionAcrylicSurface::nativeEventFilter(const QByteArray &,
 
         sync();
         commitChanges();
-
-        requestReset(); // in case z-order changed
         break;
     }
     case WM_SETTINGCHANGE:
@@ -152,12 +179,12 @@ bool CompositorDCompositionAcrylicSurface::nativeEventFilter(const QByteArray &,
 }
 
 
-bool CompositorDCompositionAcrylicSurface::init(ID3D11Device *device)
+bool CompositorDCompositionAcrylicSurface::init()
 {
     if (!loadFunctions())
         return false;
 
-    if (!createDevice(device))
+    if (!initializeEffects())
         return false;
 
     if (!createDesktopVisual())
@@ -223,29 +250,10 @@ catch (std::exception &err)
     return false;
 }
 
-bool CompositorDCompositionAcrylicSurface::createDevice(Microsoft::WRL::ComPtr<ID3D11Device> device)
+bool CompositorDCompositionAcrylicSurface::initializeEffects()
 try
 {
-    QLibrary dcompDll("DCOMP.dll");
-    if (!dcompDll.load())
-        throw DXError("failed to load DCOMP.dll",  static_cast<HRESULT>(GetLastError()));
-
-    DCompositionCreateDeviceFun myDCompositionCreateDevice3 =
-            reinterpret_cast<DCompositionCreateDeviceFun>(dcompDll.resolve("DCompositionCreateDevice3"));
-    if (!myDCompositionCreateDevice3)
-        throw DXError("failed to load DCompositionCreateDevice3 function",  static_cast<HRESULT>(GetLastError()));
-
-    using namespace Microsoft::WRL;
-
-    ComPtr<IDXGIDevice> dxgiDevice;
-    HR(device.As(&dxgiDevice), "query dxgi device");
-
-    ComPtr<IDCompositionDevice> dcompDevice1;
-    HR(myDCompositionCreateDevice3(
-                dxgiDevice.Get(),
-                IID_PPV_ARGS(&dcompDevice1)), "create composition device");
-
-    HR(dcompDevice1.As(&m_dcompDevice), "dcompdevice not an IDCompositionDevice3");
+    assert(m_dcompDevice);
 
     HR(m_dcompDevice->CreateVisual(&m_rootVisual), "create root visual");
 
@@ -414,15 +422,6 @@ void CompositorDCompositionAcrylicSurface::commitChanges()
     DwmFlush();
 }
 
-void CompositorDCompositionAcrylicSurface::requestReset()
-{
-    if (m_resetPending)
-        return;
-
-    m_resetPending = true;
-    m_resetTimer.start(5, Qt::PreciseTimer, this);
-}
-
 void CompositorDCompositionAcrylicSurface::setActive(const bool newActive)
 {
     if (newActive == m_active)
@@ -431,7 +430,7 @@ void CompositorDCompositionAcrylicSurface::setActive(const bool newActive)
     m_active = newActive;
     if (m_active)
     {
-        m_compositor->addVisual(m_rootVisual);
+        m_compositor->addVisual(m_rootVisual.Get());
 
         updateVisual();
         sync();
@@ -439,7 +438,7 @@ void CompositorDCompositionAcrylicSurface::setActive(const bool newActive)
     }
     else
     {
-        m_compositor->removeVisual(m_rootVisual);
+        m_compositor->removeVisual(m_rootVisual.Get());
     }
 }
 
@@ -454,22 +453,6 @@ HWND CompositorDCompositionAcrylicSurface::hwnd()
         return w->handle() ? (HWND)w->winId() : nullptr;
 
     return nullptr;
-}
-
-void CompositorDCompositionAcrylicSurface::timerEvent(QTimerEvent *event)
-{
-    if (!event)
-        return;
-
-    if (event->timerId() == m_resetTimer.timerId())
-    {
-        m_resetPending = false;
-        m_resetTimer.stop();
-
-        updateVisual();
-        sync();
-        commitChanges();
-    }
 }
 
 }

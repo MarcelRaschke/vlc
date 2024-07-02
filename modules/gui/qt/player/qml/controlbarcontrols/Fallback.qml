@@ -16,10 +16,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Layouts 1.3
-import QtQuick.Controls 2.4
-import QtGraphicalEffects 1.0
+import QtQuick
+import QtQuick.Layouts
+import QtQuick.Controls
+import Qt5Compat.GraphicalEffects
 
 import org.videolan.vlc 0.1
 
@@ -32,7 +32,7 @@ Control {
     padding: VLCStyle.focus_border
 
     Keys.priority: Keys.AfterItem
-    Keys.onPressed: Navigation.defaultKeyAction(event)
+    Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
 
     property bool paintOnly: false
 
@@ -42,13 +42,12 @@ Control {
     }
 
     background: Widgets.AnimatedBackground {
-        active: visualFocus
-        animate: theme.initialized
-        activeBorderColor: theme.visualFocus
+        enabled: theme.initialized
+        border.color: visualFocus ? theme.visualFocus : "transparent"
     }
 
     contentItem: Widgets.MenuLabel {
-        text: I18n.qtr("WIDGET\nNOT\nFOUND")
+        text: qsTr("WIDGET\nNOT\nFOUND")
         horizontalAlignment: Text.AlignHCenter
         color: theme.fg.primary
     }

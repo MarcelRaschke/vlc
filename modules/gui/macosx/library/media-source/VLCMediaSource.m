@@ -46,7 +46,7 @@ static void cb_children_reset(vlc_media_tree_t *p_tree,
 {
     dispatch_async(dispatch_get_main_queue(), ^{
         VLCMediaSource *mediaSource = (__bridge VLCMediaSource *)p_data;
-        [[NSNotificationCenter defaultCenter] postNotificationName:VLCMediaSourceChildrenReset
+        [NSNotificationCenter.defaultCenter postNotificationName:VLCMediaSourceChildrenReset
                                                             object:mediaSource];
     });
 }
@@ -59,7 +59,7 @@ static void cb_children_added(vlc_media_tree_t *p_tree,
 {
     dispatch_async(dispatch_get_main_queue(), ^{
         VLCMediaSource *mediaSource = (__bridge VLCMediaSource *)p_data;
-        [[NSNotificationCenter defaultCenter] postNotificationName:VLCMediaSourceChildrenAdded
+        [NSNotificationCenter.defaultCenter postNotificationName:VLCMediaSourceChildrenAdded
                                                             object:mediaSource];
     });
 }
@@ -72,7 +72,7 @@ static void cb_children_removed(vlc_media_tree_t *p_tree,
 {
     dispatch_async(dispatch_get_main_queue(), ^{
         VLCMediaSource *mediaSource = (__bridge VLCMediaSource *)p_data;
-        [[NSNotificationCenter defaultCenter] postNotificationName:VLCMediaSourceChildrenRemoved
+        [NSNotificationCenter.defaultCenter postNotificationName:VLCMediaSourceChildrenRemoved
                                                             object:mediaSource];
     });
 }
@@ -84,7 +84,7 @@ static void cb_preparse_ended(vlc_media_tree_t *p_tree,
 {
     dispatch_async(dispatch_get_main_queue(), ^{
         VLCMediaSource *mediaSource = (__bridge VLCMediaSource *)p_data;
-        [[NSNotificationCenter defaultCenter] postNotificationName:VLCMediaSourcePreparsingEnded
+        [NSNotificationCenter.defaultCenter postNotificationName:VLCMediaSourcePreparsingEnded
                                                             object:mediaSource];
     });
 }
@@ -97,6 +97,7 @@ static const struct vlc_media_tree_callbacks treeCallbacks = {
 };
 
 static const char *const localDevicesDescription = "My Machine";
+static const char *const myFoldersDescription = "My Folders";
 
 #pragma mark - VLCMediaSource methods
 @implementation VLCMediaSource
@@ -146,6 +147,74 @@ static const char *const localDevicesDescription = "My Machine";
     return self;
 }
 
+- (instancetype)initMyFoldersMediaSourceWithLibVLCInstance:(libvlc_int_t *)p_libvlcInstance
+{
+    self = [super init];
+    if (self) {
+        _p_libvlcInstance = p_libvlcInstance;
+
+         _p_mediaSource = malloc(sizeof(vlc_media_source_t));
+        if (!_p_mediaSource) {
+            return self;
+        }
+
+        _p_mediaSource->description = myFoldersDescription;
+        _p_mediaSource->tree = calloc(1, sizeof(vlc_media_tree_t));
+
+        if (_p_mediaSource->tree == NULL) {
+            free(_p_mediaSource);
+            _p_mediaSource = NULL;
+            return self;
+        }
+
+        _category = SD_CAT_MYCOMPUTER;
+
+        NSFileManager * const fileManager = NSFileManager.defaultManager;
+
+        void (^addIfNotEmpty)(NSArray<NSURL *> *directories) = ^(NSArray<NSURL *> *directories) {
+            if (directories == nil || directories.count == 0) {
+                return;
+            }
+
+            NSURL * const directory = directories.firstObject;
+            const char * const directoryPath = directory.absoluteString.UTF8String;
+            const char * const directoryDesc = directory.lastPathComponent.UTF8String;
+            input_item_t * const directoryItem = input_item_NewExt(directoryPath,
+                                                                   directoryDesc,
+                                                                   0,
+                                                                   ITEM_TYPE_DIRECTORY,
+                                                                   ITEM_LOCAL);
+            input_item_node_t * const directoryNode = input_item_node_Create(directoryItem);
+            input_item_node_AppendNode(&(_p_mediaSource->tree->root), directoryNode);
+            input_item_Release(directoryItem);
+        };
+
+        NSArray<NSURL *> * const documentUrls = [fileManager URLsForDirectory:NSDocumentDirectory
+                                                                    inDomains:NSUserDomainMask];
+        addIfNotEmpty(documentUrls);
+
+        NSArray<NSURL *> * const desktopUrls = [fileManager URLsForDirectory:NSDesktopDirectory
+                                                                   inDomains:NSUserDomainMask];
+        addIfNotEmpty(desktopUrls);
+
+        NSArray<NSURL *> * const downloadsUrls = [fileManager URLsForDirectory:NSDownloadsDirectory
+                                                                     inDomains:NSUserDomainMask];
+        addIfNotEmpty(downloadsUrls);
+
+        NSArray<NSURL *> * const moviesUrls = [fileManager URLsForDirectory:NSMoviesDirectory
+                                                                  inDomains:NSUserDomainMask];
+        addIfNotEmpty(moviesUrls);
+
+        NSArray<NSURL *> * const musicUrls = [fileManager URLsForDirectory:NSMusicDirectory
+                                                                 inDomains:NSUserDomainMask];
+        addIfNotEmpty(musicUrls);
+
+        NSArray<NSURL *> * const picturesUrls = [fileManager URLsForDirectory:NSPicturesDirectory
+                                                                    inDomains:NSUserDomainMask];
+    }
+    return self;
+}
+
 - (void)dealloc
 {
     if (_p_mediaSource != NULL) {
@@ -153,8 +222,9 @@ static const char *const localDevicesDescription = "My Machine";
             vlc_media_tree_RemoveListener(_p_mediaSource->tree,
                                           _p_treeListenerID);
         }
-        if (_p_mediaSource->description == localDevicesDescription) {
+        if (_p_mediaSource->description == localDevicesDescription || _p_mediaSource->description == myFoldersDescription) {
             _p_mediaSource->description = NULL;
+
             input_item_node_t **childrenNodes = _p_mediaSource->tree->root.pp_children;
             if (childrenNodes) {
                 for (int i = 0; i <_p_mediaSource->tree->root.i_children; ++i) {
@@ -163,9 +233,7 @@ static const char *const localDevicesDescription = "My Machine";
                     input_item_node_Delete(childNode);
                 }
             }
-            
-            _p_mediaSource->description = NULL;
-            
+
             free(_p_mediaSource->tree);
             free(_p_mediaSource);
             _p_mediaSource = NULL;
@@ -174,14 +242,14 @@ static const char *const localDevicesDescription = "My Machine";
         }
     }
     if (_respondsToDiskChanges) {
-        [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self];
+        [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:self];
     }
 }
 
 - (void)preparseInputNodeWithinTree:(VLCInputNode *)inputNode
 {
     if(!inputNode) {
-        NSLog(@"Could not preparese input node, is null.");
+        NSLog(@"Could not preparse input node, is null.");
         return;
     }
 
@@ -193,7 +261,8 @@ static const char *const localDevicesDescription = "My Machine";
         return;
     }
 
-    if (inputNode.inputItem.inputType == ITEM_TYPE_DIRECTORY) {
+    if (inputNode.inputItem.inputType == ITEM_TYPE_DIRECTORY &&
+        [inputNode.inputItem.MRL hasPrefix:@"file://"]) {
         input_item_node_t *vlcInputNode = inputNode.vlcInputItemNode;
         NSURL *dirUrl = [NSURL URLWithString:inputNode.inputItem.MRL];
 
@@ -275,12 +344,12 @@ static const char *const localDevicesDescription = "My Machine";
         }
         
         dispatch_async(dispatch_get_main_queue(), ^{
-            [[NSNotificationCenter defaultCenter] postNotificationName:VLCMediaSourceChildrenReset object:self];
+            [NSNotificationCenter.defaultCenter postNotificationName:VLCMediaSourceChildrenReset object:self];
             
             if (!self->_respondsToDiskChanges) {
                 // We register the notifications here, as they are retrieved from the OS.
                 // We need to avoid receiving a notification while the array is still being populated.
-                NSNotificationCenter *workspaceNotificationCenter = [[NSWorkspace sharedWorkspace] notificationCenter];
+                NSNotificationCenter *workspaceNotificationCenter = NSWorkspace.sharedWorkspace.notificationCenter;
                 [workspaceNotificationCenter addObserver:self
                                                 selector:@selector(volumeIsMounted:)
                                                     name:NSWorkspaceDidMountNotification
@@ -312,14 +381,14 @@ static const char *const localDevicesDescription = "My Machine";
         return;
     }
 
-    for (NSURL *url in subDirectories) {
+    for (NSURL * const url in subDirectories) {
         NSNumber *isDirectory;
         NSNumber *isVolume;
         NSNumber *isEjectable;
         NSNumber *isInternal;
         NSNumber *isLocal;
 
-	[url getResourceValue:&isDirectory forKey:NSURLIsDirectoryKey error:nil];
+	    [url getResourceValue:&isDirectory forKey:NSURLIsDirectoryKey error:nil];
         [url getResourceValue:&isVolume forKey:NSURLIsVolumeKey error:nil];
         [url getResourceValue:&isEjectable forKey:NSURLVolumeIsEjectableKey error:nil];
         [url getResourceValue:&isInternal forKey:NSURLVolumeIsInternalKey error:nil];
@@ -327,10 +396,13 @@ static const char *const localDevicesDescription = "My Machine";
         
         const enum input_item_type_e inputType = isDirectory.boolValue ? isEjectable.boolValue ? ITEM_TYPE_DISC : ITEM_TYPE_DIRECTORY : ITEM_TYPE_FILE;
         const enum input_item_net_type netType = isLocal.boolValue ? ITEM_LOCAL : ITEM_NET;
+
+        const char * const psz_filename = url.absoluteString.UTF8String;
+        const char * const psz_name = url.lastPathComponent.UTF8String;
         
-        input_item_t *urlInputItem = input_item_NewExt(url.absoluteString.UTF8String, url.lastPathComponent.UTF8String, 0, inputType, netType);
-        if (urlInputItem != NULL) {
-            input_item_node_t *urlNode = input_item_node_Create(urlInputItem);
+        input_item_t *urlInputItem = input_item_NewExt(psz_filename, psz_name, 0, inputType, netType);
+        if (urlInputItem != NULL && (inputType != ITEM_TYPE_FILE || input_item_Playable(psz_filename))) {
+            input_item_node_t * const urlNode = input_item_node_Create(urlInputItem);
             if (urlNode) {
                 input_item_node_AppendNode(directoryNode, urlNode);
             }
@@ -356,7 +428,7 @@ static const char *const localDevicesDescription = "My Machine";
 - (VLCInputNode *)rootNode
 {
     VLCInputNode *inputNode = nil;
-    if (_p_mediaSource->description == localDevicesDescription) {
+    if (_p_mediaSource->description == localDevicesDescription || _p_mediaSource->description == myFoldersDescription) {
         // Since it is a manually constructed tree, we skip the locking
         inputNode = [[VLCInputNode alloc] initWithInputNode:&_p_mediaSource->tree->root];
     } else {
@@ -399,7 +471,7 @@ static const char *const localDevicesDescription = "My Machine";
         }
         
         dispatch_async(dispatch_get_main_queue(), ^{
-            [[NSNotificationCenter defaultCenter] postNotificationName:VLCMediaSourceChildrenAdded
+            [NSNotificationCenter.defaultCenter postNotificationName:VLCMediaSourceChildrenAdded
                                                                 object:self];
         });
     });
@@ -442,7 +514,7 @@ static const char *const localDevicesDescription = "My Machine";
         input_item_node_Delete(nodeToRemove);
         
         dispatch_async(dispatch_get_main_queue(), ^{
-            [[NSNotificationCenter defaultCenter] postNotificationName:VLCMediaSourceChildrenRemoved
+            [NSNotificationCenter.defaultCenter postNotificationName:VLCMediaSourceChildrenRemoved
                                                                 object:self];
         });
         

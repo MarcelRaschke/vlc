@@ -31,10 +31,10 @@
 #include <vlc_url.h>
 #include <vlc_arrays.h>
 #include <vlc_modules.h>
-#include <vlc_charset.h>
 
 #include "input_internal.h"
 #include "../preparser/art.h"
+#include <vlc_charset.h>
 
 struct vlc_meta_t
 {
@@ -105,7 +105,7 @@ vlc_meta_t *vlc_meta_New( void )
     return m;
 }
 
-/* Free a dictionary key allocated by strdup() in vlc_meta_AddExtra() */
+/* Free a dictionary key allocated by strdup() in vlc_meta_SetExtra() */
 static void vlc_meta_FreeExtraKey( void *p_data, void *p_obj )
 {
     VLC_UNUSED( p_obj );
@@ -138,13 +138,15 @@ const char *vlc_meta_Get( const vlc_meta_t *p_meta, vlc_meta_type_t meta_type )
     return p_meta->ppsz_meta[meta_type];
 }
 
-void vlc_meta_AddExtra( vlc_meta_t *m, const char *psz_name, const char *psz_value )
+void vlc_meta_SetExtra( vlc_meta_t *m, const char *psz_name, const char *psz_value )
 {
+    assert( psz_name );
     char *psz_oldvalue = (char *)vlc_dictionary_value_for_key( &m->extra_tags, psz_name );
     if( psz_oldvalue != kVLCDictionaryNotFound )
         vlc_dictionary_remove_value_for_key( &m->extra_tags, psz_name,
                                             vlc_meta_FreeExtraKey, NULL );
-    vlc_dictionary_insert( &m->extra_tags, psz_name, strdup(psz_value) );
+    if ( psz_value )
+        vlc_dictionary_insert( &m->extra_tags, psz_name, strdup(psz_value) );
 }
 
 const char * vlc_meta_GetExtra( const vlc_meta_t *m, const char *psz_name )

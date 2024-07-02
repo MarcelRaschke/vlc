@@ -343,6 +343,7 @@ static void FillSubpictureUpdater(stl_sg_t *p_group, subtext_updater_sys_t *p_sp
         p_group->pp_segment_last = &p_group->p_segment;
     }
 
+    p_spu_sys->region.b_absolute = false;
     p_spu_sys->region.align = SUBPICTURE_ALIGN_BOTTOM;
     if(p_group->i_justify == 0x01)
         p_spu_sys->region.inner_align = SUBPICTURE_ALIGN_LEFT;
@@ -407,9 +408,7 @@ static int Decode(decoder_t *p_dec, block_t *p_block)
             subpicture_t *p_sub = decoder_NewSubpictureText(p_dec);
             if( p_sub )
             {
-                FillSubpictureUpdater(p_group, p_sub->updater.p_sys );
-
-                p_sub->b_absolute = false;
+                FillSubpictureUpdater(p_group, p_sub->updater.sys );
 
                 if(p_group->i_end != VLC_TICK_INVALID && p_group->i_start >= p_block->i_dts)
                 {
@@ -420,7 +419,7 @@ static int Decode(decoder_t *p_dec, block_t *p_block)
                 {
                     p_sub->i_start    = p_block->i_pts;
                     p_sub->i_stop     = p_block->i_pts + p_block->i_length;
-                    p_sub->b_ephemer  = (p_block->i_length == VLC_TICK_INVALID);
+                    p_sub->b_ephemer  = (p_block->i_length == 0);
                 }
                 decoder_QueueSub(p_dec, p_sub);
             }

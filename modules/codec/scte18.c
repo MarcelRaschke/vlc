@@ -185,7 +185,7 @@ static int Decode( decoder_t *p_dec, block_t *p_block )
         p_spu = decoder_NewSubpictureText( p_dec );
         if( p_spu )
         {
-            subtext_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
+            subtext_updater_sys_t *p_spu_sys = p_spu->updater.sys;
 
             p_spu->i_start = p_block->i_pts;
             if( p_cea->alert_message_time_remaining )
@@ -194,8 +194,8 @@ static int Decode( decoder_t *p_dec, block_t *p_block )
                 p_spu->i_stop = VLC_TICK_INVALID;
 
             p_spu->b_ephemer  = true;
-            p_spu->b_absolute = false;
 
+            p_spu_sys->region.b_absolute = false;
             p_spu_sys->region.inner_align = SUBPICTURE_ALIGN_TOP;
             p_spu_sys->p_default_style->i_style_flags = STYLE_BOLD | STYLE_BACKGROUND;
             p_spu_sys->p_default_style->i_features |= STYLE_HAS_FLAGS;
@@ -249,4 +249,3 @@ static void Close( vlc_object_t *p_object )
     atsc_a65_handle_Release( p_sys->p_handle );
     free( p_sys );
 }
-

@@ -10,6 +10,7 @@
  *          Adrien Maglo <magsoft at videolan dot org>
  *          Felix Paul Kühne <fkuehne at videolan dot org>
  *          Pierre d'Herbemont <pdherbemont at videolan dot org>
+ *          Alexandre Janniaux <ajanni@videolabs.io>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by
@@ -36,11 +37,12 @@
 #include <vlc_common.h>
 #include <vlc_es.h>
 #include <vlc_picture.h>
+#include <vlc_opengl_filter.h>
 
-#include "filter.h"
 #include "gl_util.h"
 #include "vout_helper.h"
 #include "sampler.h"
+#include "picture.h"
 
 #define SPHERE_RADIUS 1.f
 
@@ -178,49 +180,49 @@ opengl_link_program(struct vlc_gl_filter *filter)
     const opengl_vtable_t *vt = renderer->vt;
 
     static const char *const VERTEX_SHADER_BODY =
-        "attribute vec2 PicCoordsIn;\n"
-        "varying vec2 PicCoords;\n"
-        "attribute vec3 VertexPosition;\n"
+        "#if __VERSION__ < 300\n"
+          "attribute vec2 PicCoordsIn;\n"
+          "varying vec2 PicCoords;\n"
+          "attribute vec3 VertexPosition;\n"
+        "#else\n"
+          "in vec2 PicCoordsIn;\n"
+          "out vec2 PicCoords;\n"
+          "in vec3 VertexPosition;\n"
+        "#endif\n"
         "uniform mat3 StereoMatrix;\n"
         "uniform mat4 ProjectionMatrix;\n"
         "uniform mat4 ZoomMatrix;\n"
         "uniform mat4 ViewMatrix;\n"
+        "uniform mat4 OrientationMatrix;\n"
         "void main() {\n"
         " PicCoords = (StereoMatrix * vec3(PicCoordsIn, 1.0)).st;\n"
-        " gl_Position = ProjectionMatrix * ZoomMatrix * ViewMatrix\n"
+        " gl_Position = OrientationMatrix * ProjectionMatrix * ZoomMatrix * ViewMatrix\n"
         "               * vec4(VertexPosition, 1.0);\n"
         "}\n";
 
     static const char *const FRAGMENT_SHADER_BODY =
-        "varying vec2 PicCoords;\n"
+        "#if __VERSION__ < 300\n"
+          "#define FragColor gl_FragColor\n"
+          "varying vec2 PicCoords;\n"
+        "#else\n"
+          "in vec2 PicCoords;\n"
+          "out vec4 FragColor;\n"
+        "#endif\n"
         "void main() {\n"
-        " gl_FragColor = vlc_texture(PicCoords);\n"
+        " FragColor = vlc_texture(PicCoords);\n"
         "}\n";
 
     const char *extensions = sampler->shader.extensions
                            ? sampler->shader.extensions : "";
 
-    const char *shader_version;
-    const char *shader_precision;
-    if (filter->api->is_gles)
-    {
-        shader_version = "#version 100\n";
-        shader_precision = "precision highp float;\n";
-    }
-    else
-    {
-        shader_version = "#version 120\n";
-        shader_precision = "";
-    }
-
     const char *vertex_shader[] = {
-        shader_version,
+        sampler->shader.version,
         VERTEX_SHADER_BODY,
     };
     const char *fragment_shader[] = {
-        shader_version,
+        sampler->shader.version,
         extensions,
-        shader_precision,
+        sampler->shader.precision,
         sampler->shader.body,
         FRAGMENT_SHADER_BODY,
     };
@@ -266,6 +268,7 @@ opengl_link_program(struct vlc_gl_filter *filter)
     GET_ULOC(ProjectionMatrix, "ProjectionMatrix");
     GET_ULOC(ViewMatrix, "ViewMatrix");
     GET_ULOC(ZoomMatrix, "ZoomMatrix");
+    GET_ULOC(OrientationMatrix, "OrientationMatrix");
 
     GET_ALOC(PicCoordsIn, "PicCoordsIn");
     GET_ALOC(VertexPosition, "VertexPosition");
@@ -590,8 +593,9 @@ error:
     return VLC_ENOMEM;
 }
 
-static int BuildRectangle(GLfloat **vertexCoord, GLfloat **textureCoord, unsigned *nbVertices,
-                          GLushort **indices, unsigned *nbIndices)
+static int BuildRectangle(
+        GLfloat **vertexCoord, GLfloat **textureCoord, unsigned *nbVertices,
+        GLushort **indices, unsigned *nbIndices, video_orientation_t orientation)
 {
     *nbVertices = 4;
     *nbIndices = 6;
@@ -622,12 +626,29 @@ static int BuildRectangle(GLfloat **vertexCoord, GLfloat **textureCoord, unsigne
 
     memcpy(*vertexCoord, coord, *nbVertices * 3 * sizeof(GLfloat));
 
-    static const GLfloat tex[] = {
+    static const GLfloat tex_normal[] = {
         0.0, 1.0,
         0.0, 0.0,
         1.0, 1.0,
         1.0, 0.0,
     };
+
+    static const GLfloat tex_hflip[] = {
+        1.0, 1.0,
+        1.0, 0.0,
+        0.0, 1.0,
+        0.0, 0.0,
+    };
+
+    /* Since there is a bijection between symmetry and rotation,
+     * applying the general orientation in each case is equivalent
+     * to choosing the rotation we want to apply to the frame, and
+     * then decide whether we apply a horizontal flip or not. */
+    const GLfloat *tex;
+    if (ORIENT_IS_MIRROR(orientation))
+        tex = tex_hflip;
+    else
+        tex = tex_normal;
 
     memcpy(*textureCoord, tex, *nbVertices * 2 * sizeof(GLfloat));
 
@@ -642,7 +663,8 @@ static int BuildRectangle(GLfloat **vertexCoord, GLfloat **textureCoord, unsigne
 }
 
 static int SetupCoords(struct vlc_gl_renderer *renderer,
-                       const struct vlc_gl_picture *pic)
+                       const struct vlc_gl_picture *pic,
+                       video_orientation_t orientation)
 {
     const opengl_vtable_t *vt = renderer->vt;
     struct vlc_gl_sampler *sampler = renderer->sampler;
@@ -657,7 +679,7 @@ static int SetupCoords(struct vlc_gl_renderer *renderer,
     {
     case PROJECTION_MODE_RECTANGULAR:
         i_ret = BuildRectangle(&vertexCoord, &textureCoord, &nbVertices,
-                               &indices, &nbIndices);
+                               &indices, &nbIndices, orientation);
         break;
     case PROJECTION_MODE_EQUIRECTANGULAR:
         i_ret = BuildSphere(&vertexCoord, &textureCoord, &nbVertices,
@@ -711,7 +733,9 @@ Draw(struct vlc_gl_filter *filter, const struct vlc_gl_picture *pic,
 
     const opengl_vtable_t *vt = renderer->vt;
 
+    vt->ClearColor(0.f,0.f,0.f,1.f);
     vt->Clear(GL_COLOR_BUFFER_BIT);
+    GL_ASSERT_NOERROR(vt);
 
     vt->UseProgram(renderer->program_id);
 
@@ -724,12 +748,21 @@ Draw(struct vlc_gl_filter *filter, const struct vlc_gl_picture *pic,
 
     if (!renderer->valid_coords)
     {
-        int ret = SetupCoords(renderer, pic);
+        int ret = SetupCoords(renderer, pic, meta->orientation);
         if (ret != VLC_SUCCESS)
             return ret;
 
         renderer->valid_coords = true;
     }
+
+    float orientation_matrix[ARRAY_SIZE(MATRIX4_IDENTITY)];
+    if (meta->orientation != ORIENT_NORMAL)
+    {
+        vlc_viewpoint_t orient_vp;
+        vlc_viewpoint_from_orientation(&orient_vp, meta->orientation);
+        vlc_viewpoint_to_4x4(&orient_vp, orientation_matrix);
+    }
+    else memcpy(orientation_matrix, MATRIX4_IDENTITY, sizeof(MATRIX4_IDENTITY));
 
     vt->BindBuffer(GL_ARRAY_BUFFER, renderer->texture_buffer_object);
     assert(renderer->aloc.PicCoordsIn != -1);
@@ -749,8 +782,11 @@ Draw(struct vlc_gl_filter *filter, const struct vlc_gl_picture *pic,
                          renderer->var.ViewMatrix);
     vt->UniformMatrix4fv(renderer->uloc.ZoomMatrix, 1, GL_FALSE,
                          renderer->var.ZoomMatrix);
+    vt->UniformMatrix4fv(renderer->uloc.OrientationMatrix, 1, GL_FALSE,
+                         orientation_matrix);
 
     vt->DrawElements(GL_TRIANGLES, renderer->nb_indices, GL_UNSIGNED_SHORT, 0);
+    GL_ASSERT_NOERROR(vt);
 
     return VLC_SUCCESS;
 }

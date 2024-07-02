@@ -31,6 +31,7 @@
 #include <limits.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
@@ -169,7 +170,8 @@ static int Activate( filter_t *p_filter )
         return VLC_EGENERIC;
     }
 
-    if( p_filter->fmt_in.video.i_chroma != p_filter->fmt_out.video.i_chroma )
+    if( !video_format_IsSameChroma( &p_filter->fmt_in.video,
+                                    &p_filter->fmt_out.video ) )
     {
         msg_Err( p_filter, "Input and output chromas don't match" );
         return VLC_EGENERIC;
@@ -338,11 +340,12 @@ static int Activate( filter_t *p_filter )
 
     filter_chain_Reset( p_sys->p_chain, &p_filter->fmt_in, p_filter->vctx_in, &fmt );
     /* Append scaling module */
-    if ( filter_chain_AppendConverter( p_sys->p_chain, NULL ) )
+    int ret = filter_chain_AppendConverter( p_sys->p_chain, NULL );
+    if ( ret != VLC_SUCCESS )
     {
         msg_Err( p_filter, "Could not append scaling filter" );
         free( p_sys );
-        return VLC_EGENERIC;
+        return ret;
     }
 
     /* Append croppadd module if we actually do cropping or padding instead of just scaling*/

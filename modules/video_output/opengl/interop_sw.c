@@ -27,6 +27,7 @@
 #include <stdlib.h>
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_plugin.h>
 #include <vlc_opengl.h>
 #include <vlc_opengl_interop.h>
@@ -432,13 +433,9 @@ static bool fixGLFormat(struct vlc_gl_interop *interop, GLint* intfmt, GLint* fm
 }
 
 static int
-interop_yuv_base_init(struct vlc_gl_interop *interop, GLenum tex_target,
-                      vlc_fourcc_t chroma, const vlc_chroma_description_t *desc)
+interop_yuv_base_init(struct vlc_gl_interop *interop,
+                      const vlc_chroma_description_t *desc)
 {
-    struct priv *priv = interop->priv;
-
-    (void) chroma;
-
     struct interop_formats
     {
         GLint intfmt;
@@ -463,7 +460,7 @@ interop_yuv_base_init(struct vlc_gl_interop *interop, GLenum tex_target,
 
     if (desc->plane_count == 1)
     {
-        if (chroma == VLC_CODEC_VUYA)
+        if (desc->fcc == VLC_CODEC_VUYA)
         {
             interop->tex_count = 2;
             interop->texs[0] = (struct vlc_gl_tex_cfg) {
@@ -474,7 +471,7 @@ interop_yuv_base_init(struct vlc_gl_interop *interop, GLenum tex_target,
         }
         else if (desc->pixel_size != 2)
         {
-            msg_Warn(interop->gl, "unsupported chroma %.4s", (char*)&chroma);
+            msg_Warn(interop->gl, "unsupported chroma %.4s", (char*)&desc->fcc);
             return VLC_EGENERIC;
         }
 
@@ -547,7 +544,7 @@ interop_yuv_base_init(struct vlc_gl_interop *interop, GLenum tex_target,
 
     if (desc->pixel_size == 2)
     {
-        if (vlc_gl_interop_GetTexFormatSize(interop, tex_target, format->fmt,
+        if (vlc_gl_interop_GetTexFormatSize(interop, GL_TEXTURE_2D, format->fmt,
                                             format->intfmt, GL_UNSIGNED_SHORT) != 16)
             return VLC_EGENERIC;
     }
@@ -569,7 +566,7 @@ interop_yuv_base_init(struct vlc_gl_interop *interop, GLenum tex_target,
         interop->tex_count = 2;
 
         if (desc->pixel_size == 2 &&
-            vlc_gl_interop_GetTexFormatSize(interop, tex_target, format->plane2_fmt,
+            vlc_gl_interop_GetTexFormatSize(interop, GL_TEXTURE_2D, format->plane2_fmt,
                 format->plane2_intfmt, format->plane2_type) != 16)
         {
             return VLC_EGENERIC;
@@ -604,11 +601,8 @@ interop_yuv_base_init(struct vlc_gl_interop *interop, GLenum tex_target,
 }
 
 static int
-interop_rgb_base_init(struct vlc_gl_interop *interop, GLenum tex_target,
-                      vlc_fourcc_t chroma)
+interop_rgb_base_init(struct vlc_gl_interop *interop, vlc_fourcc_t chroma)
 {
-    (void) tex_target;
-
     switch (chroma)
     {
         case VLC_CODEC_RGB24:
@@ -616,15 +610,21 @@ interop_rgb_base_init(struct vlc_gl_interop *interop, GLenum tex_target,
                 { 1, 1 }, { 1, 1 }, GL_RGB, GL_RGB, GL_UNSIGNED_BYTE
             };
             break;
+#ifdef GL_BGR
+        case VLC_CODEC_BGR24:
+            interop->texs[0] = (struct vlc_gl_tex_cfg) {
+                { 1, 1 }, { 1, 1 }, GL_RGB, GL_BGR, GL_UNSIGNED_BYTE
+            };
+            break;
+#endif
 
-        case VLC_CODEC_RGB32:
         case VLC_CODEC_RGBA:
             interop->texs[0] = (struct vlc_gl_tex_cfg) {
                 { 1, 1 }, { 1, 1 }, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE
             };
             break;
         case VLC_CODEC_BGRA: {
-            if (vlc_gl_interop_GetTexFormatSize(interop, tex_target, GL_BGRA, GL_RGBA,
+            if (vlc_gl_interop_GetTexFormatSize(interop, GL_TEXTURE_2D, GL_BGRA, GL_RGBA,
                                                 GL_UNSIGNED_BYTE) != 32)
                 return VLC_EGENERIC;
             interop->texs[0] = (struct vlc_gl_tex_cfg) {
@@ -650,10 +650,9 @@ interop_xyz12_init(struct vlc_gl_interop *interop)
 }
 
 static int
-opengl_interop_init(struct vlc_gl_interop *interop, GLenum tex_target,
+opengl_interop_init(struct vlc_gl_interop *interop,
                     vlc_fourcc_t chroma, video_color_space_t yuv_space)
 {
-    bool is_yuv = vlc_fourcc_IsYUV(chroma);
     const vlc_chroma_description_t *desc =
         vlc_fourcc_GetChromaDescription(chroma);
     if (!desc)
@@ -662,18 +661,19 @@ opengl_interop_init(struct vlc_gl_interop *interop, GLenum tex_target,
     assert(!interop->fmt_out.p_palette);
     interop->fmt_out.i_chroma = chroma;
     interop->fmt_out.space = yuv_space;
-    interop->tex_target = tex_target;
+    interop->tex_target = GL_TEXTURE_2D;
 
-    if (chroma == VLC_CODEC_XYZ12)
+    if (chroma == VLC_CODEC_XYZ_12B||
+        chroma == VLC_CODEC_XYZ_12L)
     {
         interop_xyz12_init(interop);
         return VLC_SUCCESS;
     }
 
-    if (is_yuv)
-        return interop_yuv_base_init(interop, tex_target, chroma, desc);
+    if (vlc_fourcc_IsYUV(chroma))
+        return interop_yuv_base_init(interop, desc);
 
-    return interop_rgb_base_init(interop, tex_target, chroma);
+    return interop_rgb_base_init(interop, chroma);
 }
 
 static void
@@ -720,8 +720,9 @@ opengl_interop_generic_init(struct vlc_gl_interop *interop, bool allow_dr)
 
     video_color_space_t space;
     const vlc_fourcc_t *list;
+    const bool is_yup = vlc_fourcc_IsYUV(interop->fmt_in.i_chroma);
 
-    if (vlc_fourcc_IsYUV(interop->fmt_in.i_chroma))
+    if (is_yup)
     {
         GLint max_texture_units = 0;
         priv->gl.GetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &max_texture_units);
@@ -731,10 +732,9 @@ opengl_interop_generic_init(struct vlc_gl_interop *interop, bool allow_dr)
         list = vlc_fourcc_GetYUVFallback(interop->fmt_in.i_chroma);
         space = interop->fmt_in.space;
     }
-    else if (interop->fmt_in.i_chroma == VLC_CODEC_XYZ12)
+    else if (interop->fmt_in.i_chroma == VLC_CODEC_XYZ_12B)
     {
-        static const vlc_fourcc_t xyz12_list[] = { VLC_CODEC_XYZ12, 0 };
-        list = xyz12_list;
+        list = NULL;
         space = COLOR_SPACE_UNDEF;
     }
     else
@@ -748,14 +748,25 @@ opengl_interop_generic_init(struct vlc_gl_interop *interop, bool allow_dr)
 
     /* Check whether the given chroma is translatable to OpenGL. */
     vlc_fourcc_t i_chroma = interop->fmt_in.i_chroma;
-    int ret = opengl_interop_init(interop, GL_TEXTURE_2D, i_chroma, space);
+    int ret = opengl_interop_init(interop, i_chroma, space);
     if (ret == VLC_SUCCESS)
         goto interop_init;
+
+    if (!is_yup)
+    {
+        i_chroma = VLC_CODEC_RGBA;
+        ret = opengl_interop_init(interop, i_chroma, space);
+        if (ret == VLC_SUCCESS)
+            goto interop_init;
+    }
+
+    if (list == NULL)
+        goto error;
 
     /* Check whether any fallback for the chroma is translatable to OpenGL. */
     while (*list)
     {
-        ret = opengl_interop_init(interop, GL_TEXTURE_2D, *list, space);
+        ret = opengl_interop_init(interop, *list, space);
         if (ret == VLC_SUCCESS)
         {
             i_chroma = *list;
@@ -770,20 +781,7 @@ interop_init:
     /* We found a chroma with matching parameters for OpenGL. The interop can
      * be created. */
 
-    // TODO: video_format_FixRgb is not fixing the mask we assign here
-    if (i_chroma == VLC_CODEC_RGB32)
-    {
-#if defined(WORDS_BIGENDIAN)
-        interop->fmt_out.i_rmask  = 0xff000000;
-        interop->fmt_out.i_gmask  = 0x00ff0000;
-        interop->fmt_out.i_bmask  = 0x0000ff00;
-#else
-        interop->fmt_out.i_rmask  = 0x000000ff;
-        interop->fmt_out.i_gmask  = 0x0000ff00;
-        interop->fmt_out.i_bmask  = 0x00ff0000;
-#endif
-        video_format_FixRgb(&interop->fmt_out);
-    }
+    interop->fmt_in.i_chroma = i_chroma;
 
     static const struct vlc_gl_interop_ops ops = {
         .allocate_textures = tc_common_allocate_textures,
@@ -791,7 +789,6 @@ interop_init:
         .close = opengl_interop_generic_deinit,
     };
     interop->ops = &ops;
-    interop->fmt_in.i_chroma = i_chroma;
 
     if (allow_dr && priv->has_unpack_subimage)
     {
@@ -825,15 +822,13 @@ error:
     return VLC_EGENERIC;
 }
 
-static int OpenInteropSW(vlc_object_t *obj)
+static int OpenInteropSW(struct vlc_gl_interop *interop)
 {
-    struct vlc_gl_interop *interop = (void *) obj;
     return opengl_interop_generic_init(interop, false);
 }
 
-static int OpenInteropDirectRendering(vlc_object_t *obj)
+static int OpenInteropDirectRendering(struct vlc_gl_interop *interop)
 {
-    struct vlc_gl_interop *interop = (void *) obj;
     return opengl_interop_generic_init(interop, true);
 }
 

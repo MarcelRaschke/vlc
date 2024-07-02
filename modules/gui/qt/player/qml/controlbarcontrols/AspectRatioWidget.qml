@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
+import QtQuick
 
 import org.videolan.vlc 0.1
 
@@ -35,11 +35,15 @@ Widgets.ComboBoxExt {
     model: Player.aspectRatio
     currentIndex: -1
     onCurrentIndexChanged: model.toggleIndex(currentIndex)
-    Accessible.name: I18n.qtr("Aspect ratio")
+    Accessible.name: qsTr("Aspect ratio")
 
     Connections {
         target: combo.popup
-        onOpened: combo.requestLockUnlockAutoHide(true)
-        onClosed: combo.requestLockUnlockAutoHide(false)
+        function onOpened() {
+            combo.requestLockUnlockAutoHide(true)
+        }
+        function onClosed() {
+            combo.requestLockUnlockAutoHide(false)
+        }
     }
 }

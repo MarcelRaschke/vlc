@@ -1050,6 +1050,7 @@ static void CEA708SpuConvert( const cea708_window_t *p_w,
                              (CEA708_SCREEN_ROWS * CEA708_FONT_TO_LINE_HEIGHT_RATIO);
     }
     p_region->flags |= UPDT_REGION_ORIGIN_X_IS_RATIO|UPDT_REGION_ORIGIN_Y_IS_RATIO;
+    p_region->b_absolute = false;
 
     if( p_w->i_firstrow <= p_w->i_lastrow )
     {
@@ -1084,7 +1085,7 @@ static subpicture_t *CEA708_BuildSubtitle( cea708_t *p_cea708 )
     if( !p_spu )
         return NULL;
 
-    subtext_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
+    subtext_updater_sys_t *p_spu_sys = p_spu->updater.sys;
     substext_updater_region_t *p_region = &p_spu_sys->region;
 
     p_spu_sys->margin_ratio = CEA708_SCREEN_SAFE_MARGIN_RATIO;
@@ -1116,7 +1117,6 @@ static subpicture_t *CEA708_BuildSubtitle( cea708_t *p_cea708 )
     p_spu->i_stop     = p_cea708->i_clock + VLC_TICK_FROM_SEC(10);   /* 10s max */
 
     p_spu->b_ephemer  = true;
-    p_spu->b_absolute = false;
     p_spu->b_subtitle = true;
 
     return p_spu;

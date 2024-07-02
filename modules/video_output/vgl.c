@@ -80,11 +80,11 @@ static void VglSwapBuffers(vlc_gl_t *gl)
     ReleaseCurrent(gl);
 }
 
-static void Resize(vlc_gl_t * gl, unsigned w, unsigned h)
+static int ResizeInternal(vlc_gl_t * gl, unsigned w, unsigned h)
 {
     vout_display_sys_t *sys = gl->sys;
     if( sys->width == w && sys->height == h )
-        return;
+        return VLC_SUCCESS;
 
     MakeCurrent(gl);
     libvlc_video_render_cfg_t output_cfg = {
@@ -92,17 +92,38 @@ static void Resize(vlc_gl_t * gl, unsigned w, unsigned h)
         libvlc_video_colorspace_BT709, libvlc_video_primaries_BT709,
         libvlc_video_transfer_func_SRGB, NULL,
     };
-    libvlc_video_output_cfg_t render_cfg;
-    sys->resizeCb(sys->opaque, &output_cfg, &render_cfg);
+    libvlc_video_output_cfg_t render_cfg = {
+        .opengl_format = GL_RGBA,
+        .full_range = true,
+        .colorspace = libvlc_video_colorspace_BT709,
+        .primaries = libvlc_video_primaries_BT709,
+        .transfer = libvlc_video_transfer_func_SRGB,
+        .orientation = libvlc_video_orient_top_left,
+    };
+    bool ret = sys->resizeCb(sys->opaque, &output_cfg, &render_cfg);
     ReleaseCurrent(gl);
+
+    if (!ret)
+        return VLC_EGENERIC;
+
     assert(render_cfg.opengl_format == GL_RGBA);
     assert(render_cfg.full_range == true);
     assert(render_cfg.colorspace == libvlc_video_colorspace_BT709);
     assert(render_cfg.primaries  == libvlc_video_primaries_BT709);
     assert(render_cfg.transfer   == libvlc_video_transfer_func_SRGB);
-    assert(render_cfg.orientation == libvlc_video_orient_top_left);
+
+    /* video_orientation_t enum is matching libvlc_video_orient_t. */
+    gl->orientation = (video_orientation_t)render_cfg.orientation;
+
     sys->width = w;
     sys->height = h;
+
+    return VLC_SUCCESS;
+}
+
+static void Resize(vlc_gl_t * gl, unsigned w, unsigned h)
+{
+    ResizeInternal(gl, w, h);
 }
 
 static void Close(vlc_gl_t *gl)
@@ -128,9 +149,21 @@ static int Open(vlc_gl_t *gl, unsigned width, unsigned height,
     vout_display_sys_t * sys;
 
     libvlc_video_engine_t engineType = var_InheritInteger( gl, "vout-cb-type" );
-    if ( engineType != libvlc_video_engine_opengl &&
-         engineType != libvlc_video_engine_gles2 )
-        return VLC_ENOTSUP;
+    switch (engineType)
+    {
+        case libvlc_video_engine_opengl:
+            if (gl->api_type != VLC_OPENGL)
+                return VLC_ENOTSUP;
+            break;
+
+        case libvlc_video_engine_gles2:
+            if (gl->api_type != VLC_OPENGL_ES2)
+                return VLC_ENOTSUP;
+            break;
+
+        default:
+            return VLC_ENOTSUP;
+    }
 
     if (gl_cfg->need_alpha)
     {
@@ -161,7 +194,12 @@ static int Open(vlc_gl_t *gl, unsigned width, unsigned height,
             return VLC_EGENERIC;
         }
     }
-    Resize(gl, width, height);
+    if (ResizeInternal(gl, width, height) != VLC_SUCCESS)
+    {
+        if( sys->cleanupCb )
+            sys->cleanupCb(sys->opaque);
+        return VLC_EGENERIC;
+    }
 
     static const struct vlc_gl_operations gl_ops =
     {

@@ -155,6 +155,22 @@ struct vlc_playlist_sort_criterion
 };
 
 /**
+ * Action when a media is stopped
+ *
+ * @see vlc_playlist_SetMediaStoppedAction()
+ */
+enum vlc_playlist_media_stopped_action {
+    /** Continue (or stop if there is no next media), default behavior */
+    VLC_PLAYLIST_MEDIA_STOPPED_CONTINUE,
+    /** Pause when reaching the end of file */
+    VLC_PLAYLIST_MEDIA_STOPPED_PAUSE,
+    /** Stop, even if there is a next media to play */
+    VLC_PLAYLIST_MEDIA_STOPPED_STOP,
+    /** Exit VLC */
+    VLC_PLAYLIST_MEDIA_STOPPED_EXIT,
+};
+
+/**
  * Playlist callbacks.
  *
  * A client may register a listener using vlc_playlist_AddListener() to listen
@@ -292,6 +308,19 @@ struct vlc_playlist_callbacks
     void
     (*on_has_next_changed)(vlc_playlist_t *playlist,
                            bool has_next, void *userdata);
+
+    /**
+     * Called when the stopped action has changed
+     *
+     * @see vlc_playlist_SetMediaStoppedAction()
+     *
+     * \param playlist the playlist
+     * @param new_action action to execute when a media is stopped
+     * \param userdata userdata provided to AddListener()
+     */
+    void (*on_media_stopped_action_changed)(vlc_playlist_t *playlist,
+                                            enum vlc_playlist_media_stopped_action new_action,
+                                            void *userdata);
 };
 
 /* Playlist items */
@@ -402,6 +431,16 @@ vlc_playlist_RemoveListener(vlc_playlist_t *playlist,
                             vlc_playlist_listener_id *id);
 
 /**
+ * Setup an action when a media is stopped
+ *
+ * @param playlist the playlist, locked
+ * @param action action to do when a media is stopped
+ */
+VLC_API void
+vlc_playlist_SetMediaStoppedAction(vlc_playlist_t *playlist,
+                              enum vlc_playlist_media_stopped_action action);
+
+/**
  * Return the number of items.
  *
  * \param playlist the playlist, locked
@@ -435,7 +474,7 @@ vlc_playlist_Clear(vlc_playlist_t *playlist);
  * The index must be in range (less than or equal to vlc_playlist_Count()).
  *
  * \param playlist the playlist, locked
- * \index index    the index where the media are to be inserted
+ * \param index    the index where the media are to be inserted
  * \param media    the array of media to insert
  * \param count    the number of media to insert
  * \return VLC_SUCCESS on success, another value on error
@@ -450,7 +489,7 @@ vlc_playlist_Insert(vlc_playlist_t *playlist, size_t index,
  * The index must be in range (less than or equal to vlc_playlist_Count()).
  *
  * \param playlist the playlist, locked
- * \index index    the index where the media is to be inserted
+ * \param index    the index where the media is to be inserted
  * \param media    the media to insert
  * \return VLC_SUCCESS on success, another value on error
  */
@@ -561,7 +600,7 @@ vlc_playlist_RemoveOne(vlc_playlist_t *playlist, size_t index)
  * change.
  *
  * \param playlist the playlist, locked
- * \index index    the index where the media are to be inserted
+ * \param index    the index where the media are to be inserted
  * \param media    the array of media to insert
  * \param count    the number of media to insert
  * \return VLC_SUCCESS on success, another value on error
@@ -869,6 +908,7 @@ vlc_playlist_Preparse(vlc_playlist_t *playlist, input_item_t *media);
 /**
  * Export the playlist to a file.
  *
+ * \param playlist a playlist instance
  * \param filename the location where the exported file will be saved
  * \param type the type of the playlist file to create (m3u, m3u8, xspf, ...)
  * \return VLC_SUCCESS on success, another value on error

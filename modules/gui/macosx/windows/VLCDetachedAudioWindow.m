@@ -20,17 +20,25 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
 *****************************************************************************/
 
+#import "VLCDetachedAudioWindow.h"
+
 #import "extensions/NSString+Helpers.h"
+#import "extensions/NSView+VLCAdditions.h"
+
+#import "library/VLCInputItem.h"
+
 #import "main/VLCMain.h"
-#import "windows/mainwindow/VLCControlsBarCommon.h"
+
 #import "playlist/VLCPlaylistController.h"
 #import "playlist/VLCPlayerController.h"
-#import "library/VLCInputItem.h"
+
 #import "views/VLCImageView.h"
 #import "views/VLCTrackingView.h"
 #import "views/VLCBottomBarView.h"
 
-#import "VLCDetachedAudioWindow.h"
+#import "windows/controlsbar/VLCControlsBarCommon.h"
+
+#import "windows/video/VLCMainVideoViewOverlayView.h"
 
 @interface VLCDetachedAudioWindow()
 {
@@ -43,27 +51,41 @@
 - (void)awakeFromNib
 {
     self.title = @"";
-    self.imageView.cropsImagesToRoundedCorners = NO;
 
-    _playerController = [[[VLCMain sharedInstance] playlistController] playerController];
-    VLCTrackingView *trackingView = self.contentView;
-    trackingView.viewToHide = self.wrapperView;
+    _playerController = VLCMain.sharedInstance.playlistController.playerController;
+
+    VLCTrackingView * const trackingView = self.contentView;
+    trackingView.viewToHide = self.overlayView;
     trackingView.animatesTransition = YES;
+    trackingView.mouseEnteredBlock = ^{
+        self.styleMask |= NSWindowStyleMaskTitled;
+    };
+    trackingView.mouseExitedBlock = ^{
+        self.styleMask &= ~NSWindowStyleMaskTitled;
+    };
 
-    NSNotificationCenter *notificationCenter = [NSNotificationCenter defaultCenter];
-    [notificationCenter addObserver:self selector:@selector(inputItemChanged:) name:VLCPlayerCurrentMediaItemChanged object:nil];
+    self.overlayView.drawGradientForTopControls = YES;
+    self.overlayView.darkestGradientColor = [NSColor colorWithCalibratedWhite:0.0 alpha:0.8];
+
+    self.bottomBarView.drawBorder = NO;
+
+    NSNotificationCenter * const notificationCenter = NSNotificationCenter.defaultCenter;
+    [notificationCenter addObserver:self
+                           selector:@selector(inputItemChanged:)
+                               name:VLCPlayerCurrentMediaItemChanged
+                             object:nil];
 
     [self inputItemChanged:nil];
 }
 
 - (void)dealloc
 {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
 - (void)inputItemChanged:(NSNotification *)aNotification
 {
-    VLCInputItem *currentInput = _playerController.currentMedia;
+    VLCInputItem * const currentInput = _playerController.currentMedia;
     if (currentInput) {
         [self.imageView setImageURL:currentInput.artworkURL placeholderImage:[NSImage imageNamed:@"noart.png"]];
     } else {

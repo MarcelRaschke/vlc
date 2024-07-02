@@ -16,9 +16,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
 
-import QtGraphicalEffects 1.0
+import QtQuick
+
+import Qt5Compat.GraphicalEffects
 
 Item {
     id: rootItem
@@ -82,6 +83,6 @@ Item {
         blending: false
         cullMode: ShaderEffect.BackFaceCulling
 
-        fragmentShader: "qrc:///player/PlayerBlurredBackground.frag"
+        fragmentShader: "qrc:///shaders/PlayerBlurredBackground.frag.qsb"
     }
 }

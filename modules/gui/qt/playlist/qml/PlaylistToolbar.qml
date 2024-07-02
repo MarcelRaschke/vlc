@@ -15,9 +15,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts 1.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 
 import org.videolan.vlc 0.1
 
@@ -32,25 +32,29 @@ RowLayout {
         colorSet: ColorContext.Window
     }
 
-    height: VLCStyle.heightBar_normal
     spacing: VLCStyle.margin_normal
 
+    Accessible.role: Accessible.ToolBar
 
     Item {
         Layout.fillWidth: true
-        implicitHeight: loop.height
+        Layout.fillHeight: true
+
+        implicitWidth: loop.implicitWidth
+        implicitHeight: loop.implicitHeight
 
         Widgets.IconToolButton {
             id: loop
 
             anchors.centerIn: parent
 
-            size: VLCStyle.icon_playlist
-            iconText: (mainPlaylistController.repeatMode === PlaylistControllerModel.PLAYBACK_REPEAT_CURRENT)
+            font.pixelSize: VLCStyle.icon_playlist
+            description: qsTr("Loop")
+            text: (MainPlaylistController.repeatMode === PlaylistController.PLAYBACK_REPEAT_CURRENT)
                       ? VLCIcons.repeat_one
                       : VLCIcons.repeat_all
-            checked: mainPlaylistController.repeatMode !== PlaylistControllerModel.PLAYBACK_REPEAT_NONE
-            onClicked: mainPlaylistController.toggleRepeatMode()
+            checked: MainPlaylistController.repeatMode !== PlaylistController.PLAYBACK_REPEAT_NONE
+            onClicked: MainPlaylistController.toggleRepeatMode()
             focusPolicy: Qt.NoFocus
         }
     }
@@ -58,83 +62,92 @@ RowLayout {
 
     Item {
         Layout.fillWidth: true
-        implicitHeight: shuffle.height
+        Layout.fillHeight: true
+
+        implicitWidth: shuffle.implicitWidth
+        implicitHeight: shuffle.implicitHeight
 
         Widgets.IconToolButton {
             id: shuffle
 
             anchors.centerIn: parent
 
-            checked: mainPlaylistController.random
-            size: VLCStyle.icon_playlist
-            iconText: VLCIcons.shuffle_on
-            onClicked: mainPlaylistController.toggleRandom()
+            checked: MainPlaylistController.random
+            font.pixelSize: VLCStyle.icon_playlist
+            description: qsTr("Shuffle")
+            text: VLCIcons.shuffle
+            onClicked: MainPlaylistController.toggleRandom()
             focusPolicy: Qt.NoFocus
         }
     }
 
     Item {
         Layout.fillWidth: true
-        implicitHeight: sort.height
+        Layout.fillHeight: true
+
+        implicitWidth: sort.implicitWidth
+        implicitHeight: sort.implicitHeight
 
         Widgets.SortControl {
             id: sort
 
             anchors.centerIn: parent
 
-            iconSize: VLCStyle.icon_playlist
+            font.pixelSize: VLCStyle.icon_playlist
 
-            enabled: mainPlaylistController.count > 1
+            enabled: MainPlaylistController.count > 1
 
-            checked: mainPlaylistController.sortKey !== PlaylistControllerModel.SORT_KEY_NONE
+            checked: MainPlaylistController.sortKey !== PlaylistController.SORT_KEY_NONE
 
             popupAbove: true
 
             focusPolicy: Qt.NoFocus
 
-            model: mainPlaylistController.sortKeyTitleList
-            textRole: "title"
-            criteriaRole: "key"
+            model: MainPlaylistController.sortKeyTitleList
 
-            onSortSelected: {
-                mainPlaylistController.sortKey = key
+            onSortSelected: key => {
+                MainPlaylistController.sortKey = key
             }
 
-            onSortOrderSelected: {
+            onSortOrderSelected: type => {
                 if (type === Qt.AscendingOrder)
-                    mainPlaylistController.sortOrder = PlaylistControllerModel.SORT_ORDER_ASC
+                    MainPlaylistController.sortOrder = PlaylistController.SORT_ORDER_ASC
                 else if (type === Qt.DescendingOrder)
-                    mainPlaylistController.sortOrder = PlaylistControllerModel.SORT_ORDER_DESC
+                    MainPlaylistController.sortOrder = PlaylistController.SORT_ORDER_DESC
 
-                mainPlaylistController.sort()
+                MainPlaylistController.sort()
             }
 
             sortOrder: {
-                if (mainPlaylistController.sortOrder === PlaylistControllerModel.SORT_ORDER_ASC) {
+                if (MainPlaylistController.sortOrder === PlaylistController.SORT_ORDER_ASC) {
                     Qt.AscendingOrder
                 }
-                else if (mainPlaylistController.sortOrder === PlaylistControllerModel.SORT_ORDER_DESC) {
+                else if (MainPlaylistController.sortOrder === PlaylistController.SORT_ORDER_DESC) {
                     Qt.DescendingOrder
                 }
             }
 
-            sortKey: mainPlaylistController.sortKey
+            sortKey: MainPlaylistController.sortKey
         }
     }
 
     Item {
         Layout.fillWidth: true
-        implicitHeight: clear.height
+        Layout.fillHeight: true
+
+        implicitWidth: clear.implicitWidth
+        implicitHeight: clear.implicitHeight
 
         Widgets.IconToolButton {
             id: clear
 
             anchors.centerIn: parent
 
-            size: VLCStyle.icon_playlist
-            enabled: !mainPlaylistController.empty
-            iconText: VLCIcons.playlist_clear
-            onClicked: mainPlaylistController.clear()
+            font.pixelSize: VLCStyle.icon_playlist
+            enabled: !MainPlaylistController.empty
+            description: qsTr("Clear playqueue")
+            text: VLCIcons.playlist_clear
+            onClicked: MainPlaylistController.clear()
             focusPolicy: Qt.NoFocus
         }
     }

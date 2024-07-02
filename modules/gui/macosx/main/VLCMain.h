@@ -60,10 +60,11 @@ extern NSString *VLCConfigurationChangedNotification;
 @class VLCLibraryController;
 @class VLCPlaylistController;
 @class VLCVideoOutputProvider;
+@class VLCDetachedAudioWindow;
 
 @interface VLCMain : NSObject
 
-+ (VLCMain *)sharedInstance;
+@property (class, readonly) VLCMain *sharedInstance;
 + (void)relaunchApplication;
 
 @property (readonly) BOOL isTerminating;
@@ -85,5 +86,6 @@ extern NSString *VLCConfigurationChangedNotification;
 @property (readonly) VLCTrackSynchronizationWindowController *trackSyncPanel;
 @property (readonly) VLCVideoEffectsWindowController *videoEffectsPanel;
 @property (readonly) VLCVideoOutputProvider *voutProvider;
+@property (readonly) VLCDetachedAudioWindow *detachedAudioWindow;
 
 @end

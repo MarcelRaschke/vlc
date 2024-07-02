@@ -30,6 +30,7 @@
 #include "demux.h"
 #include <libvlc.h>
 #include <vlc_codec.h>
+#include <vlc_configuration.h>
 #include <vlc_meta.h>
 #include <vlc_url.h>
 #include <vlc_modules.h>
@@ -192,12 +193,15 @@ demux_t *demux_NewAdvanced( vlc_object_t *p_obj, input_thread_t *p_input,
         strict = false;
     }
 
-    priv->module = vlc_module_load(p_demux, "demux", module, strict,
-                                   demux_Probe, p_demux);
+    priv->module = vlc_module_load(vlc_object_logger(p_demux), "demux", module,
+                                   strict, demux_Probe, p_demux);
     free(modbuf);
 
     if (priv->module == NULL)
         goto error;
+
+    var_Create(p_demux, "module-name", VLC_VAR_STRING);
+    var_SetString(p_demux, "module-name", module_get_object(priv->module));
 
     return p_demux;
 error:
@@ -207,18 +211,24 @@ error:
     return NULL;
 }
 
+static int demux_ReadDir( stream_t *s, input_item_node_t *p_node )
+{
+    assert(s->pf_readdir != NULL || (s->ops != NULL && s->ops->demux.readdir != NULL));
+    return (s->ops != NULL ? s->ops->demux.readdir : s->pf_readdir)( s, p_node );
+}
+
 int demux_Demux(demux_t *demux)
 {
-    if (demux->pf_demux != NULL)
-        return demux->pf_demux(demux);
+    if (demux->pf_demux != NULL || (demux->ops != NULL && demux->ops->demux.demux != NULL))
+        return (demux->ops != NULL ? demux->ops->demux.demux : demux->pf_demux)(demux);
 
-    if (demux->pf_readdir != NULL && demux->p_input_item != NULL) {
+    if ((demux->pf_readdir != NULL || (demux->ops != NULL && demux->ops->demux.readdir != NULL)) && demux->p_input_item != NULL) {
         input_item_node_t *node = input_item_node_Create(demux->p_input_item);
 
         if (unlikely(node == NULL))
             return VLC_DEMUXER_EGENERIC;
 
-        if (vlc_stream_ReadDir(demux, node)) {
+        if (demux_ReadDir(demux, node)) {
              input_item_node_Delete(node);
              return VLC_DEMUXER_EGENERIC;
         }
@@ -301,9 +311,9 @@ int demux_vaControl( demux_t *demux, int query, va_list args )
             return VLC_SUCCESS;
         }
         case DEMUX_GET_PTS_DELAY:
-            if (demux->ops->get_pts_delay != NULL) {
+            if (demux->ops->demux.get_pts_delay != NULL) {
                 vlc_tick_t *pts_delay = va_arg(args, vlc_tick_t *);
-                return demux->ops->get_pts_delay(demux, pts_delay);
+                return demux->ops->demux.get_pts_delay(demux, pts_delay);
             }
             return VLC_EGENERIC;
         case DEMUX_GET_TITLE_INFO:

@@ -145,17 +145,23 @@ BOOL WINAPI DllMain(HANDLE hInst, ULONG ul_reason_for_call, LPVOID lpReserved)
   return TRUE;
 }
 
+struct win_id
+{
+    DWORD proc_id;
+    HWND prev_hwnd;
+};
+
 BOOL CALLBACK EnumWindowsProc(          HWND hwnd,
     LPARAM lParam
 )
 {
-	HANDLE *data = lParam;
+	struct win_id *data = (struct win_id *)lParam;
 	DWORD pid;
 	GetWindowThreadProcessId(hwnd, &pid);
-	if (pid == data[0])
+	if (pid == data->proc_id)
 	{
-		PostMessage(data[1], WM_CLOSE, 0, 0);
-		data[1] = hwnd;
+		PostMessage(data->prev_hwnd, WM_CLOSE, 0, 0);
+		data->prev_hwnd = hwnd;
 	}
 	return TRUE;
 }
@@ -163,17 +169,15 @@ BOOL CALLBACK EnumWindowsProc(          HWND hwnd,
 void NiceTerminate(DWORD id, BOOL bClose, BOOL *bSuccess, BOOL *bFailed)
 {
   HANDLE hProc;
-  HANDLE data[2];
   DWORD ec;
   BOOL bDone = FALSE;
-  if (hProc=OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_INFORMATION | SYNCHRONIZE, FALSE, id))
+  if ((hProc=OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_INFORMATION | SYNCHRONIZE, FALSE, id)) != NULL)
   {
-	data[0] = id;
-	data[1] = NULL;
+	struct win_id window = { id, NULL };
 
 	if (bClose)
-		EnumWindows(EnumWindowsProc, data);
-	if (data[1] != NULL)
+		EnumWindows(EnumWindowsProc, (LPARAM)&window);
+	if (window.prev_hwnd != NULL)
 	{	  
 	  if (GetExitCodeProcess(hProc,&ec) && ec == STILL_ACTIVE)
 		if (WaitForSingleObject(hProc, 3000) == WAIT_OBJECT_0)
@@ -277,7 +281,7 @@ int FIND_PROC_BY_NAME(TCHAR *szProcessName, BOOL bTerminate, BOOL bClose)
     DWORD dwData;
     ULONG (WINAPI *NtQuerySystemInformationPtr)(ULONG, PVOID, LONG, PULONG);
 
-    if (hLib=LoadLibraryW(L"NTDLL.DLL"))
+    if ((hLib=LoadLibraryW(L"NTDLL.DLL")) != NULL)
     {
       NtQuerySystemInformationPtr=(ULONG(WINAPI *)(ULONG, PVOID, LONG, PULONG))GetProcAddress(hLib, "NtQuerySystemInformation");
 
@@ -285,7 +289,7 @@ int FIND_PROC_BY_NAME(TCHAR *szProcessName, BOOL bTerminate, BOOL bClose)
       {
         while (1)
         {
-          if (spi=LocalAlloc(LMEM_FIXED, dwSize))
+          if ((spi=LocalAlloc(LMEM_FIXED, dwSize)) != NULL)
           {
             uError=(*NtQuerySystemInformationPtr)(SystemProcessInformation, spi, dwSize, &dwData);
 
@@ -344,72 +348,6 @@ int FIND_PROC_BY_NAME(TCHAR *szProcessName, BOOL bTerminate, BOOL bClose)
       spiCount=(SYSTEM_PROCESS_INFO *)((char *)spiCount + spiCount->dwOffset);
     }
     LocalFree(spi);
-  }
-  else
-  {
-    // Win95/98/ME
-
-    PROCESSENTRY32 pe;
-    char *pName;
-    HANDLE hSnapShot;
-    BOOL bResult;
-    HANDLE (WINAPI *CreateToolhelp32SnapshotPtr)(DWORD, DWORD);
-    BOOL (WINAPI *Process32FirstPtr)(HANDLE, LPPROCESSENTRY32);
-    BOOL (WINAPI *Process32NextPtr)(HANDLE, LPPROCESSENTRY32);
-
-    if (hLib=LoadLibraryA("KERNEL32.DLL"))
-    {
-      CreateToolhelp32SnapshotPtr=(HANDLE(WINAPI *)(DWORD, DWORD)) GetProcAddress(hLib, "CreateToolhelp32Snapshot");
-      Process32FirstPtr=(BOOL(WINAPI *)(HANDLE, LPPROCESSENTRY32)) GetProcAddress(hLib, "Process32First");
-      Process32NextPtr=(BOOL(WINAPI *)(HANDLE, LPPROCESSENTRY32)) GetProcAddress(hLib, "Process32Next");
-
-      if (CreateToolhelp32SnapshotPtr && Process32NextPtr && Process32FirstPtr)
-      {
-        // Get a handle to a Toolhelp snapshot of all the systems processes.
-        if ((hSnapShot=(*CreateToolhelp32SnapshotPtr)(TH32CS_SNAPPROCESS, 0)) != INVALID_HANDLE_VALUE)
-        {
-          // Get the first process' information.
-          pe.dwSize=sizeof(PROCESSENTRY32);
-          bResult=(*Process32FirstPtr)(hSnapShot, &pe);
-
-          // While there are processes, keep looping and checking.
-          while (bResult)
-          {
-            //Get file name
-            for (pName=pe.szExeFile + lstrlen(pe.szExeFile) - 1; *pName != '\\' && *pName != '\0'; --pName);
-
-			++pName;
-
-#ifdef UNICODE
-			MultiByteToWideChar(CP_ACP, 0, pName, lstrlenA(pName)+1, szName, MAX_PATH);
-#else
-			lstrcpyn(szName, pName, MAX_PATH);
-#endif		
-
-            if (!lstrcmpi(szName, szProcessName))
-            {
-              // Process found
-              bFound=TRUE;
-
-              if (bTerminate == TRUE)
-              {
-                // Open for termination
-				  NiceTerminate(pe.th32ProcessID, bClose, &bSuccess, &bFailed);
-              }
-              else break;
-            }
-            //Keep looking
-            bResult=(*Process32NextPtr)(hSnapShot, &pe);
-          }
-          CloseHandle(hSnapShot);
-        }
-        else uError=611;
-      }
-      else uError=610;
-
-      FreeLibrary(hLib);
-    }
-    else uError=609;
   }
 
   if (bFound == FALSE) return 603;

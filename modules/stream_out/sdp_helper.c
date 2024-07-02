@@ -25,8 +25,9 @@
 #include <string.h>
 
 #include <vlc_common.h>
-#include <vlc_charset.h>
+#include <vlc_tick.h>
 #include <vlc_network.h>
+#include <vlc_charset.h>
 #include <vlc_memstream.h>
 
 #include "sdp_helper.h"
@@ -109,7 +110,7 @@ int vlc_sdp_Start(struct vlc_memstream *restrict stream,
     if (AddressToSDP(addr, addrlen, connection) == NULL)
         goto error;
     {
-        const uint_fast64_t now = NTPtime64();
+        const uint_fast64_t now = vlc_ntp_time();
         char hostname[256];
 
         gethostname(hostname, sizeof (hostname));

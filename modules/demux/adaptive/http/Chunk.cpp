@@ -255,7 +255,7 @@ block_t * HTTPChunkSource::read(size_t readsize)
 
 void HTTPChunkSource::recycle()
 {
-    connManager->recycleSource(this);
+    delete this;
 }
 
 StorageID HTTPChunkSource::makeStorageID(const std::string &s, const BytesRange &r)
@@ -428,6 +428,7 @@ void HTTPChunkBufferedSource::bufferize(size_t readsize)
         rate.size = buffered;
         rate.time = downloadEndTime - requestStartTime;
         rate.latency = responseTime - requestStartTime;
+        avail.signal();
     }
     else
     {
@@ -448,6 +449,7 @@ void HTTPChunkBufferedSource::bufferize(size_t readsize)
             rate.time = downloadEndTime - requestStartTime;
             rate.latency = responseTime - requestStartTime;
         }
+        avail.signal();
     }
 
     if(rate.size && rate.time && type == ChunkType::Segment)
@@ -455,8 +457,6 @@ void HTTPChunkBufferedSource::bufferize(size_t readsize)
         connManager->updateDownloadRate(sourceid, rate.size,
                                         rate.time, rate.latency);
     }
-
-    avail.signal();
 }
 
 bool HTTPChunkBufferedSource::hasMoreData() const
@@ -470,7 +470,8 @@ void HTTPChunkBufferedSource::recycle()
     p_read = p_head;
     inblockreadoffset = 0;
     consumed = 0;
-    HTTPChunkSource::recycle();
+    contentLength = buffered;
+    connManager->recycleSource(this);
 }
 
 block_t * HTTPChunkBufferedSource::readBlock()

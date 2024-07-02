@@ -39,6 +39,7 @@
 #include "common.h"
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_subpicture.h>
@@ -342,7 +343,6 @@ static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
 {
     filter_sys_t *p_sys = p_filter->p_sys;
     subpicture_t *p_spu;
-    video_format_t fmt;
     subpicture_region_t *p_region;
 
     int i_item;
@@ -402,15 +402,14 @@ static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
         return NULL;
     }
 
-    video_format_Init( &fmt, VLC_CODEC_TEXT );
-
-    p_spu->p_region = subpicture_region_New( &fmt );
-    if( !p_spu->p_region )
+    subpicture_region_t *region = subpicture_region_NewText();
+    if( !region )
     {
         subpicture_Delete( p_spu );
         vlc_mutex_unlock( &p_sys->lock );
         return NULL;
     }
+    vlc_spu_regions_push( &p_spu->regions, region );
 
     /* Generate the string that will be displayed. This string is supposed to
        be p_sys->i_length characters long. */
@@ -474,58 +473,47 @@ static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
         free( a2 );
     }
 
-    p_spu->p_region->p_text = text_segment_New(p_sys->psz_marquee);
+    region->p_text = text_segment_New(p_sys->psz_marquee);
     if( p_sys->p_style->i_font_size > 0 )
-        p_spu->p_region->fmt.i_visible_height = p_sys->p_style->i_font_size;
+        region->fmt.i_visible_height = p_sys->p_style->i_font_size;
     p_spu->i_start = date;
-    p_spu->i_stop  = 0;
+    p_spu->i_stop  = VLC_TICK_INVALID;
     p_spu->b_ephemer = true;
 
     /*  where to locate the string: */
     if( p_sys->i_pos < 0 )
     {   /*  set to an absolute xy */
-        p_spu->p_region->i_align = SUBPICTURE_ALIGN_LEFT | SUBPICTURE_ALIGN_TOP;
-        p_spu->b_absolute = true;
+        region->i_align = SUBPICTURE_ALIGN_LEFT | SUBPICTURE_ALIGN_TOP;
+        region->b_absolute = true;
     }
     else
     {   /* set to one of the 9 relative locations */
-        p_spu->p_region->i_align = p_sys->i_pos;
-        p_spu->b_absolute = false;
+        region->i_align = p_sys->i_pos;
+        region->b_absolute = false;
     }
-    p_spu->p_region->i_x = p_sys->i_xoff;
-    p_spu->p_region->i_y = p_sys->i_yoff;
+    region->i_x = p_sys->i_xoff;
+    region->i_y = p_sys->i_yoff;
 
-    p_spu->p_region->p_text->style = text_style_Duplicate( p_sys->p_style );
+    region->p_text->style = text_style_Duplicate( p_sys->p_style );
 
     if( p_feed->p_pic )
     {
         /* Display the feed's image */
         picture_t *p_pic = p_feed->p_pic;
-        video_format_t fmt_out;
 
-        video_format_Init( &fmt_out, VLC_CODEC_YUVA );
-
-        fmt_out.i_sar_num = fmt_out.i_sar_den = 1;
-        fmt_out.i_width =
-            fmt_out.i_visible_width = p_pic->p[Y_PLANE].i_visible_pitch;
-        fmt_out.i_height =
-            fmt_out.i_visible_height = p_pic->p[Y_PLANE].i_visible_lines;
-
-        p_region = subpicture_region_New( &fmt_out );
+        p_region = subpicture_region_ForPicture( NULL, p_pic );
         if( !p_region )
         {
             msg_Err( p_filter, "cannot allocate SPU region" );
         }
         else
         {
-            p_region->i_x = p_spu->p_region->i_x;
-            p_region->i_y = p_spu->p_region->i_y;
-            /* FIXME the copy is probably not needed anymore */
-            picture_Copy( p_region->p_picture, p_pic );
-            p_spu->p_region->p_next = p_region;
+            p_region->i_x = region->i_x;
+            p_region->i_y = region->i_y;
+            vlc_spu_regions_push( &p_spu->regions, p_region );
 
             /* Offset text to display right next to the image */
-            p_spu->p_region->i_x += fmt_out.i_visible_width;
+            region->i_x += p_pic->format.i_visible_width;
         }
     }
 
@@ -540,12 +528,10 @@ static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
  * functions
  ***************************************************************************/
 
-#undef LoadImage /* do not conflict with Win32 API */
-
 /****************************************************************************
  * download and resize image located at psz_url
  ***************************************************************************/
-static picture_t *LoadImage( filter_t *p_filter, const char *psz_url )
+static picture_t *LoadPicture( filter_t *p_filter, const char *psz_url )
 {
     filter_sys_t *p_sys = p_filter->p_sys;
     video_format_t fmt_out;
@@ -937,7 +923,7 @@ static rss_feed_t* FetchRSS( filter_t *p_filter )
         /* If we have a image: load it if required */
         if( b_images && p_feed->psz_image && !p_feed->p_pic )
         {
-            p_feed->p_pic = LoadImage( p_filter, p_feed->psz_image );
+            p_feed->p_pic = LoadPicture( p_filter, p_feed->psz_image );
         }
 
         msg_Dbg( p_filter, "done with %s RSS/Atom feed", p_feed->psz_url );

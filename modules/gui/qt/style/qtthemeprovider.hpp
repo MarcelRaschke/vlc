@@ -24,7 +24,6 @@
 #endif
 
 #include <vlc_common.h>
-#include <vlc_plugin.h>
 
 enum vlc_qt_theme_color_state {
     VQTC_STATE_NORMAL = 0,
@@ -74,6 +73,7 @@ enum vlc_qt_theme_color_name {
     VQTC_NAME_ACCENT,
     VQTC_NAME_SHADOW,
     VQTC_NAME_SEPARATOR,
+    VQTC_NAME_INDICATOR,
     VQTC_NAME_COUNT
 };
 

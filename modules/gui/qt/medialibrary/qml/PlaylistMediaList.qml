@@ -1,6 +1,8 @@
 /*****************************************************************************
  * Copyright (C) 2021-23 VLC authors and VideoLAN
  *
+ * Authors: Benjamin Arnaud <bunjee@omega.gg>
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -16,10 +18,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick          2.11
-import QtQuick.Controls 2.4
-import QtQuick.Layouts  1.11
-import QtQml.Models     2.2
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import QtQml.Models
 
 import org.videolan.medialib 0.1
 import org.videolan.vlc 0.1
@@ -39,9 +41,16 @@ MainInterface.MainViewLoader {
 
     property bool isMusic: false
 
-    readonly property int currentIndex: Helpers.get(currentItem, "currentIndex", -1)
+    readonly property int currentIndex: currentItem?.currentIndex ?? -1
 
-    property var sortModel: [{ text: I18n.qtr("Alphabetic"), criteria: "title" }]
+    property Component header: null
+    
+    readonly property int contentLeftMargin: currentItem?.contentLeftMargin ?? 0
+    readonly property int contentRightMargin: currentItem?.contentRightMargin ?? 0
+
+    property alias searchPattern: playlistModel.searchPattern
+    property alias sortOrder: playlistModel.sortOrder
+    property alias sortCriteria: playlistModel.sortCriteria
 
     //---------------------------------------------------------------------------------------------
     // Private
@@ -92,8 +101,16 @@ MainInterface.MainViewLoader {
     list: table
     emptyLabel: emptyLabel
 
+    isSearchable: true
+    sortModel: [{ text: qsTr("Alphabetic"), criteria: "title" }]
+
+
     model: MLPlaylistListModel {
+        id: playlistModel
         ml: MediaLib
+
+        playlistType: isMusic ? MLPlaylistListModel.PLAYLIST_TYPE_AUDIO
+                              : MLPlaylistListModel.PLAYLIST_TYPE_VIDEO
 
         coverSize: (isMusic) ? Qt.size(512, 512)
                              : Qt.size(1024, 640)
@@ -101,43 +118,128 @@ MainInterface.MainViewLoader {
         coverDefault: root._placeHolder
 
         coverPrefix: (isMusic) ? "playlist-music" : "playlist-video"
+
+        onTransactionPendingChanged: {
+            if (transactionPending)
+                visibilityTimer.start()
+            else {
+                visibilityTimer.stop()
+                progressIndicator.visible = false
+            }
+        }
     }
 
     function _actionAtIndex() {
         if (root.selectionModel.selectedIndexes.length > 1) {
-            MediaLib.addAndPlay(model.getIdsForIndexes(selectionModel.selectedIndexes));
+            model.addAndPlay( selectionModel.selectedIndexes );
         } else if (root.selectionModel.selectedIndexes.length === 1) {
-            var index = selectionModel.selectedIndexes[0];
+            const index = selectionModel.selectedIndexes[0];
             showList(model.getDataAt(index), Qt.TabFocusReason);
         }
     }
 
     function _getCount(model) {
-        var count = model.count;
+        const count = model.count;
 
         if (count < 100)
             return count;
         else
-            return I18n.qtr("99+");
+            return qsTr("99+");
+    }
+
+    function _adjustDragAccepted(drag) {
+        if (!root.model || root.model.transactionPending)
+        {
+            drag.accepted = false
+            return
+        }
+
+        if (drag.source !== dragItemPlaylist && Helpers.isValidInstanceOf(drag.source, Widgets.DragItem))
+            drag.accepted = true
+        else if (drag.hasUrls)
+            drag.accepted = true
+        else {
+            drag.accepted = false
+        }
+    }
+
+    function _dropAction(drop, index) {
+        const item = drop.source
+        if (Helpers.isValidInstanceOf(item, Widgets.DragItem)) {
+            item.getSelectedInputItem().then(inputItems => {
+                if (index === undefined)
+                    DialogsProvider.playlistsDialog(inputItems)
+                else
+                    root.model.append(root.model.getItemId(index), inputItems)
+            })
+            drop.accepted = true
+        } else if (drop.hasUrls) {
+            const urlList = []
+            for (let url in drop.urls)
+                urlList.push(drop.urls[url])
+            if (index === undefined)
+                DialogsProvider.playlistsDialog(inputItems)
+            else
+                root.model.append(root.model.getItemId(index), urlList)
+            drop.accepted = true
+        } else {
+            drop.accepted = false
+        }
     }
 
     //---------------------------------------------------------------------------------------------
     // Childs
     //---------------------------------------------------------------------------------------------
 
+    DropArea {
+        anchors.fill: parent
+
+        onEntered: function(drag) {
+            root._adjustDragAccepted(drag)
+        }
+
+        onDropped: function(drop) {
+            root._dropAction(drop)
+        }
+    }
+
+    Widgets.ProgressIndicator {
+        id: progressIndicator
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        anchors.margins: VLCStyle.margin_small
+
+        visible: false
+
+        z: 99
+
+        text: qsTr("Processing...")
+
+        Timer {
+            id: visibilityTimer
+
+            interval: VLCStyle.duration_humanMoment
+
+            onTriggered: {
+                progressIndicator.visible = true
+            }
+        }
+    }
 
     Widgets.MLDragItem {
         id: dragItemPlaylist
 
+        objectName: "PlaylistMediaListDragItem"
+
         mlModel: model
 
-        indexes: selectionModel.selectedIndexes
+        indexes: indexesFlat ? root.selectionModel.selectedIndexesFlat
+                             : root.selectionModel.selectedIndexes
+        indexesFlat: !!root.selectionModel.selectedIndexesFlat
 
         coverRole: "thumbnail"
 
         defaultCover: root._placeHolder
-
-        titleRole: "name"
     }
 
     PlaylistListContextMenu {
@@ -159,11 +261,11 @@ MainInterface.MainViewLoader {
             cellWidth : _width
             cellHeight: _height
 
-            topMargin: VLCStyle.margin_large
-
             model: root.model
 
-            selectionDelegateModel: selectionModel
+            selectionModel: root.selectionModel
+
+            headerDelegate: root.header
 
             Navigation.parentItem: root
 
@@ -182,10 +284,10 @@ MainInterface.MainViewLoader {
                 pictureHeight: _heightCover
 
                 title: (model.name) ? model.name
-                                    : I18n.qtr("Unknown title")
+                                    : qsTr("Unknown title")
 
-                labels: (model.count > 1) ? [ I18n.qtr("%1 Tracks").arg(_getCount(model)) ]
-                                          : [ I18n.qtr("%1 Track") .arg(_getCount(model)) ]
+                labels: (model.count > 1) ? [ qsTr("%1 Tracks").arg(_getCount(model)) ]
+                                          : [ qsTr("%1 Track") .arg(_getCount(model)) ]
 
                 dragItem: dragItemPlaylist
 
@@ -193,22 +295,34 @@ MainInterface.MainViewLoader {
                 //---------------------------------------------------------------------------------
                 // Events
 
-                onItemClicked: gridView.leftClickOnItem(modifier, index)
+                onItemClicked: (modifier) => { gridView.leftClickOnItem(modifier, index) }
 
                 onItemDoubleClicked: showList(model, Qt.MouseFocusReason)
 
                 onPlayClicked: if (model.id) MediaLib.addAndPlay(model.id)
 
-                onContextMenuButtonClicked: {
+                onContextMenuButtonClicked: (_, globalMousePos) => {
                     gridView.rightClickOnItem(index);
 
-                    contextMenu.popup(selectionModel.selectedIndexes, globalMousePos);
+                    contextMenu.popup(selectionModel.selectedRows(), globalMousePos);
                 }
 
                 //---------------------------------------------------------------------------------
                 // Animations
 
                 Behavior on opacity { NumberAnimation { duration: VLCStyle.duration_short } }
+
+                DropArea {
+                    anchors.fill: parent
+
+                    onEntered: function(drag) {
+                        root._adjustDragAccepted(drag)
+                    }
+
+                    onDropped: function(drop) {
+                        root._dropAction(drop, index)
+                    }
+                }
             }
 
             //-------------------------------------------------------------------------------------
@@ -251,7 +365,7 @@ MainInterface.MainViewLoader {
 
                     subCriterias: [ "count" ],
 
-                    text: I18n.qtr("Name"),
+                    text: qsTr("Name"),
 
                     headerDelegate: columns.titleHeaderDelegate,
                     colDelegate   : columns.titleDelegate
@@ -264,6 +378,10 @@ MainInterface.MainViewLoader {
                 model: {
                     criteria: "thumbnail",
 
+                    text: qsTr("Cover"),
+
+                    isSortable: false,
+
                     headerDelegate: columns.titleHeaderDelegate,
                     colDelegate   : columns.titleDelegate
                 }
@@ -273,7 +391,7 @@ MainInterface.MainViewLoader {
                 model: {
                     criteria: "name",
 
-                    text: I18n.qtr("Name")
+                    text: qsTr("Name")
                 }
             }, {
                 size: 1,
@@ -281,7 +399,9 @@ MainInterface.MainViewLoader {
                 model: {
                     criteria: "count",
 
-                    text: I18n.qtr("Tracks")
+                    text: qsTr("Tracks"),
+
+                    isSortable: false
                 }
             }]
 
@@ -290,16 +410,18 @@ MainInterface.MainViewLoader {
 
             rowHeight: VLCStyle.tableCoverRow_height
 
-            headerTopPadding: VLCStyle.margin_normal
-
             model: root.model
 
             sortModel: (availableRowWidth < VLCStyle.colWidth(4)) ? _modelSmall
                                                                   : _modelMedium
 
-            selectionDelegateModel: selectionModel
+            selectionModel: root.selectionModel
 
             dragItem: dragItemPlaylist
+
+            header: root.header
+
+            acceptDrop: true
 
             Navigation.parentItem: root
 
@@ -308,12 +430,23 @@ MainInterface.MainViewLoader {
 
             onActionForSelection: _actionAtIndex()
 
-            onItemDoubleClicked: showList(model, Qt.MouseFocusReason)
+            onItemDoubleClicked: (_, model) => showList(model, Qt.MouseFocusReason)
 
-            onContextMenuButtonClicked: contextMenu.popup(selectionModel.selectedIndexes,
-                                                          globalMousePos)
+            onContextMenuButtonClicked: (_, _, globalMousePos) => {
+                contextMenu.popup(selectionModel.selectedRows(), globalMousePos)
+            }
 
-            onRightClick: contextMenu.popup(selectionModel.selectedIndexes, globalMousePos)
+            onRightClick: (_, _, globalMousePos) => {
+                contextMenu.popup(selectionModel.selectedRows(), globalMousePos)
+            }
+
+            onDropEntered: (_, _, drag, _) => {
+                root._adjustDragAccepted(drag)
+            }
+
+            onDropEvent: (_, index, _, drop, _) => {
+                root._dropAction(drop, index)
+            }
 
             //-------------------------------------------------------------------------------------
             // Childs
@@ -351,13 +484,13 @@ MainInterface.MainViewLoader {
     Component {
         id: emptyLabel
 
-        EmptyLabelHint {
+        Widgets.EmptyLabelHint {
             visible: (model.count === 0)
 
             focus: true
 
-            text: I18n.qtr("No playlists found")
-            hint: I18n.qtr("Right click on a media to add it to a playlist")
+            text: qsTr("No playlists found")
+            hint: qsTr("Right click on a media to add it to a playlist")
 
             cover: VLCStyle.noArtAlbumCover
         }

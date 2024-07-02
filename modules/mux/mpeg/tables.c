@@ -21,6 +21,8 @@
 # include "config.h"
 #endif
 
+#include <stdbit.h>
+
 #include <vlc_common.h>
 #include <vlc_block.h>
 #include <vlc_es.h>
@@ -317,10 +319,19 @@ static void GetPMTmpeg4( vlc_object_t *p_object, dvbpsi_pmt_t *p_dvbpmt,
     dvbpsi_pmt_descriptor_add(&p_dvbpmt[0], 0x1d, bits.i_data, bits.p_data);
 }
 
-static void UpdateServiceType( uint8_t *pi_service_cat, uint8_t *pi_service_type,
+struct service_info
+{
+    uint8_t cat;
+    uint8_t type;
+    bool b_scrambled;
+};
+
+static void UpdateServiceType( struct service_info *info,
                                const tsmux_stream_t *p_ts, const es_format_t *fmt )
 {
     uint8_t i_type = 0x00;
+
+    info->b_scrambled |= p_ts->b_scramble;
 
     switch( p_ts->i_stream_type )
     {
@@ -355,15 +366,15 @@ static void UpdateServiceType( uint8_t *pi_service_cat, uint8_t *pi_service_type
 
     if( i_type != 0x00 )
     {
-        if( *pi_service_cat != VIDEO_ES || i_type > *pi_service_type )
+        if( info->cat != VIDEO_ES || i_type > info->type )
         {
-            *pi_service_type = i_type;
-            *pi_service_cat = VIDEO_ES;
+            info->type = i_type;
+            info->cat = VIDEO_ES;
         }
         return;
     }
 
-    if( *pi_service_cat != VIDEO_ES ) /* Don't overwrite video */
+    if( info->cat != VIDEO_ES ) /* Don't overwrite video */
     {
         /* Not video, try audio */
         switch( p_ts->i_stream_type )
@@ -384,8 +395,8 @@ static void UpdateServiceType( uint8_t *pi_service_cat, uint8_t *pi_service_type
                 break;
         }
 
-        if( i_type > *pi_service_type )
-            *pi_service_type = i_type;
+        if( i_type > info->type )
+            info->type = i_type;
     }
 }
 
@@ -434,18 +445,16 @@ void BuildPMT( dvbpsi_t *p_dvbpsi, vlc_object_t *p_object,
 
     VLC_UNUSED(standard);
     dvbpsi_sdt_t sdtpsi;
-    uint8_t *pi_service_types = NULL;
-    uint8_t *pi_service_cats = NULL;
+    struct service_info *p_service_infos = NULL;
     if( p_sdt )
     {
         dvbpsi_sdt_init( &sdtpsi, 0x42, i_tsid, 1, true, p_sdt->i_netid );
-        pi_service_types = calloc( i_programs * 2, sizeof *pi_service_types );
-        if( !pi_service_types )
+        p_service_infos = calloc( i_programs, sizeof(*p_service_infos) );
+        if( !p_service_infos )
         {
             free( dvbpmt );
             return;
         }
-        pi_service_cats = &pi_service_types[i_programs];
     }
 
     for (unsigned i = 0; i < i_programs; i++ )
@@ -550,9 +559,9 @@ void BuildPMT( dvbpsi_t *p_dvbpsi, vlc_object_t *p_object,
             {
                 i_ver = 'H';
             }
-            else if(vlc_popcount(p_stream->fmt->audio.i_frame_length) == 1)
+            else if (stdc_has_single_bit(p_stream->fmt->audio.i_frame_length))
             {
-                i_ver = ctz( p_stream->fmt->audio.i_frame_length >> 8 );
+                i_ver = stdc_trailing_zeros( p_stream->fmt->audio.i_frame_length >> 8 );
                 if(i_ver == 0 || i_ver > 3)
                    i_ver = 1;
                 i_ver += '0';
@@ -663,10 +672,19 @@ void BuildPMT( dvbpsi_t *p_dvbpsi, vlc_object_t *p_object,
                 p_stream->pes->lang);
         }
 
+        if( p_stream->ts->b_scramble )
+        {
+            if( standard == TS_MUX_STANDARD_DVB )
+            {
+                /* scrambling_descriptor() */
+                uint8_t data[1] = { 0x01 /* CSA1 */ };
+                dvbpsi_pmt_es_descriptor_add( p_es, 0x65, 1, data );
+            }
+        }
+
         if( p_sdt )
         {
-            UpdateServiceType( &pi_service_cats[p_stream->i_mapped_prog],
-                               &pi_service_types[p_stream->i_mapped_prog],
+            UpdateServiceType( &p_service_infos[p_stream->i_mapped_prog],
                                p_stream->ts, p_stream->fmt );
         }
     }
@@ -697,7 +715,7 @@ void BuildPMT( dvbpsi_t *p_dvbpsi, vlc_object_t *p_object,
                                                                       false,     /* eit schedule */
                                                                       false,     /* eit present */
                                                                       4,         /* running status ("4=RUNNING") */
-                                                                      false );   /* free ca */
+                                                                      p_service_infos[i].b_scrambled ); /* free ca */
 
             const char *psz_sdtprov = p_sdt->desc[i].psz_provider;
             const char *psz_sdtserv = p_sdt->desc[i].psz_service_name;
@@ -706,7 +724,7 @@ void BuildPMT( dvbpsi_t *p_dvbpsi, vlc_object_t *p_object,
             size_t i_sdt_desc = 0;
 
             /* mapped service type according to es types */
-            p_sdt_desc[i_sdt_desc++] = pi_service_types[i];
+            p_sdt_desc[i_sdt_desc++] = p_service_infos[i].type;
 
             /* service provider name length */
             i_sdt_desc += Write_AnnexA_String( &p_sdt_desc[i_sdt_desc], psz_sdtprov );
@@ -716,7 +734,7 @@ void BuildPMT( dvbpsi_t *p_dvbpsi, vlc_object_t *p_object,
 
             dvbpsi_sdt_service_descriptor_add( p_service, 0x48, i_sdt_desc, p_sdt_desc );
         }
-        free( pi_service_types );
+        free( p_service_infos );
 
         dvbpsi_psi_section_t *sect = dvbpsi_sdt_sections_generate( p_dvbpsi, &sdtpsi );
         if( likely(sect) )

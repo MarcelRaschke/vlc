@@ -15,14 +15,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
-import QtQuick.Layouts 1.11
-import QtQml.Models 2.11
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
+import QtQuick.Layouts
+import QtQml.Models
 
 import org.videolan.vlc 0.1
-import org.videolan.compat 0.1
 
 import "qrc:///style/"
 import "qrc:///widgets/" as Widgets
@@ -30,251 +29,145 @@ import "qrc:///widgets/" as Widgets
 FocusScope {
     id: controlLayout
 
-    signal requestLockUnlockAutoHide(bool lock)
+    // Properties
 
-    property alias model: repeater.model
+    // These delayed bindings are necessary
+    // because the size of the items
+    // may not be ready immediately.
+    // The wise thing to do would be to not
+    // delay if the sizes are ready.
 
-    readonly property real minimumWidth: {
-        var minimumWidth = 0
-        var count = repeater.count
+    Binding on Layout.minimumWidth {
+        delayed: true
+        when: controlLayout._componentCompleted
+        value: {
+            const count = repeater.count
 
-        for (var i = 0; i < count; ++i) {
-            var item = repeater.itemAt(i)
+            if (count === 0)
+                return 0
 
-            if (item.minimumWidth !== undefined)
-                minimumWidth += item.minimumWidth
-            else
-                minimumWidth += item.implicitWidth
-        }
+            let size = 0
 
-        minimumWidth += ((count - 1) * playerControlLayout.spacing)
+            for (let i = 0; i < count; ++i) {
+                const item = repeater.itemAt(i)
 
-        return minimumWidth
-    }
-
-    property bool rightAligned: false
-
-    Navigation.navigable: {
-        for (var i = 0; i < repeater.count; ++i) {
-            if (repeater.itemAt(i).item.focus) {
-                return true
+                if (item.Layout.minimumWidth < 0)
+                    size += item.implicitWidth
+                else
+                    size += item.Layout.minimumWidth
             }
+
+            return size + ((count - 1 + ((controlLayout.alignment & (Qt.AlignLeft | Qt.AlignRight)) ? 1 : 0)) * playerControlLayout.spacing)
         }
-        return false
     }
 
-    implicitWidth: minimumWidth
-    implicitHeight: rowLayout.implicitHeight
+    Binding on Layout.maximumWidth {
+        delayed: true
+        when: controlLayout._componentCompleted
+        value: {
+            let maximumWidth = 0
+            const count = repeater.count
 
-    property var altFocusAction: Navigation.defaultNavigationUp
+            for (let i = 0; i < count; ++i) {
+                const item = repeater.itemAt(i)
+                maximumWidth += item.implicitWidth
+            }
 
-    function _handleFocus() {
-        if (typeof activeFocus === "undefined")
-            return
+            maximumWidth += ((count - 1 + ((alignment & (Qt.AlignLeft | Qt.AlignRight)) ? 1 : 0)) * playerControlLayout.spacing)
 
-        if (activeFocus && (!visible || model.count === 0))
-            altFocusAction()
+            return maximumWidth
+        }
     }
 
-    Component.onCompleted: {
-        visibleChanged.connect(_handleFocus)
-        activeFocusChanged.connect(_handleFocus)
-    }
+    property alias alignment: repeater.alignment
+
+
+    ///@type {function}
+    required property var altFocusAction
 
     readonly property ColorContext colorContext: ColorContext {
         id: theme
         colorSet: ColorContext.Window
     }
 
+    property bool _componentCompleted: false
+
+    // Aliases
+
+    property alias model: repeater.model
+
+    property alias spacing: rowLayout.spacing
+
+    // Signals
+
+    signal requestLockUnlockAutoHide(bool lock)
+
+    signal menuOpened(var menu)
+
+    // Settings
+
+    implicitWidth: Layout.maximumWidth
+    implicitHeight: rowLayout.implicitHeight
+
+    Navigation.navigable: {
+        for (let i = 0; i < repeater.count; ++i) {
+            const item = repeater.itemAt(i).item
+
+            if (item && item.focus) {
+                return true
+            }
+        }
+        return false
+    }
+
+    // Events
+
+    Component.onCompleted: {
+        visibleChanged.connect(_handleFocus)
+        activeFocusChanged.connect(_handleFocus)
+
+        _componentCompleted = true
+    }
+
+    // Functions
+
+    function _handleFocus() {
+        if (typeof activeFocus === "undefined")
+            return
+
+        if (activeFocus && (!visible || model.count === 0))
+            controlLayout.altFocusAction()
+    }
+
+    // Children
+
     RowLayout {
         id: rowLayout
 
         anchors.fill: parent
 
-        spacing: playerControlLayout.spacing
-
         Item {
-            Layout.fillWidth: rightAligned
+            Layout.fillWidth: visible
+            visible: (controlLayout.alignment & Qt.AlignRight)
         }
 
-        Repeater {
+        ControlRepeater {
             id: repeater
 
-            // NOTE: We apply the 'navigation chain' after adding the item.
-            onItemAdded: item.applyNavigation()
+            Navigation.parentItem: controlLayout
 
-            onItemRemoved: {
-                // NOTE: We update the 'navigation chain' after removing the item.
-                item.removeNavigation()
+            availableWidth: rowLayout.width
+            availableHeight: rowLayout.height
 
-                item.recoverFocus(index)
-            }
-
-            delegate: Loader {
-                id: loader
-
-                source: PlayerControlbarControls.control(model.id).source
-
-                focus: (index === 0)
-
-                Layout.alignment: Qt.AlignVCenter | (rightAligned ? Qt.AlignRight : Qt.AlignLeft)
-                Layout.minimumWidth: minimumWidth
-                Layout.fillWidth: expandable
-                Layout.maximumWidth: item.implicitWidth
-
-                readonly property real minimumWidth: (expandable ? item.minimumWidth : item.implicitWidth)
-                readonly property bool expandable: (item.minimumWidth !== undefined)
-
-                BindingCompat {
-                    delayed: true // this is important
-                    target: loader
-                    property: "visible"
-                    value: (loader.x + minimumWidth <= rowLayout.width)
-                }
-
-                Component.onCompleted: repeater.countChanged.connect(controlLayout._handleFocus)
-
-                onActiveFocusChanged: {
-                    if (activeFocus && (!!item && !item.focus)) {
-                        recoverFocus()
-                    }
-                }
-
-                Connections {
-                    target: item
-
-                    enabled: loader.status === Loader.Ready
-
-                    onEnabledChanged: {
-                        if (activeFocus && !item.enabled) // Loader has focus but item is not enabled
-                            recoverFocus()
-                    }
-
-                    onVisibleChanged: {
-                        if (activeFocus && !item.visible)
-                            recoverFocus()
-                    }
-                }
-
-                onLoaded: {
-                    // control should not request focus if they are not enabled:
-                    item.focus = Qt.binding(function() { return item.enabled && item.visible })
-
-                    // navigation parent of control is always controlLayout
-                    // so it can be set here unlike leftItem and rightItem:
-                    item.Navigation.parentItem = controlLayout
-
-                    if (item instanceof Control || item instanceof T.Control)
-                        item.activeFocusOnTab = true
-
-                    // FIXME: Do we really need to enforce a defaultSize ?
-                    if (item.size !== undefined)
-                        item.size = Qt.binding(function() { return defaultSize; })
-
-                    item.width = Qt.binding(function() { return loader.width } )
-
-                    item.visible = Qt.binding(function() { return loader.visible })
-
-                    if (item.requestLockUnlockAutoHide) {
-                        item.requestLockUnlockAutoHide.connect(function(lock) {
-                            controlLayout.requestLockUnlockAutoHide(lock)
-                        })
-                    }
-                }
-
-                function applyNavigation() {
-                    var itemLeft  = repeater.itemAt(index - 1)
-                    var itemRight = repeater.itemAt(index + 1)
-
-                    if (itemLeft) {
-                        var componentLeft = itemLeft.item;
-
-                        item.Navigation.leftItem = componentLeft
-
-                        componentLeft.Navigation.rightItem = item
-                    }
-
-                    if (itemRight) {
-                        var componentRight = itemRight.item;
-
-                        item.Navigation.rightItem = componentRight
-
-                        componentRight.Navigation.leftItem = item
-                    }
-                }
-
-                function removeNavigation() {
-                    var itemLeft = repeater.itemAt(index - 1)
-
-                    // NOTE: The current item was removed from the repeater so we test against the
-                    //       same index.
-                    var itemRight = repeater.itemAt(index)
-
-                    if (itemLeft) {
-                        if (itemRight) {
-                            itemLeft.item.Navigation.rightItem = itemRight.item
-                            itemRight.item.Navigation.leftItem = itemLeft.item
-                        }
-                        else
-                            itemLeft.item.Navigation.rightItem = null
-                    }
-                    else if (itemRight) {
-                        itemRight.item.Navigation.leftItem = null
-                    }
-                }
-
-                function _focusIfFocusable(_loader) {
-                    if (!!_loader && !!_loader.item && _loader.item.focus) {
-                        if (item.focusReason !== undefined)
-                            _loader.item.forceActiveFocus(item.focusReason)
-                        else {
-                            console.warn("focusReason is not available in %1!".arg(item))
-                            _loader.item.forceActiveFocus()
-                        }
-                        return true
-                    } else {
-                        return false
-                    }
-                }
-
-                function recoverFocus(_index) {
-                    if (!controlLayout.visible)
-                        return
-
-                    if (_index === undefined)
-                        _index = index
-
-                    for (var i = 1; i <= Math.max(_index, repeater.count - (_index + 1)); ++i) {
-                         if (i <= _index) {
-                             var leftItem = repeater.itemAt(_index - i)
-
-                             if (_focusIfFocusable(leftItem))
-                                 return
-                         }
-
-                         if (_index + i <= repeater.count - 1) {
-                             var rightItem = repeater.itemAt(_index + i)
-
-                             if (_focusIfFocusable(rightItem))
-                                 return
-                         }
-                    }
-
-                    // focus to other alignment if focusable control
-                    // in the same alignment is not found:
-                    if (!!controlLayout.Navigation.rightItem) {
-                        controlLayout.Navigation.defaultNavigationRight()
-                    } else if (!!controlLayout.Navigation.leftItem) {
-                        controlLayout.Navigation.defaultNavigationLeft()
-                    } else {
-                        controlLayout.altFocusAction()
-                    }
-                }
+            Component.onCompleted: {
+                requestLockUnlockAutoHide.connect(controlLayout.requestLockUnlockAutoHide)
+                menuOpened.connect(controlLayout.menuOpened)
             }
         }
 
         Item {
-            Layout.fillWidth: !rightAligned
+            Layout.fillWidth: visible
+            visible: (controlLayout.alignment & Qt.AlignLeft)
         }
     }
 }

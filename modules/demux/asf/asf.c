@@ -29,6 +29,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_plugin.h>
 #include <vlc_demux.h>
 #include <vlc_dialog.h>
@@ -729,10 +730,10 @@ static void ASF_fillup_es_priorities_ex( demux_sys_t *p_sys, void *p_hdr,
     if (! p_mutex ) return;
 
 #if ( UINT_MAX > SIZE_MAX / 2 )
-    if ( p_sys->i_track > (size_t)SIZE_MAX / sizeof(uint16_t) )
+    if ( p_sys->i_track > (size_t)SIZE_MAX / sizeof(*p_prios->pi_stream_numbers) )
         return;
 #endif
-    p_prios->pi_stream_numbers = vlc_alloc( p_sys->i_track, sizeof(uint16_t) );
+    p_prios->pi_stream_numbers = vlc_alloc( p_sys->i_track, sizeof(*p_prios->pi_stream_numbers) );
     if ( !p_prios->pi_stream_numbers ) return;
 
     if ( p_mutex->i_stream_number_count )
@@ -756,10 +757,10 @@ static void ASF_fillup_es_bitrate_priorities_ex( demux_sys_t *p_sys, void *p_hdr
     if (! p_bitrate_mutex ) return;
 
 #if ( UINT_MAX > SIZE_MAX / 2 )
-    if ( p_sys->i_track > (size_t)SIZE_MAX / sizeof(uint16_t) )
+    if ( p_sys->i_track > (size_t)SIZE_MAX / sizeof(*p_prios->pi_stream_numbers) )
         return;
 #endif
-    p_prios->pi_stream_numbers = vlc_alloc( p_sys->i_track, sizeof( uint16_t ) );
+    p_prios->pi_stream_numbers = vlc_alloc( p_sys->i_track, sizeof(*p_prios->pi_stream_numbers) );
     if ( !p_prios->pi_stream_numbers ) return;
 
     if ( p_bitrate_mutex->i_stream_number_count )
@@ -1321,7 +1322,7 @@ static int DemuxInit( demux_t *p_demux )
                     *p_ecd->ppsz_value[i] != '\0' && /* no empty value */
                     *p_ecd->ppsz_value[i] != '{'  && /* no guid value */
                     *p_ecd->ppsz_name[i] != '{' )    /* no guid name */
-                    vlc_meta_AddExtra( p_sys->meta, p_ecd->ppsz_name[i], p_ecd->ppsz_value[i] );
+                    vlc_meta_SetExtra( p_sys->meta, p_ecd->ppsz_name[i], p_ecd->ppsz_value[i] );
             /* TODO map WM/Composer, WM/Provider, WM/PartOfSet, PeakValue, AverageLevel  */
 #undef set_meta
         }

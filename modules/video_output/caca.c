@@ -38,7 +38,9 @@
 #include <vlc_plugin.h>
 #include <vlc_vout_display.h>
 #include <vlc_actions.h>
-#if !defined(_WIN32) && !defined(__APPLE__)
+#if defined(_WIN32)
+#include <windows.h>
+#elif !defined(__APPLE__)
 # ifdef X_DISPLAY_MISSING
 #  error Xlib required due to XInitThreads
 # endif
@@ -52,6 +54,9 @@ typedef struct vout_display_sys_t {
     caca_canvas_t *cv;
     caca_display_t *dp;
     caca_dither_t *dither;
+    unsigned      dither_width, dither_height;
+    int           dither_pitch;
+    bool          update_dither;
 
     bool dead;
     vlc_queue_t q;
@@ -124,28 +129,39 @@ static void Manage(vout_display_t *vd);
 /**
  * Prepare a picture for display */
 static void Prepare(vout_display_t *vd, picture_t *picture,
-                    subpicture_t *subpicture, vlc_tick_t date)
+                    const struct vlc_render_subpicture *subpicture, vlc_tick_t date)
 {
     Manage(vd);
     VLC_UNUSED(date);
 
     vout_display_sys_t *sys = vd->sys;
 
-    if (!sys->dither) {
+    if (!sys->dither || (sys->update_dither && (
+          sys->dither_width  != vd->source->i_visible_width ||
+          sys->dither_height != vd->source->i_visible_height ||
+          sys->dither_pitch  != picture->p[0].i_pitch
+        ) ) ) {
+        if (sys->dither)
+            caca_free_dither(sys->dither);
+
         /* Create the libcaca dither object */
         sys->dither = caca_create_dither(32,
                                             vd->source->i_visible_width,
                                             vd->source->i_visible_height,
                                             picture->p[0].i_pitch,
-                                            picture->format.i_rmask,
-                                            picture->format.i_gmask,
-                                            picture->format.i_bmask,
+                                            0x00ff0000,
+                                            0x0000ff00,
+                                            0x000000ff,
                                             0x00000000);
 
         if (!sys->dither) {
             msg_Err(vd, "could not create libcaca dither object");
             return;
         }
+        sys->dither_width  = vd->source->i_visible_width;
+        sys->dither_height = vd->source->i_visible_height;
+        sys->dither_pitch  = picture->p[0].i_pitch;
+        sys->update_dither = false;
     }
 
     caca_set_color_ansi(sys->cv, CACA_DEFAULT, CACA_BLACK);
@@ -180,13 +196,10 @@ static int Control(vout_display_t *vd, int query)
 
     switch (query) {
     case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
-        if (sys->dither)
-            caca_free_dither(sys->dither);
-        sys->dither = NULL;
-        /* fall through */
+    case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
+        sys->update_dither = true;
+        return VLC_SUCCESS;
     case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
-    case VOUT_DISPLAY_CHANGE_ZOOM:
-    case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
     case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
         return VLC_SUCCESS;
 
@@ -485,13 +498,7 @@ static int Open(vout_display_t *vd,
     sys->cursor_timeout = VLC_TICK_FROM_MS( var_InheritInteger(vd, "mouse-hide-timeout") );
     sys->cursor_deadline = INVALID_DEADLINE;
 
-    /* Fix format */
-    if (fmtp->i_chroma != VLC_CODEC_RGB32) {
-        fmtp->i_chroma = VLC_CODEC_RGB32;
-        fmtp->i_rmask = 0x00ff0000;
-        fmtp->i_gmask = 0x0000ff00;
-        fmtp->i_bmask = 0x000000ff;
-    }
+    fmtp->i_chroma = VLC_CODEC_XRGB;
 
     /* Setup vout_display now that everything is fine */
     vd->ops = &ops;

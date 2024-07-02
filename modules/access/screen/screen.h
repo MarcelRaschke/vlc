@@ -34,12 +34,10 @@
 extern "C" {
 #endif
 
-typedef struct screen_data_t screen_data_t;
-
 struct screen_capture_operations
 {
     block_t* (*capture)( demux_t * );
-    void (*close)( screen_data_t * );
+    void (*close)( void * );
 };
 
 typedef struct
@@ -69,12 +67,12 @@ typedef struct
     picture_t dst;
 #endif
 
-    screen_data_t *p_data;
+    void *p_data;
     const struct screen_capture_operations *ops;
 } demux_sys_t;
 
 int      screen_InitCapture ( demux_t * );
-#if defined(_WIN32) && !defined(VLC_WINSTORE_APP)
+#if defined(_WIN32)
 int      screen_InitCaptureGDI ( demux_t * );
 #endif
 

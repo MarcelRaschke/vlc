@@ -203,24 +203,28 @@ struct vlc_player_timer_source
     };
 };
 
-enum vlc_player_timer_state
+enum vlc_player_timer_event
 {
-    VLC_PLAYER_TIMER_STATE_PLAYING,
-    VLC_PLAYER_TIMER_STATE_PAUSED,
-    VLC_PLAYER_TIMER_STATE_DISCONTINUITY,
+    VLC_PLAYER_TIMER_EVENT_PLAYING,
+    VLC_PLAYER_TIMER_EVENT_PAUSED,
+    VLC_PLAYER_TIMER_EVENT_DISCONTINUITY,
+    VLC_PLAYER_TIMER_EVENT_STOPPING,
 };
 
 struct vlc_player_timer
 {
     vlc_mutex_t lock;
 
-    enum vlc_player_timer_state state;
-    bool seeking;
-
     vlc_tick_t input_length;
     vlc_tick_t input_normal_time;
     vlc_tick_t last_ts;
-    float input_position;
+    double input_position;
+
+    vlc_tick_t seek_ts;
+    double seek_position;
+    bool paused;
+    bool stopping;
+    bool seeking;
 
     struct vlc_player_timer_source sources[VLC_PLAYER_TIMER_TYPE_COUNT];
 #define best_source sources[VLC_PLAYER_TIMER_TYPE_BEST]
@@ -236,11 +240,7 @@ struct vlc_player_t
     vlc_mutex_t vout_listeners_lock;
     vlc_cond_t start_delay_cond;
 
-    enum vlc_player_media_stopped_action media_stopped_action;
     bool start_paused;
-
-    const struct vlc_player_media_provider *media_provider;
-    void *media_provider_data;
 
     bool pause_on_cork;
     bool corked;
@@ -257,7 +257,6 @@ struct vlc_player_t
     struct vlc_player_input *input;
 
     bool releasing_media;
-    bool next_media_requested;
     input_item_t *next_media;
 
     char *video_string_ids;
@@ -346,9 +345,6 @@ int
 vlc_player_OpenNextMedia(vlc_player_t *player);
 
 void
-vlc_player_PrepareNextMedia(vlc_player_t *player);
-
-void
 vlc_player_destructor_AddStoppingInput(vlc_player_t *player,
                                        struct vlc_player_input *input);
 
@@ -434,23 +430,37 @@ vlc_player_input_SelectTracksByStringIds(struct vlc_player_input *input,
 
 char *
 vlc_player_input_GetSelectedTrackStringIds(struct vlc_player_input *input,
-                                           enum es_format_category_e cat);
+                                           enum es_format_category_e cat) VLC_MALLOC;
 
 vlc_tick_t
-vlc_player_input_GetTime(struct vlc_player_input *input);
+vlc_player_input_GetTime(struct vlc_player_input *input, bool seeking,
+                         vlc_tick_t system_now);
 
 double
-vlc_player_input_GetPos(struct vlc_player_input *input);
+vlc_player_input_GetPos(struct vlc_player_input *input, bool seeking,
+                        vlc_tick_t system_now);
 
 int
 vlc_player_input_Start(struct vlc_player_input *input);
 
 void
+vlc_player_input_SeekByPos(struct vlc_player_input *input, double position,
+                           enum vlc_player_seek_speed speed,
+                           enum vlc_player_whence whence);
+
+void
+vlc_player_input_SeekByTime(struct vlc_player_input *input, vlc_tick_t time,
+                            enum vlc_player_seek_speed speed,
+                            enum vlc_player_whence whence);
+
+void
+vlc_player_input_UpdateViewpoint(struct vlc_player_input *input,
+                                 const vlc_viewpoint_t *viewpoint,
+                                 enum vlc_player_whence whence);
+
+void
 vlc_player_input_HandleState(struct vlc_player_input *, enum vlc_player_state,
                              vlc_tick_t state_date);
-
-struct vlc_player_timer_point
-vlc_player_input_GetTimerValue(struct vlc_player_input *input);
 
 /*
  * player_timer.c
@@ -466,9 +476,13 @@ void
 vlc_player_ResetTimer(vlc_player_t *player);
 
 void
-vlc_player_UpdateTimerState(vlc_player_t *player, vlc_es_id_t *es_source,
-                            enum vlc_player_timer_state state,
+vlc_player_UpdateTimerEvent(vlc_player_t *player, vlc_es_id_t *es_source,
+                            enum vlc_player_timer_event event,
                             vlc_tick_t system_date);
+
+void
+vlc_player_UpdateTimerSeekState(vlc_player_t *player, vlc_tick_t time,
+                                double position);
 
 void
 vlc_player_UpdateTimer(vlc_player_t *player, vlc_es_id_t *es_source,
@@ -481,7 +495,8 @@ void
 vlc_player_RemoveTimerSource(vlc_player_t *player, vlc_es_id_t *es_source);
 
 int
-vlc_player_GetTimerPoint(vlc_player_t *player, vlc_tick_t system_now,
+vlc_player_GetTimerPoint(vlc_player_t *player, bool seeking,
+                         vlc_tick_t system_now,
                          vlc_tick_t *out_ts, double *out_pos);
 
 /*
@@ -517,7 +532,7 @@ vlc_player_osd_Icon(vlc_player_t *player, short type);
 void
 vlc_player_osd_Position(vlc_player_t *player,
                         struct vlc_player_input *input, vlc_tick_t time,
-                        double position, enum vlc_player_whence whence);
+                        double position);
 void
 vlc_player_osd_Volume(vlc_player_t *player, bool mute_action);
 

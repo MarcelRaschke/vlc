@@ -25,6 +25,7 @@
 #ifndef VLC_LIBVLC_MEDIA_H
 #define VLC_LIBVLC_MEDIA_H 1
 
+#include <vlc/libvlc_picture.h>
 #include <vlc/libvlc_media_track.h>
 
 # ifdef __cplusplus
@@ -102,27 +103,27 @@ enum
 typedef struct libvlc_media_stats_t
 {
     /* Input */
-    int         i_read_bytes;
+    uint64_t     i_read_bytes;
     float       f_input_bitrate;
 
     /* Demux */
-    int         i_demux_read_bytes;
+    uint64_t     i_demux_read_bytes;
     float       f_demux_bitrate;
-    int         i_demux_corrupted;
-    int         i_demux_discontinuity;
+    uint64_t     i_demux_corrupted;
+    uint64_t     i_demux_discontinuity;
 
     /* Decoders */
-    int         i_decoded_video;
-    int         i_decoded_audio;
+    uint64_t     i_decoded_video;
+    uint64_t     i_decoded_audio;
 
     /* Video Output */
-    int         i_displayed_pictures;
-    int         i_late_pictures;
-    int         i_lost_pictures;
+    uint64_t     i_displayed_pictures;
+    uint64_t     i_late_pictures;
+    uint64_t     i_lost_pictures;
 
     /* Audio output */
-    int         i_played_abuffers;
-    int         i_lost_abuffers;
+    uint64_t     i_played_abuffers;
+    uint64_t     i_lost_abuffers;
 } libvlc_media_stats_t;
 
 /**
@@ -147,29 +148,29 @@ typedef enum libvlc_media_parse_flag_t
     /**
      * Parse media if it's a local file
      */
-    libvlc_media_parse_local    = 0x00,
+    libvlc_media_parse_local    = 0x01,
     /**
      * Parse media even if it's a network file
      */
-    libvlc_media_parse_network  = 0x01,
+    libvlc_media_parse_network  = 0x02,
+    /**
+     * Force parsing the media even if it would be skipped.
+     */
+    libvlc_media_parse_forced   = 0x04,
     /**
      * Fetch meta and cover art using local resources
      */
-    libvlc_media_fetch_local    = 0x02,
+    libvlc_media_fetch_local    = 0x08,
     /**
      * Fetch meta and cover art using network resources
      */
-    libvlc_media_fetch_network  = 0x04,
+    libvlc_media_fetch_network  = 0x10,
     /**
      * Interact with the user (via libvlc_dialog_cbs) when preparsing this item
      * (and not its sub items). Set this flag in order to receive a callback
      * when the input is asking for credentials.
      */
-    libvlc_media_do_interact    = 0x08,
-    /**
-     * Force parsing the media even if it would be skipped.
-     */
-    libvlc_media_no_skip        = 0x10,
+    libvlc_media_do_interact    = 0x20,
 } libvlc_media_parse_flag_t;
 
 /**
@@ -413,8 +414,9 @@ LIBVLC_API void libvlc_media_add_option_flag(
  * media descriptor object.
  *
  * \param p_md the media descriptor
+ * \return the same object
  */
-LIBVLC_API void libvlc_media_retain( libvlc_media_t *p_md );
+LIBVLC_API libvlc_media_t *libvlc_media_retain( libvlc_media_t *p_md );
 
 /**
  * Decrement the reference count of a media descriptor object. If the
@@ -473,6 +475,54 @@ LIBVLC_API void libvlc_media_set_meta( libvlc_media_t *p_md,
                                            libvlc_meta_t e_meta,
                                            const char *psz_value );
 
+/**
+ * Read the meta extra of the media.
+ *
+ * If the media has not yet been parsed this will return NULL.
+ *
+ * \see libvlc_media_parse
+ * \see libvlc_media_parse_with_options
+ *
+ * \param p_md the media descriptor
+ * \param psz_name the meta extra to read (nonnullable)
+ * \return the media's meta extra or NULL
+ */
+LIBVLC_API char *libvlc_media_get_meta_extra( libvlc_media_t *p_md,
+                                              const char *psz_name );
+
+/**
+ * Set the meta of the media (this function will not save the meta, call
+ * libvlc_media_save_meta in order to save the meta)
+ *
+ * \param p_md the media descriptor
+ * \param psz_name the meta extra to write (nonnullable)
+ * \param psz_value the media's meta extra (nullable)
+ * Removed from meta extra if set to NULL
+ */
+LIBVLC_API void libvlc_media_set_meta_extra( libvlc_media_t *p_md,
+                                             const char *psz_name,
+                                             const char *psz_value );
+
+/**
+ * Read the meta extra names of the media.
+ *
+ * \param p_md the media descriptor
+ * \param pppsz_names the media's meta extra name array
+ * you can access the elements using the return value (count)
+ * must be released with libvlc_media_meta_extra_names_release()
+ * \return the meta extra count
+ */
+LIBVLC_API unsigned libvlc_media_get_meta_extra_names( libvlc_media_t *p_md,
+                                                       char ***pppsz_names );
+
+/**
+ * Release a media meta extra names
+ *
+ * \param ppsz_names meta extra names array to release
+ * \param i_count number of elements in the array
+ */
+LIBVLC_API void libvlc_media_meta_extra_names_release( char **ppsz_names,
+                                                       unsigned i_count );
 
 /**
  * Save the meta previously set

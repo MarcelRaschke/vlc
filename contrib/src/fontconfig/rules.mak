@@ -1,6 +1,6 @@
 # fontconfig
 
-FONTCONFIG_VERSION := 2.12.6
+FONTCONFIG_VERSION := 2.14.2
 FONTCONFIG_URL := https://www.freedesktop.org/software/fontconfig/release/fontconfig-$(FONTCONFIG_VERSION).tar.gz
 
 ifndef HAVE_WIN32
@@ -17,6 +17,7 @@ $(TARBALLS)/fontconfig-$(FONTCONFIG_VERSION).tar.gz:
 
 fontconfig: fontconfig-$(FONTCONFIG_VERSION).tar.gz .sum-fontconfig
 	$(UNPACK)
+	$(call update_autoconfig,.)
 	$(RM) $(UNPACK_DIR)/src/fcobjshash.gperf
 	# include the generated fcobjshash.h, not the one from src/
 	sed -i.orig -e 's,"fcobjshash.h",<fcobjshash.h>,' $(UNPACK_DIR)/src/fcobjs.c

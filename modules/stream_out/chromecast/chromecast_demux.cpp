@@ -34,7 +34,7 @@
 
 #include "chromecast_common.h"
 
-#include <assert.h>
+#include <cassert>
 #include <new>
 
 static void on_paused_changed_cb(void *data, bool paused);
@@ -221,7 +221,7 @@ struct demux_cc
                 ret = demux_Control( p_demux->s, DEMUX_SET_TIME, time, false );
 
             if( ret != VLC_SUCCESS && pos >= 0 )
-                demux_SetPosition( p_demux->s, pos, false, true );
+                demux_SetPosition( p_demux->s, pos, false );
         }
     }
 
@@ -346,7 +346,7 @@ struct demux_cc
         {
             double pos = va_arg( args, double );
             /* Force imprecise seek */
-            int ret = demux_SetPosition( p_demux->s, pos, false, true );
+            int ret = demux_SetPosition( p_demux->s, pos, false );
             if( ret != VLC_SUCCESS )
                 return ret;
 

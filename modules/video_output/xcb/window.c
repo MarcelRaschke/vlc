@@ -46,10 +46,12 @@ typedef xcb_atom_t Atom;
 #include <X11/Xatom.h> /* XA_WM_NAME */
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
+#include <vlc_poll.h>
 #include <vlc_plugin.h>
 #include <vlc_actions.h>
 #include <vlc_window.h>
-#include <vlc_es.h>
+#include <vlc_ancillary.h>
 
 typedef struct
 {
@@ -1070,6 +1072,7 @@ static void Close (vlc_window_t *wnd)
     DeinitKeyboardExtension(wnd);
     xcb_disconnect (conn);
     free (wnd->display.x11);
+    free(p_sys->displays);
 }
 
 /*** Embedded drawable support ***/

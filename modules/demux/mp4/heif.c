@@ -25,6 +25,7 @@
  * Preamble
  *****************************************************************************/
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_demux.h>
 #include <vlc_input.h>
 #include <vlc_image.h>
@@ -140,8 +141,18 @@ static int ControlHEIF( demux_t *p_demux, int i_query, va_list args )
                 return VLC_EGENERIC;
 
             *pi_int = 1;
-            *ppp_title = malloc( sizeof( input_title_t*) );
-            (*ppp_title)[0] = vlc_input_title_Duplicate( p_sys->p_title );
+            input_title_t **titles =  malloc(sizeof(*titles));
+            if (titles == NULL)
+                return VLC_ENOMEM;
+
+            titles[0] = vlc_input_title_Duplicate(p_sys->p_title);
+            if (titles[0] == NULL)
+            {
+                free(titles);
+                return VLC_ENOMEM;
+            }
+
+            *ppp_title = titles;
             *pi_title_offset = 0;
             *pi_seekpoint_offset = 0;
             return VLC_SUCCESS;
@@ -431,9 +442,9 @@ static int SetPictureProperties( demux_t *p_demux, uint32_t i_item_id,
                     break;
                 case ATOM_mdcv:
                     memcpy( fmt->video.mastering.primaries,
-                            p_prop->data.p_SmDm->primaries, sizeof(uint16_t) * 6 );
+                            p_prop->data.p_SmDm->primaries, sizeof(fmt->video.mastering.primaries) );
                     memcpy( fmt->video.mastering.white_point,
-                            p_prop->data.p_SmDm->white_point, sizeof(uint16_t) * 2 );
+                            p_prop->data.p_SmDm->white_point, sizeof(fmt->video.mastering.white_point) );
                     fmt->video.mastering.max_luminance = p_prop->data.p_SmDm->i_luminanceMax;
                     fmt->video.mastering.min_luminance = p_prop->data.p_SmDm->i_luminanceMin;
                     break;

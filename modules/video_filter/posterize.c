@@ -32,6 +32,7 @@
 #include <stdatomic.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
@@ -102,8 +103,9 @@ static int Create( filter_t *p_filter )
         CASE_PACKED_YUV_422
             break;
         case VLC_CODEC_RGB24:
+        case VLC_CODEC_BGR24:
             break;
-        case VLC_CODEC_RGB32:
+        CASE_PACKED_RGB32
             break;
         default:
             msg_Err( p_filter, "Unsupported input chroma (%4.4s)",
@@ -111,7 +113,8 @@ static int Create( filter_t *p_filter )
             return VLC_EGENERIC;
     }
 
-    if( p_filter->fmt_in.video.i_chroma != p_filter->fmt_out.video.i_chroma )
+    if( !video_format_IsSameChroma( &p_filter->fmt_in.video,
+                                    &p_filter->fmt_out.video ) )
     {
         msg_Err( p_filter, "Input and output chromas don't match" );
         return VLC_EGENERIC;
@@ -162,9 +165,10 @@ static void Filter( filter_t *p_filter, picture_t *p_pic, picture_t *p_outpic )
     switch( p_pic->format.i_chroma )
     {
         case VLC_CODEC_RGB24:
+        case VLC_CODEC_BGR24:
             RVPosterize( p_pic, p_outpic, false, level );
             break;
-        case VLC_CODEC_RGB32:
+        CASE_PACKED_RGB32
             RVPosterize( p_pic, p_outpic, true, level );
             break;
         CASE_PLANAR_YUV_SQUARE

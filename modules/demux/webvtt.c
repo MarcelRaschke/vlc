@@ -132,10 +132,9 @@ static block_t *ConvertWEBVTT( const webvtt_cue_t *p_cue, bool b_continued )
     vlc_memstream_write( &stream, paylbox, 8 );
     vlc_memstream_write( &stream, p_cue->psz_text, paylsize - 8 );
 
-    if( vlc_memstream_close( &stream ) == VLC_SUCCESS )
+    if( vlc_memstream_close( &stream ) == 0 )
         return block_heap_Alloc( stream.ptr, stream.length );
-    else
-        return NULL;
+    return NULL;
 }
 
 struct memstream_wrap
@@ -155,13 +154,8 @@ static void memstream_Append( struct memstream_wrap *mw, const char *psz )
 
 static void memstream_Grab( struct memstream_wrap *mw, void **pp, size_t *pi )
 {
-    if( mw->b_opened && vlc_memstream_close( &mw->memstream ) == VLC_SUCCESS )
+    if( mw->b_opened && vlc_memstream_close( &mw->memstream ) == 0 )
     {
-        if( mw->memstream.length == 0 )
-        {
-            free( mw->memstream.ptr );
-            mw->memstream.ptr = NULL;
-        }
         *pp = mw->memstream.ptr;
         *pi = mw->memstream.length;
     }
@@ -418,7 +412,7 @@ static void MakeExtradata( demux_sys_t *p_sys, void **p_extra, size_t *pi_extra 
                                      p_sys->regions_headers.i_data );
     vlc_memstream_write( &extradata, p_sys->styles_headers.p_data,
                                      p_sys->styles_headers.i_data );
-    if( vlc_memstream_close( &extradata ) == VLC_SUCCESS )
+    if( vlc_memstream_close( &extradata ) == 0 )
     {
         if( extradata.length )
         {
@@ -739,6 +733,9 @@ void webvtt_CloseDemux( vlc_object_t *p_this )
         webvtt_text_parser_Feed( p_sys->p_streamparser, NULL );
         webvtt_text_parser_Delete( p_sys->p_streamparser );
     }
+
+    free( p_sys->regions_headers.p_data );
+    free( p_sys->styles_headers.p_data );
 
     free( p_sys );
 }

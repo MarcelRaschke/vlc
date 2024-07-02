@@ -8,7 +8,6 @@ BUILT_SOURCES = $(nodist_pkginclude_HEADERS)
 CLEANFILES = $(BUILT_SOURCES) $(pkgconfig_DATA)
 
 pkginclude_HEADERS = \
-	../include/vlc/deprecated.h \
 	../include/vlc/libvlc.h \
 	../include/vlc/libvlc_dialog.h \
 	../include/vlc/libvlc_events.h \
@@ -21,6 +20,7 @@ pkginclude_HEADERS = \
 	../include/vlc/libvlc_renderer_discoverer.h \
 	../include/vlc/libvlc_picture.h \
 	../include/vlc/libvlc_version.h \
+	../include/vlc/libvlc_video.h \
 	../include/vlc/vlc.h
 
 lib_LTLIBRARIES = libvlc.la
@@ -37,7 +37,6 @@ libvlc_la_SOURCES = \
 	renderer_discoverer.c \
 	error.c \
 	log.c \
-	playlist.c \
 	video.c \
 	audio.c \
 	event.c \
@@ -49,8 +48,10 @@ libvlc_la_SOURCES = \
 	media_list_player.c \
 	media_discoverer.c \
 	picture.c \
+	libvlc.pc.in \
+	libvlc.sym \
 	../src/revision.c
-EXTRA_DIST = libvlc.pc.in libvlc.sym
+EXTRA_DIST =
 
 if HAVE_WIN32
 noinst_DATA = libvlc_win32_rc.rc
@@ -67,10 +68,10 @@ libvlc_la_LDFLAGS = \
 	-no-undefined \
 	-version-number @LIBVLC_ABI_MAJOR@:@LIBVLC_ABI_MINOR@:@LIBVLC_ABI_MICRO@ \
 	-export-symbols $(srcdir)/libvlc.sym
-libvlc_la_DEPENDENCIES = libvlc.sym
+EXTRA_libvlc_la_DEPENDENCIES = libvlc.sym
 libvlc_la_CPPFLAGS = $(AM_CPPFLAGS)
 if HAVE_WIN32
-libvlc_la_DEPENDENCIES += libvlc_win32_rc.$(OBJEXT)
+EXTRA_libvlc_la_DEPENDENCIES += libvlc_win32_rc.$(OBJEXT)
 libvlc_la_LDFLAGS += -Wl,libvlc_win32_rc.$(OBJEXT) -avoid-version -Wc,-static
 if HAVE_DYNAMIC_PLUGINS
 libvlc_la_CPPFLAGS += -DLIBVLC_DLL_EXPORT
@@ -100,6 +101,21 @@ libvlc.pc: libvlc.pc.in $(top_builddir)/config.status
 
 libvlc_win32_rc.$(OBJEXT): libvlc_win32_rc.rc $(top_srcdir)/extras/package/win32/libvlc.dll.manifest
 	$(WINDRES) --include-dir $(top_srcdir)/share --include-dir $(top_srcdir)/extras/package/win32 -i $< -o $@
+
+checkheader_verbose = $(checkheader_verbose_$(V))
+checkheader_verbose_ = $(checkheader_verbose_$(AM_DEFAULT_VERBOSITY))
+checkheader_verbose_0 = @echo "  CHECK  $(@:checkheader_%_h=vlc/%.h)";
+checkheader_verbose__0 = $(checkheader_verbose_0)
+nodist_check_SCRIPTS = $(pkginclude_HEADERS:../include/vlc/%.h=checkheader_%_h)
+MOSTLYCLEANFILES = \
+	$(pkginclude_HEADERS:../include/vlc/%.h=checkheader_%_h.c) \
+	$(pkginclude_HEADERS:../include/vlc/%.h=checkheader_%_h.lo)
+
+checkheader_%_h:
+	@echo "#include <stdbool.h>" > $@.c
+	@echo "#include <vlc/libvlc.h>" >> $@.c
+	@echo "#include <vlc/$*.h>" >> $@.c
+	$(checkheader_verbose)$(LTCOMPILE) -c $@.c -o $@.lo
 
 check-local:
 	$(SHELL) $(top_srcdir)/src/check_headers $(pkginclude_HEADERS)

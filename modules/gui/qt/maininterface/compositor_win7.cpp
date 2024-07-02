@@ -16,14 +16,16 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 #include "compositor_win7.hpp"
+
+#include <QApplication>
+#include <QLibrary>
+
 #include "mainctx_win32.hpp"
 #include "mainui.hpp"
 
-#define D3D11_NO_HELPERS  // avoid tons of warnings
-#include <d3d11.h>
+#include <vlc_window.h>
 
 #include <dwmapi.h>
-#include <QLibrary>
 
 using namespace vlc;
 
@@ -48,53 +50,14 @@ CompositorWin7::~CompositorWin7()
 {
 }
 
-bool CompositorWin7::preInit(qt_intf_t *p_intf)
-{
-    //check whether D3DCompiler is available. whitout it Angle won't work
-    QLibrary d3dCompilerDll;
-    for (int i = 47; i > 41; --i)
-    {
-        d3dCompilerDll.setFileName(QString("D3DCOMPILER_%1.dll").arg(i));
-        if (d3dCompilerDll.load())
-            break;
-    }
-
-    D3D_FEATURE_LEVEL requestedFeatureLevels[] = {
-        D3D_FEATURE_LEVEL_9_1,
-        D3D_FEATURE_LEVEL_9_2,
-        D3D_FEATURE_LEVEL_9_3,
-        D3D_FEATURE_LEVEL_10_0,
-        D3D_FEATURE_LEVEL_10_1,
-        D3D_FEATURE_LEVEL_11_1,
-        D3D_FEATURE_LEVEL_11_0,
-    };
-
-    HRESULT hr = D3D11CreateDevice(
-        nullptr,    // Adapter
-        D3D_DRIVER_TYPE_HARDWARE,
-        nullptr,    // Module
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-        requestedFeatureLevels,
-        ARRAY_SIZE(requestedFeatureLevels),
-        D3D11_SDK_VERSION,
-        nullptr, //D3D device
-        nullptr,    // Actual feature level
-        nullptr //D3D context
-        );
-
-    //no hw acceleration, manually select the software backend
-    //otherwise Qt will load angle and fail.
-    if (!d3dCompilerDll.isLoaded() || FAILED(hr))
-    {
-        msg_Info(p_intf, "no D3D support, use software backend");
-        QQuickWindow::setSceneGraphBackend(QSGRendererInterface::Software);
-    }
-
-    return true;
-}
-
 bool CompositorWin7::init()
 {
+    {
+        const QString& platformName = qApp->platformName();
+        if (!(platformName == QLatin1String("windows") || platformName == QLatin1String("direct2d")))
+            return false;
+    }
+
     return true;
 }
 
@@ -130,7 +93,6 @@ bool CompositorWin7::makeMainInterface(MainCtx* mainCtx)
 
     m_qmlView = std::make_unique<QQuickView>();
     m_qmlView->setResizeMode(QQuickView::SizeRootObjectToView);
-    m_qmlView->setClearBeforeRendering(true);
     m_qmlView->setColor(QColor(Qt::transparent));
 
     m_qmlView->installEventFilter(this);
@@ -139,13 +101,14 @@ bool CompositorWin7::makeMainInterface(MainCtx* mainCtx)
     connect(m_nativeEventFilter.get(), &Win7NativeEventFilter::windowStyleChanged,
             this, &CompositorWin7::resetVideoZOrder);
 
-    m_qmlView->show();
-
     m_qmlWindowHWND = (HWND)m_qmlView->winId();
 
-    commonGUICreate(m_qmlView.get(), nullptr, m_qmlView.get(), CompositorVideo::CAN_SHOW_PIP);
+    const bool ret = commonGUICreate(m_qmlView.get(), m_qmlView.get(), CompositorVideo::CAN_SHOW_PIP);
 
-    return true;
+    if (ret)
+        m_qmlView->show();
+
+    return ret;
 }
 
 void CompositorWin7::destroyMainInterface()
@@ -273,7 +236,7 @@ Win7NativeEventFilter::Win7NativeEventFilter(QObject* parent)
 }
 
 //parse native events that are not reported by Qt
-bool Win7NativeEventFilter::nativeEventFilter(const QByteArray&, void* message, long*)
+bool Win7NativeEventFilter::nativeEventFilter(const QByteArray&, void* message, qintptr*)
 {
     MSG * msg = static_cast<MSG*>( message );
 

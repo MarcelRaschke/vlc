@@ -62,7 +62,7 @@ vlc_module_begin ()
     set_shortname( N_("TY") )
     set_description(N_("TY Stream audio/video demux"))
     set_subcategory( SUBCAT_INPUT_DEMUX )
-    set_capability("demux", 6)
+    set_capability("demux", 8)
     /* FIXME: there seems to be a segfault when using PVR access
      * and TY demux has a bigger priority than PS
      * Something must be wrong.
@@ -1420,7 +1420,7 @@ static void DemuxDecodeXds( demux_t *p_demux, uint8_t d1, uint8_t d2 )
         if( m->psz_channel_call_letter )
             vlc_meta_SetTitle( p_meta, m->psz_channel_call_letter );
         if( m->psz_channel_number )
-            vlc_meta_AddExtra( p_meta, "Channel number", m->psz_channel_number );
+            vlc_meta_SetExtra( p_meta, "Channel number", m->psz_channel_number );
         es_out_Control( p_demux->out, ES_OUT_SET_GROUP_META, TY_ES_GROUP, p_meta );
         vlc_meta_Delete( p_meta );
 

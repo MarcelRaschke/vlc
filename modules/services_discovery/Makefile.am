@@ -71,6 +71,11 @@ if HAVE_WIN32_DESKTOP
 sd_LTLIBRARIES += libwindrive_plugin.la
 endif
 
+libwinvolumes_plugin_la_SOURCES = services_discovery/winvolumes.c
+if HAVE_WIN32_DESKTOP
+sd_LTLIBRARIES += libwinvolumes_plugin.la
+endif
+
 libos2drive_plugin_la_SOURCES = services_discovery/os2drive.c
 if HAVE_OS2
 sd_LTLIBRARIES += libos2drive_plugin.la
@@ -87,7 +92,9 @@ libbonjour_plugin_la_SOURCES = services_discovery/bonjour.m
 libbonjour_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS) -fobjc-arc
 libbonjour_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(sddir)' -Wl,-framework,Foundation
 if HAVE_DARWIN
+if !HAVE_WATCHOS
 sd_LTLIBRARIES += libbonjour_plugin.la
+endif
 endif
 
 libudisks_plugin_la_SOURCES = services_discovery/udisks.c

@@ -27,6 +27,7 @@
 #   include "config.h"
 #endif
 #include <limits.h>
+#include <stdbit.h>
 
 #include <vlc_common.h>
 #include <vlc_cpu.h>
@@ -276,14 +277,14 @@ static int Open(filter_t *filter)
     video_format_t src_trans = *src;
     video_format_TransformBy(&src_trans, transform);
 
-    if (dst->i_chroma         != src_trans.i_chroma ||
+    if (!video_format_IsSameChroma( dst, &src_trans ) ||
         dst->i_width          != src_trans.i_width ||
         dst->i_visible_width  != src_trans.i_visible_width ||
         dst->i_height         != src_trans.i_height ||
         dst->i_visible_height != src_trans.i_visible_height ||
         dst->i_x_offset       != src_trans.i_x_offset ||
         dst->i_y_offset       != src_trans.i_y_offset)
-        return VLC_ENOTSUP; /* This module cannot rescale */
+        return VLC_ENOTSUP; /* This module cannot rescale or change chroma */
 
     const vlc_chroma_description_t *chroma =
         vlc_fourcc_GetChromaDescription(src->i_chroma);
@@ -312,7 +313,7 @@ static int Open(filter_t *filter)
     if (unlikely(sys == NULL))
         return VLC_ENOMEM;
 
-    int order = vlc_ctz(chroma->pixel_size);
+    int order = stdc_trailing_zeros(chroma->pixel_size);
 
     sys->transform = transform;
     sys->plane = descriptions[transform];

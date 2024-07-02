@@ -275,6 +275,8 @@ typedef int64_t stime_t;
 #define ATOM_av1C VLC_FOURCC( 'a', 'v', '1', 'C' )
 #define ATOM_avcC VLC_FOURCC( 'a', 'v', 'c', 'C' )
 #define ATOM_vpcC VLC_FOURCC( 'v', 'p', 'c', 'C' )
+#define ATOM_vvc1 VLC_FOURCC( 'v', 'v', 'c', '1' )
+#define ATOM_vvcC VLC_FOURCC( 'v', 'v', 'c', 'C' )
 #define ATOM_m4ds VLC_FOURCC( 'm', '4', 'd', 's' )
 
 #define ATOM_fiel VLC_FOURCC( 'f', 'i', 'e', 'l' )
@@ -451,6 +453,7 @@ typedef int64_t stime_t;
 #define HANDLER_ID32 ATOM_ID32
 
 #define SAMPLEGROUP_rap  VLC_FOURCC('r', 'a', 'p', ' ')
+#define SAMPLEGROUP_roll VLC_FOURCC('r', 'o', 'l', 'l')
 
 /* tref reference type boxes */
 #define ATOM_chap VLC_FOURCC( 'c', 'h', 'a', 'p' )
@@ -678,7 +681,7 @@ typedef struct MP4_Box_data_stts_s
 
     uint32_t i_entry_count;
     uint32_t *pi_sample_count; /* these are array */
-    int32_t  *pi_sample_delta;
+    uint32_t *pi_sample_delta;
 
 } MP4_Box_data_stts_t;
 
@@ -808,6 +811,7 @@ typedef struct
     int16_t  i_depth;
 
     int16_t  i_qt_color_table;
+    video_palette_t *p_palette;
 
     /* XXX hack ImageDescription */
     int     i_qt_image_description;
@@ -1077,17 +1081,9 @@ typedef struct MP4_Box_data_cmvd_s
 {
     uint32_t i_uncompressed_size;
     uint32_t i_compressed_size;
-
-    int     b_compressed; /* Set to 1 if compressed data, 0 if uncompressed */
     uint8_t *p_data;
 
 } MP4_Box_data_cmvd_t;
-
-typedef struct MP4_Box_data_cmov_s
-{
-    struct MP4_Box_s *p_moov; /* uncompressed moov */
-
-} MP4_Box_data_cmov_t;
 
 typedef struct
 {
@@ -1819,7 +1815,6 @@ typedef union MP4_Box_data_s
 
     MP4_Box_data_dcom_t *p_dcom;
     MP4_Box_data_cmvd_t *p_cmvd;
-    MP4_Box_data_cmov_t *p_cmov;
 
     MP4_Box_data_moviehintinformation_rtp_t *p_moviehintinformation_rtp;
 

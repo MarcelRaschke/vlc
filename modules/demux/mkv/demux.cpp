@@ -79,9 +79,9 @@ bool demux_sys_t::AnalyseAllSegmentsFound( demux_t *p_demux, matroska_stream_c *
     }
 
     EDocTypeReadVersion doc_read_version = GetChild<EDocTypeReadVersion>(*static_cast<EbmlHead*>(p_l0));
-    if (uint64(doc_read_version) > 5)
+    if (uint64_t(doc_read_version) > 5)
     {
-        msg_Err( p_demux, "matroska file needs version %" PRId64 " but only versions 1 to 4 supported", uint64(doc_read_version));
+        msg_Err( p_demux, "matroska file needs version %" PRId64 " but only versions 1 to 4 supported", uint64_t(doc_read_version));
         return false;
     }
 
@@ -129,7 +129,7 @@ bool demux_sys_t::AnalyseAllSegmentsFound( demux_t *p_demux, matroska_stream_c *
 
         if (p_l0->IsFiniteSize() )
         {
-            p_l0->SkipData(p_stream1->estream, KaxMatroska_Context);
+            p_l0->SkipData(p_stream1->estream, Context_KaxMatroska);
             p_l0 = p_stream1->estream.FindNextID(EBML_INFO(KaxSegment), UINT64_MAX);
         }
         else

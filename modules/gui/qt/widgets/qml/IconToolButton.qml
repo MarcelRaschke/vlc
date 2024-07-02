@@ -16,13 +16,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as T
+import QtQuick
+import QtQuick.Templates as T
 
 import org.videolan.vlc 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
+import "."
 
 T.ToolButton {
     id: control
@@ -31,9 +32,7 @@ T.ToolButton {
 
     property bool paintOnly: false
 
-    property int size: VLCStyle.icon_normal
-
-    property string iconText: ""
+    required property string description
 
     property color color: (control.checked) ? theme.accent : theme.fg.primary
 
@@ -45,22 +44,41 @@ T.ToolButton {
 
     enabled: !paintOnly
 
-    implicitWidth: Math.max(background ? background.implicitWidth : 0,
-                            contentItem.implicitWidth + leftPadding + rightPadding)
-    implicitHeight: Math.max(background ? background.implicitHeight : 0,
-                             contentItem.implicitHeight + topPadding + bottomPadding)
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            implicitContentWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             implicitContentHeight + topPadding + bottomPadding)
+
     baselineOffset: contentItem.y + contentItem.baselineOffset
+
+    font.pixelSize: VLCStyle.icon_toolbar
+    font.family: VLCIcons.fontFamily
 
     // Keys
 
     Keys.priority: Keys.AfterItem
 
-    Keys.onPressed: Navigation.defaultKeyAction(event)
+    Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
 
-    // Childs
+    // Accessible
 
-    T.ToolTip.text: control.text
+    Accessible.onPressAction: control.clicked()
+
+    Accessible.name: description
+
+    // Tooltip
+
+    T.ToolTip.visible: (hovered || visualFocus)
+
     T.ToolTip.delay: VLCStyle.delayToolTipAppear
+
+    T.ToolTip.text: description
+
+    // Events
+
+    Component.onCompleted: console.assert(text !== "", "text is empty")
+
+    // Children
 
     readonly property ColorContext colorContext : ColorContext {
         id: theme
@@ -73,33 +91,28 @@ T.ToolButton {
     }
 
     background: AnimatedBackground {
-        implicitWidth: size
-        implicitHeight: size
+        implicitWidth: control.font.pixelSize
+        implicitHeight: control.font.pixelSize
 
-        animate: theme.initialized
+        enabled: theme.initialized
 
-        active: control.visualFocus
+        color: control.backgroundColor
 
-        backgroundColor: control.backgroundColor
-        foregroundColor: control.color
-
-        activeBorderColor: theme.visualFocus
+        border.color: visualFocus ? theme.visualFocus : "transparent"
     }
 
-    contentItem: T.Label {
-        anchors.centerIn: parent
+    contentItem: IconLabel {
+        text: control.text
 
-        verticalAlignment: Text.AlignVCenter
-        horizontalAlignment: Text.AlignHCenter
+        color: control.color
 
-        text: iconText
+        Behavior on color {
+            enabled: theme.initialized
+            ColorAnimation {
+                duration: VLCStyle.duration_long
+            }
+        }
 
-        color: control.background.foregroundColor
-
-        font.pixelSize: control.size
-        font.family: VLCIcons.fontFamily
-        font.underline: control.font.underline
-
-        Accessible.ignored: true
+        font: control.font
     }
 }

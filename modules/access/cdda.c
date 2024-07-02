@@ -42,6 +42,7 @@
 #include <ctype.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_demux.h>
 #include <vlc_plugin.h>
 #include <vlc_input_item.h>
@@ -408,9 +409,9 @@ static char * BuildMusicbrainzDiscID( const vcddev_toc_t *p_toc,
 
     char buffer[16];
 
-    sprintf( buffer, "%02X", i_first );
+    snprintf( buffer, ARRAY_SIZE(buffer), "%02X", i_first );
     gcry_md_write( hd, buffer, 2 );
-    sprintf( buffer, "%02X", i_last );
+    snprintf( buffer, ARRAY_SIZE(buffer), "%02X", i_last );
     gcry_md_write( hd, buffer, 2 );
     /* LEAD OUT sector info */
 
@@ -422,12 +423,12 @@ static char * BuildMusicbrainzDiscID( const vcddev_toc_t *p_toc,
     else
         i_last_track_end = LBAPregap(p_toc->p_sectors[p_toc->i_tracks].i_lba);
 
-    sprintf( buffer, "%08X", i_last_track_end );
+    snprintf( buffer, ARRAY_SIZE(buffer), "%08X", i_last_track_end );
     gcry_md_write( hd, buffer, 8 );
 
     for( int i = 0; i<i_total; i++ ) /* skip LEAD OUT */
     {
-        sprintf( buffer, "%08X", LBAPregap(p_toc->p_sectors[i].i_lba) );
+        snprintf( buffer, ARRAY_SIZE(buffer), "%08X", LBAPregap(p_toc->p_sectors[i].i_lba) );
         gcry_md_write( hd, buffer, 8 );
     }
 
@@ -475,7 +476,7 @@ static musicbrainz_recording_t * GetMusicbrainzInfo( vlc_object_t *obj,
     musicbrainz_recording_t *recording = NULL;
 
     char *psz_mbserver = var_InheritString( obj, "musicbrainz-server" );
-    if( !psz_mbserver || !*psz_mbserver )
+    if( !psz_mbserver )
         return NULL;
 
     musicbrainz_config_t cfg = { .obj = obj,
@@ -850,13 +851,13 @@ static int ReadDir(stream_t *access, input_item_node_t *node)
             input_item_SetAlbum(item, album);
 
         if (NONEMPTY(author))
-            vlc_meta_AddExtra(item->p_meta, "AUTHOR", author);
+            vlc_meta_SetExtra(item->p_meta, "AUTHOR", author);
         if (NONEMPTY(composer))
-            vlc_meta_AddExtra(item->p_meta, "COMPOSER", composer);
+            vlc_meta_SetExtra(item->p_meta, "COMPOSER", composer);
         if (NONEMPTY(arranger))
-            vlc_meta_AddExtra(item->p_meta, "ARRANGER", arranger);
+            vlc_meta_SetExtra(item->p_meta, "ARRANGER", arranger);
         if (NONEMPTY(isrc))
-            vlc_meta_AddExtra(item->p_meta, "ISRC", isrc);
+            vlc_meta_SetExtra(item->p_meta, "ISRC", isrc);
 
         if (year != 0)
         {

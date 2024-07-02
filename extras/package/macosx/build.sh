@@ -35,11 +35,16 @@ OPTIONS:
                      n: nightly
                      u: unsigned stripped release archive
                      z: zip
-   -k <sdk>      Use the specified sdk (default: $SDKROOT)
+   -k <sdk>      Use the specified SDK (default: $SDKROOT)
    -a <arch>     Use the specified arch (default: $HOST_ARCH)
    -C            Use the specified VLC build dir
    -b <url>      Enable breakpad support and send crash reports to this URL
    -d            Disable debug mode (on by default)
+   -g <g|l|a>    Select the license of contribs
+                     g: GPLv3 (default)
+                     l: LGPLv3 + ad-clauses
+                     a: LGPLv2 + ad-clauses
+   -x            Add extra checks when compiling
 EOF
 
 }
@@ -54,7 +59,7 @@ spopd()
     popd > /dev/null
 }
 
-while getopts "qhvrcdpi:k:a:j:C:b:" OPTION
+while getopts "qhvrcdpi:k:a:j:C:b:g:x" OPTION
 do
      case $OPTION in
          h)
@@ -94,6 +99,12 @@ do
          ;;
          b)
              BREAKPAD=$OPTARG
+         ;;
+         g)
+             LICENSE=$OPTARG
+         ;;
+         x)
+             EXTRA_CHECKS="yes"
          ;;
          *)
              usage
@@ -161,12 +172,28 @@ vlcSetContribEnvironment "$MINIMAL_OSX_VERSION"
 info "Building contribs"
 spushd "${vlcroot}/contrib"
 
+case $LICENSE in
+    l)
+        # LGPL v3 + ad-clauses
+        CONTRIBFLAGS="$CONTRIBFLAGS --disable-gpl --enable-ad-clauses"
+        VLC_CONFIGURE_ARGS="$VLC_CONFIGURE_ARGS --disable-a52"
+    ;;
+    a)
+        # LGPL v2.1 + ad-clauses
+        CONTRIBFLAGS="$CONTRIBFLAGS --disable-gpl --disable-gnuv3 --enable-ad-clauses"
+        VLC_CONFIGURE_ARGS="$VLC_CONFIGURE_ARGS --disable-a52"
+    ;;
+    g|*)
+        # GPL v3
+    ;;
+esac
+
 if [ "$REBUILD" = "yes" ]; then
     rm -rf contrib-$HOST_TRIPLET
     rm -rf $HOST_TRIPLET
 fi
 mkdir -p contrib-$HOST_TRIPLET && cd contrib-$HOST_TRIPLET
-../bootstrap --build=$BUILD_TRIPLET --host=$HOST_TRIPLET > $out
+../bootstrap --build=$BUILD_TRIPLET --host=$HOST_TRIPLET $CONTRIBFLAGS > $out
 
 make list
 if [ "$CONTRIBFROMSOURCE" != "yes" ]; then
@@ -224,6 +251,12 @@ fi
 if [ "$NODEBUG" = "yes" ]; then
      CONFIGFLAGS="$CONFIGFLAGS --disable-debug"
 fi
+if [ -n "$EXTRA_CHECKS" ]; then
+    CONFIGFLAGS="$CONFIGFLAGS --enable-extra-checks"
+fi
+
+export CFLAGS
+export CXXFLAGS
 
 if [ "${vlcroot}/configure" -nt Makefile ]; then
 

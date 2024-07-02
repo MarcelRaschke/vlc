@@ -27,6 +27,8 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
+#include <vlc_threads.h>
 #include <vlc_plugin.h>
 #include <vlc_demux.h>              /* demux_meta_t */
 #include <vlc_strings.h>            /* vlc_b64_decode_binary */
@@ -94,8 +96,7 @@ using namespace TagLib;
 #include <algorithm>
 #include <limits>
 
-#if defined(VLC_PATCHED_TAGLIB_IOSTREAM_RESOLVERS) || \
-    TAGLIB_VERSION >= VERSION_INT(1, 13, 0)
+#if TAGLIB_VERSION >= VERSION_INT(1, 13, 0)
 #define USE_IOSTREAM_RESOLVER 1
 #endif
 
@@ -131,7 +132,11 @@ VLCTagLib::ExtResolver<T>::ExtResolver(const std::string & ext)
 template <class T>
 File *VLCTagLib::ExtResolver<T>::createFile(FileName fileName, bool, AudioProperties::ReadStyle) const
 {
+#if defined(_WIN32) && TAGLIB_VERSION >= VERSION_INT(2, 0, 0)
+    std::string filename = fileName.toString().to8Bit(true);
+#else
     std::string filename = std::string(fileName);
+#endif
     std::size_t namesize = filename.size();
 
     if (namesize > ext.length())
@@ -149,7 +154,11 @@ File *VLCTagLib::ExtResolver<T>::createFile(FileName fileName, bool, AudioProper
 template<class T>
 File* VLCTagLib::ExtResolver<T>::createFileFromStream(IOStream* s, bool, AudioProperties::ReadStyle) const
 {
+#if defined(_WIN32) && TAGLIB_VERSION >= VERSION_INT(2, 0, 0)
+    std::string filename = s->name().toString().to8Bit(true);
+#else
     std::string filename = std::string(s->name());
+#endif
     std::size_t namesize = filename.size();
 
     if (namesize > ext.length())
@@ -206,7 +215,11 @@ public:
         return m_stream->psz_url;
     }
 
+#if TAGLIB_VERSION >= VERSION_INT(2, 0, 0)
+    ByteVector readBlock(size_t length)
+#else
     ByteVector readBlock(ulong length)
+#endif
     {
         if(m_borked || m_seqReadLength >= m_seqReadLimit)
             return {};
@@ -226,11 +239,19 @@ public:
         // Let's stay Read-Only for now
     }
 
+#if TAGLIB_VERSION >= VERSION_INT(2, 0, 0)
+    void insert(const ByteVector&, offset_t, size_t)
+#else
     void insert(const ByteVector&, ulong, ulong)
+#endif
     {
     }
 
+#if TAGLIB_VERSION >= VERSION_INT(2, 0, 0)
+    void removeBlock(offset_t, size_t)
+#else
     void removeBlock(ulong, ulong)
+#endif
     {
     }
 
@@ -249,7 +270,11 @@ public:
         m_seqReadLimit = s;
     }
 
+#if TAGLIB_VERSION >= VERSION_INT(2, 0, 0)
+    void seek(offset_t offset, Position p)
+#else
     void seek(long offset, Position p)
+#endif
     {
         uint64_t pos = 0;
         long len;
@@ -284,12 +309,20 @@ public:
         return;
     }
 
+#if TAGLIB_VERSION >= VERSION_INT(2, 0, 0)
+    offset_t tell() const
+#else
     long tell() const
+#endif
     {
         return m_previousPos;
     }
 
+#if TAGLIB_VERSION >= VERSION_INT(2, 0, 0)
+    offset_t length()
+#else
     long length()
+#endif
     {
         uint64_t i_size;
         if (vlc_stream_GetSize( m_stream, &i_size ) != VLC_SUCCESS)
@@ -297,7 +330,11 @@ public:
         return i_size;
     }
 
+#if TAGLIB_VERSION >= VERSION_INT(2, 0, 0)
+    void truncate(offset_t)
+#else
     void truncate(long)
+#endif
     {
     }
 
@@ -393,7 +430,7 @@ static void ReadMetaFromAPE( APE::Tag* tag, demux_meta_t* p_demux_meta, vlc_meta
 #define SET_EXTRA( keyName, metaName ) \
     iter = fields.find( keyName ); \
     if( iter != fields.end() && !iter->second.isEmpty() ) { \
-        vlc_meta_AddExtra( p_meta, metaName, iter->second.toString().toCString( true ) ); \
+        vlc_meta_SetExtra( p_meta, metaName, iter->second.toString().toCString( true ) ); \
         fields.erase(iter); \
     }
 
@@ -430,7 +467,7 @@ static void ReadMetaFromAPE( APE::Tag* tag, demux_meta_t* p_demux_meta, vlc_meta
         if( iter->second.type() != APE::Item::Text )
             continue;
 
-        vlc_meta_AddExtra( p_meta,
+        vlc_meta_SetExtra( p_meta,
                            iter->first.toCString( true ),
                            iter->second.toString().toCString( true ) );
     }
@@ -458,7 +495,7 @@ static void ReadMetaFromASF( ASF::Tag* tag, demux_meta_t* p_demux_meta, vlc_meta
     if( tag->attributeListMap().contains(keyName) )                                  \
     {                                                                                \
         list = tag->attributeListMap()[keyName];                                     \
-        vlc_meta_AddExtra( p_meta, metaName, list.front().toString().toCString( true ) ); \
+        vlc_meta_SetExtra( p_meta, metaName, list.front().toString().toCString( true ) ); \
     }
 
     SET("MusicBrainz/Track Id", TrackID );
@@ -690,10 +727,10 @@ static void ReadMetaFromId3v2( ID3v2::Tag* tag, demux_meta_t* p_demux_meta, vlc_
         }
         if( !strcmp( p_txxx->description().toCString( true ), "MusicBrainz Album Id" ) )
         {
-            vlc_meta_AddExtra( p_meta, VLC_META_EXTRA_MB_ALBUMID, p_txxx->fieldList().back().toCString( true ) );
+            vlc_meta_SetExtra( p_meta, VLC_META_EXTRA_MB_ALBUMID, p_txxx->fieldList().back().toCString( true ) );
             continue;
         }
-        vlc_meta_AddExtra( p_meta, p_txxx->description().toCString( true ),
+        vlc_meta_SetExtra( p_meta, p_txxx->description().toCString( true ),
                            p_txxx->fieldList().back().toCString( true ) );
     }
 
@@ -707,7 +744,7 @@ static void ReadMetaFromId3v2( ID3v2::Tag* tag, demux_meta_t* p_demux_meta, vlc_
 #define SET_EXTRA( tagName, metaName )\
     list = tag->frameListMap()[tagName];\
     if( !list.isEmpty() )\
-        vlc_meta_AddExtra( p_meta, metaName,\
+        vlc_meta_SetExtra( p_meta, metaName,\
                            (*list.begin())->toString().toCString( true ) );
 
 
@@ -763,7 +800,7 @@ static void ReadMetaFromXiph( Ogg::XiphComment* tag, demux_meta_t* p_demux_meta,
     { \
         StringList tmp_list = tag->fieldListMap()[keyName]; \
         if( !tmp_list.isEmpty() ) \
-            vlc_meta_AddExtra( p_meta, keyName, (*tmp_list.begin()).toCString( true ) ); \
+            vlc_meta_SetExtra( p_meta, keyName, (*tmp_list.begin()).toCString( true ) ); \
     }
 
     SET( "COPYRIGHT", Copyright );
@@ -878,7 +915,7 @@ static void ReadMetaFromMP4( MP4::Tag* tag, demux_meta_t *p_demux_meta, vlc_meta
     if( tag->contains(keyName) )                                                         \
     {                                                                                    \
         list = tag->item(keyName);                                                       \
-        vlc_meta_AddExtra( p_meta, metaName, list.toStringList().front().toCString( true ) ); \
+        vlc_meta_SetExtra( p_meta, metaName, list.toStringList().front().toCString( true ) ); \
     }
 
     SET("----:com.apple.iTunes:MusicBrainz Track Id", TrackID );
@@ -985,13 +1022,7 @@ static int ReadMeta( vlc_object_t* p_this)
         p_stream = p_filter;
 
     VlcIostream s( p_stream );
-#ifndef VLC_PATCHED_TAGLIB_ID3V2_READSTYLE
-    uint64_t dummy;
-    if( vlc_stream_GetSize( p_stream, &dummy ) != VLC_SUCCESS )
-        s.setMaxSequentialRead( 2048 );
-    else
-        s.setMaxSequentialRead( 1024 * 2048 );
-#endif
+
     FileRef f( &s, false, AudioProperties::ReadStyle::Fast );
 
     if( f.isNull() )
@@ -1391,7 +1422,11 @@ static int WriteMeta( vlc_object_t *p_this )
         if( RIFF::AIFF::File* riff_aiff = dynamic_cast<RIFF::AIFF::File*>(f.file()) )
             WriteMetaToId3v2( riff_aiff->tag(), p_item );
         else if( RIFF::WAV::File* riff_wav = dynamic_cast<RIFF::WAV::File*>(f.file()) )
+#if TAGLIB_VERSION >= VERSION_INT(2, 0, 0)
+            WriteMetaToId3v2( riff_wav->ID3v2Tag(), p_item );
+#else
             WriteMetaToId3v2( riff_wav->tag(), p_item );
+#endif
     }
     else if( TrueAudio::File* trueaudio = dynamic_cast<TrueAudio::File*>(f.file()) )
     {

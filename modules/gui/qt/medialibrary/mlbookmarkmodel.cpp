@@ -28,6 +28,7 @@
 #include "medialib.hpp"
 #include "mlhelper.hpp"
 
+#include "util/shared_input_item.hpp"
 #include "util/vlctick.hpp"
 #include "player/player_controller.hpp"
 
@@ -338,7 +339,7 @@ void MLBookmarkModel::onCurrentMediaChanged( vlc_player_t*, input_item_t* media,
 {
     //Player thread
     auto self = static_cast<MLBookmarkModel*>( data );
-    QmlInputItem item(media, true);
+    SharedInputItem item(media, true);
     QString mediaUri;
     uint64_t revision;
     {
@@ -403,7 +404,7 @@ void MLBookmarkModel::updateMediaId(uint64_t revision, const QString mediaUri)
             ctx.newMLid = mlMedia->i_id;
             vlc_ml_release( mlMedia );
         }
-        vlc_ml_query_params_t params{};
+        vlc_ml_query_params_t params = vlc_ml_query_params_create();
         params.i_sort = sort;
         params.b_desc = desc;
         ctx.newBookmarks.reset( vlc_ml_list_media_bookmarks( ml, &params, ctx.newMLid ) );
@@ -446,7 +447,7 @@ void MLBookmarkModel::refresh(MLBookmarkModel::RefreshOperation forceClear )
         //ML thread
         [mediaId, sort = m_sort, desc = m_desc]
         (vlc_medialibrary_t* ml, Ctx& ctx) {
-            vlc_ml_query_params_t params{};
+            vlc_ml_query_params_t params = vlc_ml_query_params_create();
             params.i_sort = sort;
             params.b_desc = desc;
             ctx.newBookmarks.reset( vlc_ml_list_media_bookmarks( ml, &params, mediaId ) );
@@ -529,42 +530,12 @@ void MLBookmarkModel::setMl(MediaLib* medialib)
 
 void MLBookmarkModel::initModel()
 {
-    static const vlc_player_cbs cbs {
-        &onCurrentMediaChanged,
-        &onPlaybackStateChanged,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-    };
+    static const vlc_player_cbs cbs = []{
+        vlc_player_cbs cbs {};
+        cbs.on_current_media_changed = &onCurrentMediaChanged;
+        cbs.on_state_changed = &onPlaybackStateChanged;
+        return cbs;
+    }();
     QString uri;
     {
         vlc_player_locker lock{ m_player };

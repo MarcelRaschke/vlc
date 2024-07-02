@@ -39,6 +39,7 @@ extern "C" {
 
 #include <vlc_fs.h>
 #include <vlc_url.h>
+#include <vlc_ancillary.h>
 
 /*****************************************************************************
  * Module descriptor
@@ -59,27 +60,27 @@ vlc_module_begin ()
 
     add_bool( "mkv-use-ordered-chapters", true,
             N_("Respect ordered chapters"),
-            N_("Play chapters in the order specified in the segment.") );
+            N_("Play chapters in the order specified in the segment.") )
 
     add_bool( "mkv-use-chapter-codec", true,
             N_("Chapter codecs"),
-            N_("Use chapter codecs found in the segment.") );
+            N_("Use chapter codecs found in the segment.") )
 
     add_bool( "mkv-preload-local-dir", true,
             N_("Preload MKV files in the same directory"),
-            N_("Preload matroska files in the same directory to find linked segments (not good for broken files).") );
+            N_("Preload matroska files in the same directory to find linked segments (not good for broken files).") )
 
     add_bool( "mkv-seek-percent", false,
             N_("Seek based on percent not time"),
-            nullptr );
+            nullptr )
 
     add_bool( "mkv-use-dummy", false,
             N_("Dummy Elements"),
-            N_("Read and discard unknown EBML elements (not good for broken files).") );
+            N_("Read and discard unknown EBML elements (not good for broken files).") )
 
     add_bool( "mkv-preload-clusters", false,
             N_("Preload clusters"),
-            N_("Find all cluster positions by jumping cluster-to-cluster before playback") );
+            N_("Find all cluster positions by jumping cluster-to-cluster before playback") )
 
     add_shortcut( "mka", "mkv" )
     add_file_extension("mka")
@@ -475,6 +476,15 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             msg_Dbg(p_demux,"SET_TIME to %" PRId64, i64 );
             return Seek( p_demux, i64, -1, NULL, b );
 
+        case DEMUX_NAV_ACTIVATE:
+        case DEMUX_NAV_UP:
+        case DEMUX_NAV_DOWN:
+        case DEMUX_NAV_LEFT:
+        case DEMUX_NAV_RIGHT:
+        case DEMUX_NAV_POPUP:
+        case DEMUX_NAV_MENU:
+            return p_sys->ev.SendEventNav( i_query );
+
         case DEMUX_CAN_PAUSE:
         case DEMUX_SET_PAUSE_STATE:
         case DEMUX_CAN_CONTROL_PACE:
@@ -523,6 +533,13 @@ static int Seek( demux_t *p_demux, vlc_tick_t i_mk_date, double f_percent, virtu
         i_mk_date = vlc_tick_t( f_percent * p_sys->i_duration );
     }
     return p_vsegment->Seek( *p_demux, i_mk_date, p_vchapter, b_precise ) ? VLC_SUCCESS : VLC_EGENERIC;
+}
+
+static void ReleaseVpxAlpha(void *opaque)
+{
+    auto alpha = static_cast<vlc_vpx_alpha_t*>(opaque);
+    free(alpha->data);
+    delete alpha;
 }
 
 /* Needed by matroska_segment::Seek() and Seek */
@@ -689,6 +706,52 @@ void BlockDecode( demux_t *p_demux, KaxBlock *block, KaxSimpleBlock *simpleblock
             if( unlikely( !p_block ) )
                 continue;
             break;
+
+        case VLC_CODEC_VP8:
+        case VLC_CODEC_VP9:
+            if (additions && track.fmt.i_level) // contains alpha extradata
+            {
+                KaxBlockMore *blockMore = FindChild<KaxBlockMore>(*additions);
+                if(blockMore == nullptr)
+                    break;
+                KaxBlockAddID *addId = FindChild<KaxBlockAddID>(*blockMore);
+                if(addId == nullptr)
+                    break;
+                if (static_cast<uint64>(*addId) != 1)
+                    break;
+
+                KaxBlockAdditional *addition = FindChild<KaxBlockAdditional>(*blockMore);
+                if(addition == nullptr)
+                    break;
+
+                auto alpha_data = new(std::nothrow) vlc_vpx_alpha_t();
+                if (unlikely(alpha_data == nullptr))
+                {
+                    block_Release( p_block );
+                    return;
+                }
+                alpha_data->data = static_cast<uint8_t*>(malloc(addition->GetSize()));
+                if (unlikely(alpha_data->data == nullptr))
+                {
+                    delete alpha_data;
+                    block_Release( p_block );
+                    return;
+                }
+                alpha_data->size = addition->GetSize();
+                memcpy(alpha_data->data, addition->GetBuffer(), addition->GetSize());
+                vlc_ancillary *alpha =
+                    vlc_ancillary_CreateWithFreeCb(alpha_data, VLC_ANCILLARY_ID_VPX_ALPHA,
+                                                   ReleaseVpxAlpha);
+                if (likely(alpha != NULL))
+                    vlc_frame_AttachAncillary(p_block, alpha);
+                else
+                {
+                    ReleaseVpxAlpha(alpha_data);
+                    block_Release( p_block );
+                    return;
+                }
+            }
+            break;
         }
 
         if( track.fmt.i_cat != VIDEO_ES )
@@ -833,7 +896,7 @@ static int Demux( demux_t *p_demux)
     /* set pts */
     {
         p_sys->i_pts = p_sys->i_mk_chapter_time + VLC_TICK_0;
-        p_sys->i_pts += VLC_TICK_FROM_NS(internal_block.GlobalTimecode());
+        p_sys->i_pts += VLC_TICK_FROM_NS(internal_block.GlobalTimestamp());
     }
 
     if ( p_vsegment->CurrentEdition() &&
@@ -875,6 +938,7 @@ mkv_track_t::mkv_track_t(enum es_format_category_e es_cat) :
   ,i_chans_to_reorder(0)
   ,p_sys(NULL)
   ,b_discontinuity(false)
+  ,b_has_alpha(false)
   ,i_compression_type(MATROSKA_COMPRESSION_NONE)
   ,i_encoding_scope(MATROSKA_ENCODING_SCOPE_ALL_FRAMES)
   ,p_compression_data(NULL)

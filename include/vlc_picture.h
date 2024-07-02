@@ -27,6 +27,7 @@
 
 #include <assert.h>
 #include <vlc_atomic.h>
+#include <vlc_es.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,8 +43,6 @@ typedef uint32_t vlc_ancillary_id;
  * \file
  * This file defines picture structures and functions in vlc
  */
-
-#include <vlc_es.h>
 
 /** Description of a planar graphic field */
 typedef struct plane_t
@@ -451,6 +450,7 @@ picture_AttachNewAncillary(picture_t *pic, vlc_ancillary_id id, size_t size);
 /**
  * Return the ancillary identified by an ID
  *
+ * @param pic the picture to get the ancillary from
  * @param id id of ancillary to request
  * @return the ancillary or NULL if the ancillary for that particular id is
  * not present
@@ -461,7 +461,7 @@ picture_GetAncillary(const picture_t *pic, vlc_ancillary_id id);
 /**
  * This function will export a picture to an encoded bitstream.
  *
- * pp_image will contain the encoded bitstream in psz_format format.
+ * pp_image will contain the encoded bitstream in i_codec codec.
  *
  * p_fmt can be NULL otherwise it will be set with the format used for the
  * picture before encoding.
@@ -476,7 +476,7 @@ picture_GetAncillary(const picture_t *pic, vlc_ancillary_id id);
  * If at most one of them is > 0 then the picture aspect ratio will be kept.
  */
 VLC_API int picture_Export( vlc_object_t *p_obj, block_t **pp_image, video_format_t *p_fmt,
-                            picture_t *p_picture, vlc_fourcc_t i_format, int i_override_width,
+                            picture_t *p_picture, vlc_fourcc_t i_codec, int i_override_width,
                             int i_override_height, bool b_crop );
 
 /**

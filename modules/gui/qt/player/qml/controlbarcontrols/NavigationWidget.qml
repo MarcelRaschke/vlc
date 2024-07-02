@@ -18,8 +18,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as Templates
+import QtQuick
+import QtQuick.Templates as Templates
 
 import org.videolan.vlc 0.1
 
@@ -31,7 +31,7 @@ Templates.Pane {
 
     // Properties
 
-    property int size: VLCStyle.icon_toolbar
+    font.pixelSize: VLCStyle.icon_toolbar
 
     property bool paintOnly: false
 
@@ -54,7 +54,7 @@ Templates.Pane {
     // Keys
 
     Keys.priority: Keys.AfterItem
-    Keys.onPressed: Navigation.defaultKeyAction(event)
+    Keys.onPressed: (event) => Navigation.defaultKeyAction(event)
 
     // Functions private
 
@@ -111,8 +111,6 @@ Templates.Pane {
                 if (item === null) return
 
                 _applyItem(loaderA, item)
-
-                item.size = Qt.binding(function() { return root.size })
             }
         }
 

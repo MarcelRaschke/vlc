@@ -14,14 +14,16 @@
                 <outlet property="albumTextField" destination="439" id="Rih-lX-lJW"/>
                 <outlet property="artistLabel" destination="432" id="Iu0-7V-KXV"/>
                 <outlet property="artistTextField" destination="431" id="pCd-jk-UrD"/>
-                <outlet property="artworkImageView" destination="9Mp-s6-NGc" id="98x-Ub-eP0"/>
+                <outlet property="artworkImageButton" destination="9jw-Fr-d1M" id="Iz3-tl-NGZ"/>
                 <outlet property="audioDecodedLabel" destination="583" id="684"/>
                 <outlet property="audioDecodedTextField" destination="582" id="685"/>
                 <outlet property="audioLabel" destination="574" id="686"/>
+                <outlet property="contentDescriptionTextField" destination="497" id="951-iw-gOA"/>
                 <outlet property="copyrightLabel" destination="487" id="658"/>
                 <outlet property="copyrightTextField" destination="486" id="659"/>
                 <outlet property="dateLabel" destination="436" id="656"/>
                 <outlet property="dateTextField" destination="435" id="655"/>
+                <outlet property="decodedMRLTextField" destination="509" id="cRO-43-SO3"/>
                 <outlet property="demuxBitrateLabel" destination="545" id="693"/>
                 <outlet property="demuxBitrateTextField" destination="hUq-0S-i6D" id="Jgq-FQ-1CE"/>
                 <outlet property="demuxCorruptedLabel" destination="545" id="c36-hh-IPQ"/>
@@ -33,13 +35,12 @@
                 <outlet property="demuxReadPacketsLabel" destination="Hnb-RD-RvP" id="6Xi-zs-S8Q"/>
                 <outlet property="demuxReadPacketsTextField" destination="7Q8-ZO-4ZM" id="gWq-ZN-quj"/>
                 <outlet property="descriptionLabel" destination="498" id="679"/>
-                <outlet property="descriptionTextField" destination="497" id="680"/>
                 <outlet property="directorLabel" destination="cXh-Kb-cBh" id="6ZF-wX-Xh2"/>
                 <outlet property="directorTextField" destination="KiB-XA-gnh" id="ERL-sw-M61"/>
                 <outlet property="displayedLabel" destination="557" id="712"/>
                 <outlet property="displayedTextField" destination="558" id="713"/>
+                <outlet property="encodedByTextField" destination="504" id="BOa-Pb-f9Z"/>
                 <outlet property="encodedbyLabel" destination="505" id="660"/>
-                <outlet property="encodedbyTextField" destination="504" id="661"/>
                 <outlet property="episodeLabel" destination="32r-kK-YIK" id="yix-cN-AcT"/>
                 <outlet property="episodeTextField" destination="D3W-el-Mmk" id="FS0-bE-baK"/>
                 <outlet property="genreLabel" destination="462" id="662"/>
@@ -58,6 +59,7 @@
                 <outlet property="lostAudioBuffersTextField" destination="578" id="695"/>
                 <outlet property="lostFramesLabel" destination="559" id="696"/>
                 <outlet property="lostFramesTextField" destination="560" id="697"/>
+                <outlet property="mrlCopyButton" destination="mC1-pf-fRU" id="aal-CO-3Tz"/>
                 <outlet property="nowPlayingLabel" destination="477" id="667"/>
                 <outlet property="nowPlayingTextField" destination="476" id="668"/>
                 <outlet property="outlineView" destination="519" id="683"/>
@@ -78,7 +80,6 @@
                 <outlet property="trackTotalLabel" destination="cIj-bq-nFH" id="DTy-a5-z5z"/>
                 <outlet property="trackTotalTextField" destination="Ken-fu-rsj" id="5tM-3S-iBE"/>
                 <outlet property="uriLabel" destination="510" id="677"/>
-                <outlet property="uriTextField" destination="509" id="678"/>
                 <outlet property="videoDecodedLabel" destination="555" id="727"/>
                 <outlet property="videoDecodedTextField" destination="556" id="728"/>
                 <outlet property="videoLabel" destination="553" id="711"/>
@@ -105,16 +106,13 @@
                                     <rect key="frame" x="0.0" y="0.0" width="542" height="513"/>
                                     <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                     <subviews>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="427">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="427" customClass="VLCSettingTextField">
                                             <rect key="frame" x="37" y="473" width="468" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="428">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="726"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="429">
                                             <rect key="frame" x="35" y="495" width="373" height="14"/>
@@ -127,8 +125,8 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="509">
-                                            <rect key="frame" x="37" y="18" width="468" height="19"/>
+                                        <textField focusRingType="none" horizontalHuggingPriority="251" verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" translatesAutoresizingMaskIntoConstraints="NO" id="509" customClass="VLCSettingTextField">
+                                            <rect key="frame" x="37" y="18" width="416" height="19"/>
                                             <constraints>
                                                 <constraint firstAttribute="height" constant="19" id="POw-kc-CJg"/>
                                             </constraints>
@@ -146,16 +144,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="431">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="431" customClass="VLCSettingTextField">
                                             <rect key="frame" x="37" y="430" width="300" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="434">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="724"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="432">
                                             <rect key="frame" x="35" y="452" width="262" height="13"/>
@@ -165,16 +160,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="435">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="435" customClass="VLCSettingTextField">
                                             <rect key="frame" x="345" y="430" width="160" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="438">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="725"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="436">
                                             <rect key="frame" x="343" y="452" width="27" height="13"/>
@@ -184,16 +176,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="439">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="439" customClass="VLCSettingTextField">
                                             <rect key="frame" x="37" y="387" width="300" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="446">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="722"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="440">
                                             <rect key="frame" x="35" y="409" width="35" height="13"/>
@@ -203,16 +192,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="441">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="441" customClass="VLCSettingTextField">
                                             <rect key="frame" x="345" y="387" width="76" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="444">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="723"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="442">
                                             <rect key="frame" x="343" y="409" width="72" height="13"/>
@@ -222,16 +208,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="461">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="461" customClass="VLCSettingTextField">
                                             <rect key="frame" x="37" y="258" width="300" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="468">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="720"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="462">
                                             <rect key="frame" x="35" y="280" width="33" height="13"/>
@@ -241,16 +224,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="476">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="476" customClass="VLCSettingTextField">
                                             <rect key="frame" x="37" y="215" width="300" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="479">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="719"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="477">
                                             <rect key="frame" x="35" y="237" width="64" height="13"/>
@@ -260,16 +240,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" horizontalHuggingPriority="200" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="481">
+                                        <textField focusRingType="none" horizontalHuggingPriority="200" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="481" customClass="VLCSettingTextField">
                                             <rect key="frame" x="37" y="86" width="229" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="484">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="715"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="482">
                                             <rect key="frame" x="35" y="108" width="233" height="13"/>
@@ -279,16 +256,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="504">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="504" customClass="VLCSettingTextField">
                                             <rect key="frame" x="274" y="86" width="231" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="507">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="716"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="505">
                                             <rect key="frame" x="274" y="108" width="231" height="13"/>
@@ -298,16 +272,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="486">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="486" customClass="VLCSettingTextField">
                                             <rect key="frame" x="37" y="129" width="300" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="489">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="717"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="487">
                                             <rect key="frame" x="35" y="151" width="64" height="13"/>
@@ -317,16 +288,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" translatesAutoresizingMaskIntoConstraints="NO" id="497">
+                                        <textField focusRingType="none" translatesAutoresizingMaskIntoConstraints="NO" id="497" customClass="VLCSettingTextField">
                                             <rect key="frame" x="37" y="172" width="300" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="500">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="718"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="498">
                                             <rect key="frame" x="35" y="194" width="64" height="13"/>
@@ -336,16 +304,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="463">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="463" customClass="VLCSettingTextField">
                                             <rect key="frame" x="345" y="258" width="160" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="466">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="721"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="464">
                                             <rect key="frame" x="343" y="280" width="93" height="13"/>
@@ -358,16 +323,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="tWC-Zr-8E5">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="tWC-Zr-8E5" customClass="VLCSettingTextField">
                                             <rect key="frame" x="37" y="301" width="300" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="Ec8-Cl-y0i">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="ooI-gO-3JF"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="8ES-YK-OvS">
                                             <rect key="frame" x="35" y="323" width="36" height="13"/>
@@ -377,16 +339,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="KiB-XA-gnh">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="KiB-XA-gnh" customClass="VLCSettingTextField">
                                             <rect key="frame" x="345" y="301" width="160" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="pFQ-Gp-0HP">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="1zo-ng-tk9"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="cXh-Kb-cBh">
                                             <rect key="frame" x="343" y="323" width="93" height="13"/>
@@ -409,7 +368,7 @@
                                                 <action selector="saveMetaData:" target="-2" id="714"/>
                                             </connections>
                                         </button>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="Ken-fu-rsj">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="Ken-fu-rsj" customClass="VLCSettingTextField">
                                             <rect key="frame" x="429" y="387" width="76" height="19"/>
                                             <constraints>
                                                 <constraint firstAttribute="width" constant="76" id="X3G-qK-H1c"/>
@@ -419,9 +378,6 @@
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="JEp-DM-q9j"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="cIj-bq-nFH">
                                             <rect key="frame" x="427" y="409" width="58" height="13"/>
@@ -431,16 +387,13 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="Vvu-VZ-aui">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="Vvu-VZ-aui" customClass="VLCSettingTextField">
                                             <rect key="frame" x="37" y="344" width="300" height="19"/>
                                             <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" focusRingType="none" drawsBackground="YES" id="dCs-of-GUs">
                                                 <font key="font" metaFont="message" size="11"/>
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="k01-t1-MYA"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="TJe-7E-Uca">
                                             <rect key="frame" x="35" y="366" width="61" height="13"/>
@@ -458,7 +411,7 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="D3W-el-Mmk">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="D3W-el-Mmk" customClass="VLCSettingTextField">
                                             <rect key="frame" x="429" y="344" width="76" height="19"/>
                                             <constraints>
                                                 <constraint firstAttribute="width" constant="76" id="V5q-H5-oPv"/>
@@ -469,9 +422,6 @@
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="adw-HY-vZ4"/>
-                                            </connections>
                                         </textField>
                                         <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="32r-kK-YIK">
                                             <rect key="frame" x="427" y="366" width="43" height="13"/>
@@ -481,7 +431,7 @@
                                                 <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                         </textField>
-                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="Cro-Nn-BBH">
+                                        <textField focusRingType="none" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="Cro-Nn-BBH" customClass="VLCSettingTextField">
                                             <rect key="frame" x="345" y="344" width="76" height="19"/>
                                             <constraints>
                                                 <constraint firstAttribute="width" constant="76" id="STi-Ld-Rjj"/>
@@ -491,26 +441,49 @@
                                                 <color key="textColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
-                                            <connections>
-                                                <action selector="metaFieldChanged:" target="-2" id="dB5-84-DY8"/>
-                                            </connections>
                                         </textField>
-                                        <customView translatesAutoresizingMaskIntoConstraints="NO" id="9Mp-s6-NGc" customClass="VLCImageView">
-                                            <rect key="frame" x="345" y="129" width="160" height="121"/>
-                                        </customView>
+                                        <button translatesAutoresizingMaskIntoConstraints="NO" id="9jw-Fr-d1M">
+                                            <rect key="frame" x="345" y="129" width="160" height="128"/>
+                                            <buttonCell key="cell" type="square" bezelStyle="shadowlessSquare" image="noart" imagePosition="only" alignment="center" imageScaling="proportionallyUpOrDown" inset="2" id="T6o-O9-fdd">
+                                                <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
+                                                <font key="font" metaFont="system"/>
+                                            </buttonCell>
+                                            <constraints>
+                                                <constraint firstAttribute="height" constant="128" id="sbu-BX-HX7"/>
+                                            </constraints>
+                                            <connections>
+                                                <action selector="chooseArtwork:" target="-2" id="aoX-w0-3xf"/>
+                                            </connections>
+                                        </button>
+                                        <button horizontalHuggingPriority="252" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="mC1-pf-fRU">
+                                            <rect key="frame" x="441" y="18" width="64" height="19"/>
+                                            <buttonCell key="cell" type="roundRect" title="Copy" bezelStyle="roundedRect" imagePosition="trailing" alignment="center" state="on" borderStyle="border" inset="2" id="VR0-15-bEV">
+                                                <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
+                                                <font key="font" metaFont="cellTitle"/>
+                                                <imageReference key="image" image="arrow.right.doc.on.clipboard" catalog="system" symbolScale="small"/>
+                                            </buttonCell>
+                                            <connections>
+                                                <action selector="copyMrl:" target="-2" id="WOa-yv-wo3"/>
+                                            </connections>
+                                        </button>
+                                        <box verticalHuggingPriority="750" boxType="separator" translatesAutoresizingMaskIntoConstraints="NO" id="9Bt-th-j2x">
+                                            <rect key="frame" x="0.0" y="58" width="542" height="5"/>
+                                        </box>
                                     </subviews>
                                     <constraints>
                                         <constraint firstItem="32r-kK-YIK" firstAttribute="centerY" secondItem="NFO-5i-C2y" secondAttribute="centerY" id="1fr-ua-HLh"/>
                                         <constraint firstItem="498" firstAttribute="leading" secondItem="487" secondAttribute="leading" id="2BM-dO-cxA"/>
                                         <constraint firstItem="TJe-7E-Uca" firstAttribute="baseline" secondItem="NFO-5i-C2y" secondAttribute="baseline" id="38c-hf-AdS"/>
+                                        <constraint firstItem="9jw-Fr-d1M" firstAttribute="leading" secondItem="KiB-XA-gnh" secondAttribute="leading" id="38t-tH-IXh"/>
                                         <constraint firstItem="412" firstAttribute="top" secondItem="504" secondAttribute="bottom" constant="7" id="3sc-H3-Jb7"/>
                                         <constraint firstItem="Cro-Nn-BBH" firstAttribute="leading" secondItem="Vvu-VZ-aui" secondAttribute="trailing" constant="8" id="4Wy-de-qFK"/>
                                         <constraint firstItem="435" firstAttribute="top" secondItem="436" secondAttribute="bottom" constant="3" id="5A4-pd-kbP"/>
                                         <constraint firstItem="463" firstAttribute="leading" secondItem="461" secondAttribute="trailing" constant="8" id="5fW-BF-CQQ"/>
                                         <constraint firstAttribute="trailing" secondItem="435" secondAttribute="trailing" constant="37" id="5sT-kX-Mgh"/>
+                                        <constraint firstItem="509" firstAttribute="trailing" secondItem="mC1-pf-fRU" secondAttribute="leading" constant="-8" id="64p-sq-S98"/>
                                         <constraint firstItem="435" firstAttribute="leading" secondItem="431" secondAttribute="trailing" constant="8" id="69n-nP-QoU"/>
-                                        <constraint firstItem="9Mp-s6-NGc" firstAttribute="bottom" secondItem="486" secondAttribute="bottom" id="6RC-cE-vQo"/>
                                         <constraint firstItem="439" firstAttribute="top" secondItem="440" secondAttribute="bottom" constant="3" id="71b-yF-M2B"/>
+                                        <constraint firstItem="9jw-Fr-d1M" firstAttribute="bottom" secondItem="486" secondAttribute="bottom" id="77b-m1-E2f"/>
                                         <constraint firstItem="Ken-fu-rsj" firstAttribute="leading" secondItem="441" secondAttribute="trailing" constant="8" id="8CH-DT-qPt"/>
                                         <constraint firstItem="440" firstAttribute="leading" secondItem="462" secondAttribute="leading" id="8gB-xE-tw2"/>
                                         <constraint firstItem="481" firstAttribute="height" secondItem="504" secondAttribute="height" id="8qb-HX-DzD"/>
@@ -519,6 +492,7 @@
                                         <constraint firstItem="463" firstAttribute="top" secondItem="464" secondAttribute="bottom" constant="3" id="AWB-mE-B6y"/>
                                         <constraint firstItem="Vvu-VZ-aui" firstAttribute="top" secondItem="TJe-7E-Uca" secondAttribute="bottom" constant="3" id="BBb-mj-Qf6"/>
                                         <constraint firstItem="D3W-el-Mmk" firstAttribute="top" secondItem="32r-kK-YIK" secondAttribute="bottom" constant="3" id="BQW-oc-WnH"/>
+                                        <constraint firstItem="9jw-Fr-d1M" firstAttribute="top" secondItem="463" secondAttribute="bottom" constant="8" id="BUu-AV-Vnk"/>
                                         <constraint firstItem="482" firstAttribute="leading" secondItem="481" secondAttribute="leading" id="BbW-Tt-gK9"/>
                                         <constraint firstItem="498" firstAttribute="trailing" secondItem="477" secondAttribute="trailing" id="Bgv-0D-P34"/>
                                         <constraint firstItem="TJe-7E-Uca" firstAttribute="top" secondItem="439" secondAttribute="bottom" constant="8" id="CtI-Qn-zYS"/>
@@ -526,9 +500,7 @@
                                         <constraint firstItem="476" firstAttribute="width" secondItem="461" secondAttribute="width" id="DI2-7l-jjc"/>
                                         <constraint firstItem="440" firstAttribute="leading" secondItem="439" secondAttribute="leading" id="DKW-vC-4a2"/>
                                         <constraint firstItem="KiB-XA-gnh" firstAttribute="leading" secondItem="cXh-Kb-cBh" secondAttribute="leading" id="E5O-E7-sp2"/>
-                                        <constraint firstItem="9Mp-s6-NGc" firstAttribute="trailing" secondItem="463" secondAttribute="trailing" id="Ecd-2i-8vs"/>
                                         <constraint firstItem="442" firstAttribute="leading" secondItem="441" secondAttribute="leading" id="F2a-9d-qnp"/>
-                                        <constraint firstItem="9Mp-s6-NGc" firstAttribute="width" secondItem="463" secondAttribute="width" id="Fb3-6O-ryV"/>
                                         <constraint firstItem="429" firstAttribute="leading" secondItem="427" secondAttribute="leading" id="FdL-JK-SXm"/>
                                         <constraint firstItem="tWC-Zr-8E5" firstAttribute="top" secondItem="8ES-YK-OvS" secondAttribute="bottom" constant="3" id="G4x-Vv-Wua"/>
                                         <constraint firstItem="504" firstAttribute="leading" secondItem="481" secondAttribute="trailing" constant="8" id="GNl-FV-0Tb"/>
@@ -537,12 +509,13 @@
                                         <constraint firstItem="427" firstAttribute="top" secondItem="429" secondAttribute="bottom" constant="3" id="KDd-g3-yXa"/>
                                         <constraint firstItem="509" firstAttribute="leading" secondItem="510" secondAttribute="leading" id="KTb-xp-O1t"/>
                                         <constraint firstItem="427" firstAttribute="leading" secondItem="422" secondAttribute="leading" constant="37" id="KWu-NE-lY0"/>
+                                        <constraint firstItem="510" firstAttribute="top" secondItem="9Bt-th-j2x" secondAttribute="top" constant="8" id="Ka9-to-h99"/>
+                                        <constraint firstItem="9Bt-th-j2x" firstAttribute="top" secondItem="412" secondAttribute="bottom" constant="8" symbolic="YES" id="Lqx-sg-dsv"/>
                                         <constraint firstItem="464" firstAttribute="centerX" secondItem="505" secondAttribute="centerX" id="Lur-bs-21m"/>
                                         <constraint firstItem="504" firstAttribute="centerX" secondItem="505" secondAttribute="centerX" id="MoE-dd-II9"/>
                                         <constraint firstItem="tWC-Zr-8E5" firstAttribute="leading" secondItem="Vvu-VZ-aui" secondAttribute="leading" id="NXD-0l-eQb"/>
                                         <constraint firstItem="427" firstAttribute="top" secondItem="422" secondAttribute="top" constant="21" id="NdX-Pb-8eb"/>
                                         <constraint firstItem="439" firstAttribute="trailing" secondItem="461" secondAttribute="trailing" id="OQu-Ea-1MP"/>
-                                        <constraint firstItem="510" firstAttribute="top" secondItem="412" secondAttribute="bottom" constant="8" symbolic="YES" id="Ojm-4d-pDA"/>
                                         <constraint firstItem="505" firstAttribute="leading" secondItem="482" secondAttribute="trailing" constant="10" id="Osi-SE-fRa"/>
                                         <constraint firstItem="D3W-el-Mmk" firstAttribute="leading" secondItem="Cro-Nn-BBH" secondAttribute="trailing" constant="8" id="Ot2-CH-D1Q"/>
                                         <constraint firstItem="431" firstAttribute="leading" secondItem="422" secondAttribute="leading" constant="37" id="P7e-23-CBM"/>
@@ -563,12 +536,12 @@
                                         <constraint firstItem="440" firstAttribute="baseline" secondItem="442" secondAttribute="baseline" id="ZR6-uA-mI7"/>
                                         <constraint firstItem="Ken-fu-rsj" firstAttribute="top" secondItem="cIj-bq-nFH" secondAttribute="bottom" constant="3" id="ZUi-DU-CXL"/>
                                         <constraint firstAttribute="trailing" secondItem="427" secondAttribute="trailing" constant="37" id="ZUo-m6-vIM"/>
+                                        <constraint firstItem="9jw-Fr-d1M" firstAttribute="trailing" secondItem="463" secondAttribute="trailing" id="aJT-G3-enV"/>
                                         <constraint firstItem="432" firstAttribute="top" secondItem="427" secondAttribute="bottom" constant="8" id="b5k-Mg-gUI"/>
                                         <constraint firstItem="431" firstAttribute="top" secondItem="432" secondAttribute="bottom" constant="3" id="bNy-JF-PIC"/>
                                         <constraint firstItem="cXh-Kb-cBh" firstAttribute="baseline" secondItem="8ES-YK-OvS" secondAttribute="baseline" id="bXf-GW-PkM"/>
                                         <constraint firstItem="8ES-YK-OvS" firstAttribute="leading" secondItem="tWC-Zr-8E5" secondAttribute="leading" id="bg2-9d-Pz1"/>
                                         <constraint firstItem="504" firstAttribute="top" secondItem="505" secondAttribute="bottom" constant="3" id="cNI-ci-of3"/>
-                                        <constraint firstItem="509" firstAttribute="trailing" secondItem="427" secondAttribute="trailing" id="cSo-Kc-YyT"/>
                                         <constraint firstItem="481" firstAttribute="leading" secondItem="422" secondAttribute="leading" constant="37" id="cT2-6b-0aP"/>
                                         <constraint firstItem="Cro-Nn-BBH" firstAttribute="centerY" secondItem="Vvu-VZ-aui" secondAttribute="centerY" id="dwC-lc-i68"/>
                                         <constraint firstItem="504" firstAttribute="trailing" secondItem="412" secondAttribute="trailing" id="e5v-Xe-fX8"/>
@@ -579,11 +552,12 @@
                                         <constraint firstItem="477" firstAttribute="top" secondItem="461" secondAttribute="bottom" constant="8" symbolic="YES" id="g6g-Ns-JmP"/>
                                         <constraint firstItem="487" firstAttribute="trailing" secondItem="498" secondAttribute="trailing" id="gE5-M8-JCo"/>
                                         <constraint firstItem="D3W-el-Mmk" firstAttribute="trailing" secondItem="Ken-fu-rsj" secondAttribute="trailing" id="gJK-xx-0fy"/>
+                                        <constraint firstAttribute="trailing" secondItem="mC1-pf-fRU" secondAttribute="trailing" constant="37" id="gcK-U6-TdJ"/>
+                                        <constraint firstItem="9jw-Fr-d1M" firstAttribute="width" secondItem="463" secondAttribute="width" id="gsO-On-Rim"/>
                                         <constraint firstAttribute="trailing" secondItem="510" secondAttribute="trailing" constant="34" id="hlm-Bz-jEa"/>
                                         <constraint firstItem="441" firstAttribute="leading" secondItem="463" secondAttribute="leading" id="ikh-TH-cNg"/>
-                                        <constraint firstItem="9Mp-s6-NGc" firstAttribute="width" secondItem="KiB-XA-gnh" secondAttribute="width" id="jay-oH-mXL"/>
+                                        <constraint firstAttribute="trailing" secondItem="9Bt-th-j2x" secondAttribute="trailing" id="kSr-6L-HbT"/>
                                         <constraint firstItem="464" firstAttribute="baseline" secondItem="462" secondAttribute="baseline" id="kmE-pS-llX"/>
-                                        <constraint firstItem="9Mp-s6-NGc" firstAttribute="top" secondItem="463" secondAttribute="bottom" constant="8" id="l3G-gN-0Wb"/>
                                         <constraint firstItem="498" firstAttribute="top" secondItem="476" secondAttribute="bottom" constant="8" id="lwM-dZ-Ak0"/>
                                         <constraint firstItem="441" firstAttribute="centerY" secondItem="439" secondAttribute="centerY" id="m5s-7J-bmT"/>
                                         <constraint firstItem="497" firstAttribute="height" secondItem="476" secondAttribute="height" id="mNu-5I-ZC9"/>
@@ -591,12 +565,14 @@
                                         <constraint firstItem="462" firstAttribute="top" secondItem="tWC-Zr-8E5" secondAttribute="bottom" constant="8" id="nzo-th-CDt"/>
                                         <constraint firstItem="431" firstAttribute="width" secondItem="439" secondAttribute="width" id="oAX-uN-IMI"/>
                                         <constraint firstItem="D3W-el-Mmk" firstAttribute="leading" secondItem="32r-kK-YIK" secondAttribute="leading" id="oPJ-zE-OzO"/>
+                                        <constraint firstItem="mC1-pf-fRU" firstAttribute="centerY" secondItem="509" secondAttribute="centerY" id="odQ-Gk-fU2"/>
                                         <constraint firstItem="476" firstAttribute="top" secondItem="477" secondAttribute="bottom" constant="3" id="p8W-42-Rnu"/>
                                         <constraint firstItem="487" firstAttribute="top" secondItem="497" secondAttribute="bottom" constant="8" id="pMt-4R-J9m"/>
                                         <constraint firstItem="462" firstAttribute="leading" secondItem="461" secondAttribute="leading" id="pU7-gV-qZe"/>
                                         <constraint firstItem="497" firstAttribute="top" secondItem="498" secondAttribute="bottom" constant="3" id="qDT-by-zwV"/>
                                         <constraint firstItem="476" firstAttribute="leading" secondItem="461" secondAttribute="leading" id="qYu-fX-PHI"/>
                                         <constraint firstItem="498" firstAttribute="leading" secondItem="497" secondAttribute="leading" id="sKC-iV-Dvu"/>
+                                        <constraint firstItem="9Bt-th-j2x" firstAttribute="leading" secondItem="422" secondAttribute="leading" id="uZX-j8-YLu"/>
                                         <constraint firstItem="KiB-XA-gnh" firstAttribute="top" secondItem="cXh-Kb-cBh" secondAttribute="bottom" constant="3" id="uqL-Dk-zGX"/>
                                         <constraint firstItem="481" firstAttribute="top" secondItem="482" secondAttribute="bottom" constant="3" id="uut-vy-GZC"/>
                                         <constraint firstItem="tWC-Zr-8E5" firstAttribute="width" secondItem="Vvu-VZ-aui" secondAttribute="width" id="vo9-Tg-XuQ"/>
@@ -642,7 +618,7 @@
                                                                 </textFieldCell>
                                                                 <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
                                                             </tableColumn>
-                                                            <tableColumn identifier="1" editable="NO" width="262" minWidth="10" maxWidth="3.4028234663852886e+38" id="644">
+                                                            <tableColumn identifier="1" editable="NO" width="233" minWidth="10" maxWidth="3.4028234663852886e+38" id="644">
                                                                 <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left">
                                                                     <color key="textColor" name="headerTextColor" catalog="System" colorSpace="catalog"/>
                                                                     <color key="backgroundColor" name="headerColor" catalog="System" colorSpace="catalog"/>
@@ -1153,4 +1129,8 @@
             <point key="canvasLocation" x="139" y="148"/>
         </window>
     </objects>
+    <resources>
+        <image name="arrow.right.doc.on.clipboard" catalog="system" width="14" height="15"/>
+        <image name="noart" width="128" height="128"/>
+    </resources>
 </document>

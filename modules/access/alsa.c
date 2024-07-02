@@ -28,6 +28,7 @@
 #include <alsa/asoundlib.h>
 
 #include <vlc_common.h>
+#include <vlc_threads.h>
 #include <vlc_demux.h>
 #include <vlc_aout.h>
 #include <vlc_plugin.h>
@@ -258,7 +259,7 @@ static int Control (demux_t *demux, int query, va_list ap)
         case DEMUX_CAN_CONTROL_RATE:
         case DEMUX_CAN_SEEK:
             *va_arg (ap, bool *) = false;
-            break;;
+            break;
 
         default:
             return VLC_EGENERIC;

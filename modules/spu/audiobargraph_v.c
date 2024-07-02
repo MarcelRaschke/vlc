@@ -34,6 +34,7 @@
 #include "common.h"
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_subpicture.h>
@@ -238,7 +239,7 @@ static void Draw(BarGraph_t *b)
 
     if (b->p_pic)
         picture_Release(b->p_pic);
-    b->p_pic = picture_New(VLC_FOURCC('Y','U','V','A'), w, h, 1, 1);
+    b->p_pic = picture_New(VLC_CODEC_YUVA, w, h, 1, 1);
     if (!b->p_pic)
         return;
     picture_t *p_pic = b->p_pic;
@@ -362,7 +363,7 @@ static subpicture_t *FilterSub(filter_t *p_filter, vlc_tick_t date)
         goto exit;
 
     p_spu->i_start = date;
-    p_spu->i_stop = 0;
+    p_spu->i_stop = VLC_TICK_INVALID;
     p_spu->b_ephemer = true;
 
     /* Send an empty subpicture to clear the display when needed */
@@ -389,16 +390,16 @@ static subpicture_t *FilterSub(filter_t *p_filter, vlc_tick_t date)
     /*  where to locate the bar graph: */
     if (p_sys->i_pos < 0) {   /*  set to an absolute xy */
         p_region->i_align = SUBPICTURE_ALIGN_LEFT | SUBPICTURE_ALIGN_TOP;
-        p_spu->b_absolute = true;
+        p_region->b_absolute = true;
     } else {   /* set to one of the 9 relative locations */
         p_region->i_align = p_sys->i_pos;
-        p_spu->b_absolute = false;
+        p_region->b_absolute = false;
     }
 
     p_region->i_x = p_sys->i_pos_x > 0 ? p_sys->i_pos_x : 0;
     p_region->i_y = p_sys->i_pos_y > 0 ? p_sys->i_pos_y : 0;
 
-    p_spu->p_region = p_region;
+    vlc_spu_regions_push(&p_spu->regions, p_region);
 
     p_spu->i_alpha = p_BarGraph->i_alpha ;
 

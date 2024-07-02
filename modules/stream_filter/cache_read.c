@@ -468,6 +468,7 @@ static int AStreamControl(stream_t *s, int i_query, va_list args)
         case STREAM_SET_PRIVATE_ID_STATE:
         case STREAM_SET_PRIVATE_ID_CA:
         case STREAM_GET_PRIVATE_ID_STATE:
+        case STREAM_GET_MTIME:
             return vlc_stream_vaControl(s->s, i_query, args);
 
         case STREAM_SET_TITLE:
@@ -491,7 +492,7 @@ static int Open(vlc_object_t *obj)
 {
     stream_t *s = (stream_t *)obj;
 
-    if (s->s->pf_read == NULL)
+    if (s->s->pf_read == NULL && s->s->pf_block == NULL)
         return VLC_EGENERIC;
 
     stream_sys_t *sys = malloc(sizeof (*sys));

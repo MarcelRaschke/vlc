@@ -24,18 +24,16 @@
 #ifndef _LIBVLC_INTERNAL_H
 #define _LIBVLC_INTERNAL_H 1
 
-#ifdef HAVE_CONFIG_H
-# include "config.h"
-#endif
-
 #include <vlc/libvlc.h>
 #include <vlc/libvlc_dialog.h>
 #include <vlc/libvlc_picture.h>
 #include <vlc/libvlc_media.h>
 #include <vlc/libvlc_events.h>
-#include <vlc_atomic.h>
 
+#include <vlc_atomic.h>
 #include <vlc_common.h>
+#include <vlc_arrays.h>
+#include <vlc_threads.h>
 
 /* Note well: this header is included from LibVLC core.
  * Therefore, static inline functions MUST NOT call LibVLC functions here
@@ -49,10 +47,48 @@ VLC_API int libvlc_InternalInit( libvlc_int_t *, int, const char *ppsz_argv[] );
 VLC_API void libvlc_InternalCleanup( libvlc_int_t * );
 VLC_API void libvlc_InternalDestroy( libvlc_int_t * );
 
-VLC_API int libvlc_InternalAddIntf( libvlc_int_t *, const char * );
-VLC_API void libvlc_InternalPlay( libvlc_int_t * );
+/**
+ * Try to start a user interface for the libvlc instance.
+ *
+ * \param libvlcint the internal instance
+ * \param name interface name, or NULL for default
+ * \return 0 on success, -1 on error.
+ */
+VLC_API int libvlc_InternalAddIntf( libvlc_int_t *libvlcint, const char *name );
+
+/**
+ * Start playing the main playlist
+ *
+ * The main playlist can only be populated via an interface created by the
+ * libvlc_InternalAddIntf() function. The control and media flow will only be
+ * controlled by the interface previously added.
+ *
+ * One of these 2 functions (libvlc_InternalAddIntf() or libvlc_InternalPlay())
+ * will trigger the creation of an internal playlist and player.
+ *
+ * \param libvlcint the internal instance
+ */
+VLC_API void libvlc_InternalPlay( libvlc_int_t *libvlcint );
 VLC_API void libvlc_InternalWait( libvlc_int_t * );
-VLC_API void libvlc_SetExitHandler( libvlc_int_t *, void (*) (void *), void * );
+
+/**
+ * Registers a callback for the LibVLC exit event. This is mostly useful if
+ * the VLC playlist and/or at least one interface are started with
+ * libvlc_InternalPlay() or libvlc_InternalAddIntf () respectively.
+ * Typically, this function will wake up your application main loop (from
+ * another thread).
+ *
+ * \note This function should be called before the playlist or interface are
+ * started. Otherwise, there is a small race condition: the exit event could
+ * be raised before the handler is registered.
+ *
+ * \param libvlcint the internal instance
+ * \param cb callback to invoke when LibVLC wants to exit,
+ *           or NULL to disable the exit handler (as by default)
+ * \param opaque data pointer for the callback
+ */
+VLC_API void libvlc_SetExitHandler( libvlc_int_t *libvlcint, void (*cb) (void *),
+                                    void *opaque );
 
 /***************************************************************************
  * Opaque structures for libvlc API

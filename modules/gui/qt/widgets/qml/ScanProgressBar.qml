@@ -16,9 +16,9 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
 
 import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
@@ -28,15 +28,13 @@ import "qrc:///style/"
 T.ProgressBar {
     id: control
 
-    implicitWidth: Math.max(background ? background.implicitWidth : 0,
-                            contentItem.implicitWidth + leftPadding + rightPadding)
-    implicitHeight: Math.max(background ? background.implicitHeight : 0,
-                             contentItem.implicitHeight + topPadding + bottomPadding)
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            implicitContentWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             implicitContentHeight + topPadding + bottomPadding)
 
-    rightPadding: VLCStyle.margin_large
-    leftPadding: VLCStyle.margin_large
-    bottomPadding: VLCStyle.margin_small
-    topPadding: VLCStyle.margin_small
+    horizontalPadding: VLCStyle.margin_large
+    verticalPadding: VLCStyle.margin_small
 
     from: 0
     to: 100
@@ -140,9 +138,9 @@ T.ProgressBar {
             anchors.left: parent.left
             anchors.right: parent.right
 
-            text: (MediaLib.discoveryPending) ? I18n.qtr("Scanning %1")
+            text: (MediaLib.discoveryPending) ? qsTr("Scanning %1")
                                                 .arg(MediaLib.discoveryEntryPoint)
-                                              : I18n.qtr("Indexing Medias (%1%)")
+                                              : qsTr("Indexing Medias (%1%)")
                                                 .arg(MediaLib.parsingProgress)
 
             elide: Text.ElideMiddle

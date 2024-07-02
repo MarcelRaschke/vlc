@@ -2,19 +2,22 @@
 # Qt-based interface module
 #
 
-qt5 = import('qt5')
+qt6 = import('qt6')
 
 qt_include_dir = include_directories('.')
 
 qt_extra_deps = []
-qt_extra_flags = []
+qt_extra_flags = ['-DQT_STRICT_ITERATORS']
 qt_cppargs = []
+qt_link_args = []
 
-qt5_dep = dependency('qt5',
-    version: '>=5.11.0',
+qt6_dep = dependency('qt6',
+    # Note that Qt < 6.2.5 does not provide pc files!
+    version: '>=6.2',
     modules: [
-        'Core', 'Gui', 'Widgets', 'Svg', 'Qml',
-        'Quick', 'QuickWidgets', 'QuickControls2',
+        'Core', 'Gui', 'Widgets', 'Svg', 'Qml', 'QmlModels',
+        'QuickLayouts', 'QuickTemplates2', 'QmlWorkerScript',
+        'Quick', 'QuickControls2', 'ShaderTools'
         ],
     private_headers: true,
     required: get_option('qt'))
@@ -67,12 +70,15 @@ moc_headers = files(
     'maininterface/compositor.hpp',
     'maininterface/compositor_common.hpp',
     'maininterface/compositor_dummy.hpp',
+    'maininterface/compositor_platform.hpp',
     'maininterface/interface_window_handler.hpp',
     'maininterface/mainctx.hpp',
+    'maininterface/mainctx_submodels.hpp',
     'maininterface/mainui.hpp',
     'maininterface/videosurface.hpp',
     'maininterface/video_window_handler.hpp',
     'medialibrary/medialib.hpp',
+    'medialibrary/mlmediastore.hpp',
     'medialibrary/mlalbum.hpp',
     'medialibrary/mlalbummodel.hpp',
     'medialibrary/mlalbumtrack.hpp',
@@ -83,9 +89,9 @@ moc_headers = files(
     'medialibrary/mlbasemodel.hpp',
     'medialibrary/mlfoldersmodel.hpp',
     'medialibrary/mlgenremodel.hpp',
-    'medialibrary/mllistcache.hpp',
     'medialibrary/mlthreadpool.hpp',
     'medialibrary/mlqmltypes.hpp',
+    'medialibrary/mlmedia.hpp',
     'medialibrary/mlrecentsmodel.hpp',
     'medialibrary/mlrecentsvideomodel.hpp',
     'medialibrary/mlurlmodel.hpp',
@@ -99,6 +105,7 @@ moc_headers = files(
     'menus/custom_menus.hpp',
     'menus/qml_menu_wrapper.hpp',
     'menus/menus.hpp',
+    'network/devicesourceprovider.hpp',
     'network/networkdevicemodel.hpp',
     'network/networksourcesmodel.hpp',
     'network/networkmediamodel.hpp',
@@ -107,39 +114,38 @@ moc_headers = files(
     'style/systempalette.hpp',
     'style/colorcontext.hpp',
     'player/input_models.hpp',
+    'player/delay_estimator.hpp',
     'player/player_controller.hpp',
     'player/player_controlbar_model.hpp',
     'player/control_list_model.hpp',
     'player/control_list_filter.hpp',
-    'playlist/playlist_common.hpp',
     'playlist/playlist_controller.hpp',
     'playlist/playlist_item.hpp',
     'playlist/playlist_model.hpp',
     'util/asynctask.hpp',
     'util/audio_device_model.hpp',
-    'util/cliplistmodel.hpp',
+    'util/workerthreadset.hpp',
+    'util/base_model.hpp',
     'util/color_scheme_model.hpp',
     'util/color_svg_image_provider.hpp',
+    'util/vlcaccess_image_provider.hpp',
     'util/csdbuttonmodel.hpp',
     'util/imageluminanceextractor.hpp',
-    'util/i18n.hpp',
     'util/keyhelper.hpp',
+    'util/listcache.hpp',
+    'util/locallistcacheloader.hpp',
+    'util/locallistbasemodel.hpp',
     'util/navigation_history.hpp',
     'util/item_key_event_filter.hpp',
-    'util/mouse_event_filter.hpp',
     'util/effects_image_provider.hpp',
     'util/flickable_scroll_handler.hpp',
-    'util/hover_handler_rev11.hpp',
-    'util/qvlcapp.hpp',
     'util/renderer_manager.hpp',
-    'util/selectable_list_model.hpp',
-    'util/sortfilterproxymodel.hpp',
     'util/validators.hpp',
     'util/varchoicemodel.hpp',
     'util/variables.hpp',
     'util/vlctick.hpp',
-    'util/qmlinputitem.hpp',
-    'util/qsgroundedrectangularimagenode.hpp',
+    'util/dismiss_popup_event_filter.hpp',
+    'util/list_selection_model.hpp',
     'widgets/native/animators.hpp',
     'widgets/native/csdthemeimage.hpp',
     'widgets/native/customwidgets.hpp',
@@ -147,6 +153,7 @@ moc_headers = files(
     'widgets/native/navigation_attached.hpp',
     'widgets/native/mlfolderseditor.hpp',
     'widgets/native/roundimage.hpp',
+    'widgets/native/roundimage_p.hpp',
     'widgets/native/searchlineedit.hpp',
     'widgets/native/viewblockingrectangle.hpp',
 )
@@ -160,12 +167,12 @@ if host_system == 'windows'
         moc_headers += files(
             'maininterface/compositor_dcomp.hpp',
             'maininterface/compositor_dcomp_acrylicsurface.hpp',
-            'maininterface/compositor_dcomp_uisurface.hpp',
         )
     endif
 endif
 
-if (xcb_dep.found() and
+if (x11_dep.found() and
+    xcb_dep.found() and
     xcb_damage_dep.found() and
     xcb_xfixes_dep.found())
     moc_headers += files(
@@ -279,18 +286,24 @@ some_sources = files(
     'maininterface/compositor_accessibility.cpp',
     'maininterface/compositor_dummy.hpp',
     'maininterface/compositor_dummy.cpp',
+    'maininterface/compositor_platform.hpp',
+    'maininterface/compositor_platform.cpp',
     'maininterface/interface_window_handler.cpp',
     'maininterface/interface_window_handler.hpp',
     'maininterface/mainctx.cpp',
     'maininterface/mainctx.hpp',
+    'maininterface/mainctx_submodels.hpp',
     'maininterface/mainui.cpp',
     'maininterface/mainui.hpp',
     'maininterface/videosurface.cpp',
     'maininterface/videosurface.hpp',
     'maininterface/video_window_handler.cpp',
     'maininterface/video_window_handler.hpp',
+    'maininterface/windoweffects_module.hpp',
     'medialibrary/medialib.cpp',
     'medialibrary/medialib.hpp',
+    'medialibrary/mlmediastore.cpp',
+    'medialibrary/mlmediastore.hpp',
     'medialibrary/mlalbum.cpp',
     'medialibrary/mlalbum.hpp',
     'medialibrary/mlalbummodel.cpp',
@@ -320,11 +333,10 @@ some_sources = files(
     'medialibrary/mlgroup.hpp',
     'medialibrary/mlhelper.cpp',
     'medialibrary/mlhelper.hpp',
-    'medialibrary/mllistcache.cpp',
-    'medialibrary/mllistcache.hpp',
     'medialibrary/mlthreadpool.cpp',
     'medialibrary/mlthreadpool.hpp',
     'medialibrary/mlqmltypes.hpp',
+    'medialibrary/mlmedia.hpp',
     'medialibrary/mlqueryparams.cpp',
     'medialibrary/mlqueryparams.hpp',
     'medialibrary/mlrecentsmodel.cpp',
@@ -361,6 +373,8 @@ some_sources = files(
     'menus/menus.hpp',
     'network/mediatreelistener.cpp',
     'network/mediatreelistener.hpp',
+    'network/devicesourceprovider.cpp',
+    'network/devicesourceprovider.hpp',
     'network/networkdevicemodel.cpp',
     'network/networkdevicemodel.hpp',
     'network/networksourcesmodel.cpp',
@@ -379,6 +393,7 @@ some_sources = files(
     'style/defaultthemeproviders.hpp',
     'style/systempalettethemeprovider.cpp',
     'player/input_models.cpp',
+    'player/delay_estimator.cpp',
     'player/input_models.hpp',
     'player/player_controller.cpp',
     'player/player_controller.hpp',
@@ -390,7 +405,6 @@ some_sources = files(
     'player/control_list_filter.cpp',
     'player/control_list_filter.hpp',
     'playlist/media.hpp',
-    'playlist/playlist_common.cpp',
     'playlist/playlist_common.hpp',
     'playlist/playlist_controller.cpp',
     'playlist/playlist_controller.hpp',
@@ -403,12 +417,17 @@ some_sources = files(
     'util/asynctask.hpp',
     'util/audio_device_model.cpp',
     'util/audio_device_model.hpp',
-    'util/cliplistmodel.cpp',
-    'util/cliplistmodel.hpp',
+    'util/workerthreadset.cpp',
+    'util/workerthreadset.hpp',
+    'util/base_model.cpp',
+    'util/base_model.hpp',
+    'util/base_model_p.hpp',
     'util/color_scheme_model.cpp',
     'util/color_scheme_model.hpp',
     'util/color_svg_image_provider.cpp',
     'util/color_svg_image_provider.hpp',
+    'util/vlcaccess_image_provider.cpp',
+    'util/vlcaccess_image_provider.hpp',
     'util/covergenerator.cpp',
     'util/covergenerator.hpp',
     'util/csdbuttonmodel.cpp',
@@ -417,32 +436,26 @@ some_sources = files(
     'util/imageluminanceextractor.hpp',
     'util/imagehelper.cpp',
     'util/imagehelper.hpp',
-    'util/i18n.cpp',
-    'util/i18n.hpp',
     'util/keyhelper.cpp',
     'util/keyhelper.hpp',
+    'util/listcache.hpp',
+    'util/listcache.hxx',
     'util/listcacheloader.hpp',
+    'util/locallistcacheloader.hpp',
     'util/navigation_history.cpp',
     'util/navigation_history.hpp',
     'util/item_key_event_filter.cpp',
     'util/item_key_event_filter.hpp',
     'util/flickable_scroll_handler.cpp',
     'util/flickable_scroll_handler.hpp',
-    'util/hover_handler_rev11.cpp',
-    'util/hover_handler_rev11.hpp',
     'util/qt_dirs.cpp',
     'util/qt_dirs.hpp',
-    'util/qvlcapp.hpp',
     'util/proxycolumnmodel.hpp',
     'util/registry.cpp',
     'util/registry.hpp',
     'util/renderer_manager.cpp',
     'util/renderer_manager.hpp',
-    'util/selectable_list_model.cpp',
-    'util/selectable_list_model.hpp',
     'util/singleton.hpp',
-    'util/sortfilterproxymodel.cpp',
-    'util/sortfilterproxymodel.hpp',
     'util/soutchain.cpp',
     'util/soutchain.hpp',
     'util/validators.cpp',
@@ -454,13 +467,16 @@ some_sources = files(
     'util/variables.hpp',
     'util/vlctick.cpp',
     'util/vlctick.hpp',
-    'util/qmlinputitem.hpp',
-    'util/mouse_event_filter.cpp',
-    'util/mouse_event_filter.hpp',
+    'util/shared_input_item.hpp',
+    'util/fast_gaussian_blur_template.h',
     'util/effects_image_provider.cpp',
     'util/effects_image_provider.hpp',
     'util/qsgroundedrectangularimagenode.cpp',
     'util/qsgroundedrectangularimagenode.hpp',
+    'util/dismiss_popup_event_filter.cpp',
+    'util/dismiss_popup_event_filter.hpp',
+    'util/list_selection_model.cpp',
+    'util/list_selection_model.hpp',
     'widgets/native/animators.cpp',
     'widgets/native/animators.hpp',
     'widgets/native/customwidgets.cpp',
@@ -496,12 +512,12 @@ if host_system == 'windows'
         some_sources += files(
             'maininterface/compositor_dcomp.cpp',
             'maininterface/compositor_dcomp_acrylicsurface.cpp',
-            'maininterface/compositor_dcomp_uisurface.cpp',
         )
     endif
 endif
 
-if (xcb_dep.found() and
+if (x11_dep.found() and
+    xcb_dep.found() and
     xcb_damage_dep.found() and
     xcb_xfixes_dep.found())
     some_sources += files(
@@ -538,88 +554,44 @@ ui_sources = files(
     'dialogs/vlm/vlm.ui',
 )
 
-qrc_files = files('vlc.qrc')
+qrc_files = files('assets.qrc', 'qml.qrc')
 if host_system == 'windows'
   qrc_files += files('windows.qrc')
 endif
 
-if qt5_dep.found()
-    qt5pre_files = qt5.preprocess(ui_files: ui_sources,
-        moc_headers: moc_headers,
+qml_tests = {
+    'tst_FSM': files('tests/tst_FSM.qml'),
+}
+
+if qt6_dep.found()
+    qt6pre_qrc = qt6.preprocess(
         qresources: qrc_files,
         include_directories: qt_include_dir,
-        dependencies: qt5_dep)
+        dependencies: qt6_dep)
+
+    qt6pre_files = qt6.preprocess(ui_files: ui_sources,
+        moc_headers: moc_headers,
+        include_directories: qt_include_dir,
+        dependencies: qt6_dep)
+
+    qt_bin_directory = qt6_dep.get_variable(pkgconfig: 'bindir')
 
     qt_sources = files('qt.cpp')
 
+    subdir('shaders')
+
     # Qt plugins
-    qt_static_check = '''
-    #include <qconfig.h>
-    #ifndef QT_STATIC
-    #error Qt using shared libraries
-    #endif
-    '''
-    if cpp.compiles(qt_static_check, dependencies: qt5_dep, name: 'Qt5 compiled with static libraries')
-        qt_extra_deps += [
-            dependency('qtgraphicaleffectsplugin',  required: false),
-            dependency('qtquick2plugin ',           required: false),
-            dependency('qtquickcontrols2plugin',    required: false),
-            dependency('qtquicktemplates2plugin',   required: false),
-            dependency('qquicklayoutsplugin',       required: false),
-            dependency('windowplugin',              required: false),
-            dependency('qmlshapesplugin',           required: false),
-            dependency('qmlplugin',                 required: false),
-            dependency('modelsplugin',              required: false),
-            dependency('qsvg',                      required: false),
-            dependency('qsvgicon',                  required: false),
-            dependency('qtgraphicaleffectsprivate', required: false),
-            dependency('qjpeg',                     required: false),
-        ]
-
-        qt_extra_deps += [
-            dependency('qxcb-glx-integration',      required: false),
-            dependency('qxcb',                      required: false),
-        ]
-
-        qt_extra_deps += [
-            dependency('qwayland-generic',          required: false),
-            dependency('qwayland-egl',              required: false),
-            dependency('xdg-shell',                 required: false),
-        ]
-
-        if host_system == 'windows'
-            qt_extra_deps += [
-                dependency('qwindows',              required: false),
-                dependency('qwindowsvistastyle',    required: false),
-            ]
-        endif
-
-        if host_system == 'darwin'
-            qt_extra_deps += [
-                dependency('qcocoa',                required: false),
-            ]
-        endif
-    endif
-
     if host_system == 'windows'
         qt_extra_deps += [
+            cc.find_library('dwmapi'),
             cc.find_library('comctl32'),
-            cc.find_library('d3d11'),
         ]
     endif
 
-    if x11_dep.found()
-        qt5_x11_dep = dependency('qt5',
-            modules: ['X11Extras'],
-            required: get_option('qt'))
-
-        qt_extra_flags += '-DQT5_HAS_X11'
-        qt_extra_deps += [x11_dep, qt5_x11_dep]
-    endif
-
-    if xcb_dep.found()
+    if x11_dep.found() and xcb_dep.found()
         qt_extra_deps += xcb_dep
-        qt_extra_flags += '-DQT5_HAS_XCB'
+        qt_extra_deps += x11_dep
+        qt_extra_flags += '-DQT_HAS_XCB'
         if xcb_damage_dep.found() and xcb_xfixes_dep.found()
             qt_extra_deps += [
                 xcb_render_dep,
@@ -627,16 +599,8 @@ if qt5_dep.found()
                 xcb_damage_dep,
                 xcb_xfixes_dep
             ]
-            qt_extra_flags += '-DQT5_HAS_X11_COMPOSITOR'
+            qt_extra_flags += '-DQT_HAS_X11_COMPOSITOR'
         endif
-    endif
-
-    # Qt5 wayland
-    wayland_qt5_dep = dependency('qt5', modules: ['WaylandClient'], required: false)
-
-    if wayland_qt5_dep.found()
-        qt_extra_deps += [wayland_qt5_dep]
-        qt_extra_flags += '-DQT5_HAS_WAYLAND'
     endif
 
     if get_option('qt_qml_debug')
@@ -644,14 +608,21 @@ if qt5_dep.found()
     endif
 
     #check private headers
-    if cpp.has_header('private/qquickitem_p.h', dependencies: qt5_dep) \
-      and cpp.has_header('private/qquickwindow_p.h', dependencies: qt5_dep)
-        qt_extra_flags += '-DQT5_DECLARATIVE_PRIVATE'
+    if cpp.has_header('private/qquickitem_p.h', dependencies: qt6_dep) \
+      and cpp.has_header('private/qquickwindow_p.h', dependencies: qt6_dep)
+        qt_extra_flags += '-DQT_DECLARATIVE_PRIVATE'
+    endif
+
+    if cpp.has_header('qpa/qplatformnativeinterface.h', dependencies: qt6_dep)
+        qt_extra_flags += '-DQT_GUI_PRIVATE'
+    endif
+
+    if cpp.has_header('private/qobject_p.h', dependencies: qt6_dep)
+        qt_extra_flags += '-DQT_CORE_PRIVATE'
     endif
 
     if host_system == 'windows'
         qt_cppargs += libcom_cppflags
-        qt_extra_flags += '-DQPNI_HEADER=<' + qt5_dep.version() + '/QtGui/qpa/qplatformnativeinterface.h>'
     endif
 
     if not (host_system in ['windows', 'darwin'])
@@ -678,7 +649,26 @@ if qt5_dep.found()
                 'dependencies' : [gtk_dep]
             }
 
-            qt_extra_flags += '-DQT5_HAS_GTK'
+            qt_extra_flags += '-DQT_HAS_GTK'
+        endif
+    endif
+
+    if host_system == 'windows'
+        some_sources += files('maininterface/win32windoweffects_module.cpp',
+                              'maininterface/win32windoweffects_module.hpp')
+    else
+        kf6WindowSystem_dep = dependency('KF6WindowSystem',
+                                         version: '>=6.0.0',
+                                         required: false)
+        if (kf6WindowSystem_dep.found())
+            vlc_modules += {
+                'name' : 'qtwindoweffects',
+                'sources' : files(
+                    'maininterface/windoweffects_module.hpp',
+                    'maininterface/kwindowsystem_module.cpp',
+                ),
+                'dependencies' : [kf6WindowSystem_dep, qt6_dep]
+            }
         endif
     endif
 
@@ -686,11 +676,43 @@ if qt5_dep.found()
 
     vlc_modules += {
         'name' : 'qt',
-        'sources' : [qt5pre_files, qt_sources, some_sources],
-        'dependencies' : [qt5_dep, qt_extra_deps],
+        'sources' : [qt6pre_files, qt6pre_qrc, shader_targets, shaders_processed, qt_sources, some_sources],
+        'extra_files' : [shader_files],
+        'dependencies' : [qt_extra_deps, qt6_dep],
         'include_directories' : qt_include_dir,
         'c_args' : qt_extra_flags,
-        'cpp_args' : [qt_extra_flags, qt_cppargs]
+        'cpp_args' : [qt_extra_flags, qt_cppargs],
+        'link_args' : qt_link_args
     }
 
+    test_qt6_dep = dependency('qt6', modules: ['QuickTest'], required: false)
+    if test_qt6_dep.found()
+        qml_test = executable(
+          'qml_test',
+          files('tests/qml_test.cpp'),
+          qt6pre_qrc,
+          build_by_default: false,
+          dependencies: [test_qt6_dep],
+          cpp_args: ['-DQUICK_TEST_SOURCE_DIR="' + meson.current_source_dir() + '/tests"']
+        )
+        foreach test_name, test_file : qml_tests
+              test(test_name, qml_test, args: ['-input', test_file], suite:'qt')
+        endforeach
+    endif
+
+    vlc_tests += {
+        'name': 'base_model_test',
+        'sources': files(
+            'tests/test_base_model.cpp',
+            'util/base_model.cpp',
+            'util/base_model.hpp',
+            'util/base_model_p.hpp'),
+        'moc_headers': files(
+            'util/base_model.hpp',
+            'util/listcache.hpp',
+            'util/locallistcacheloader.hpp'),
+        'suite': ['qt'],
+        'link_with': [libvlccore],
+        'dependencies': [qt6_dep, qt_extra_deps],
+    }
 endif

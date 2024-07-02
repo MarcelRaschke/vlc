@@ -31,6 +31,9 @@
 
 #define VLC_MODULE_LICENSE VLC_LICENSE_GPL_2_PLUS
 #include <vlc_common.h>
+#include <vlc_arrays.h>
+#include <vlc_threads.h>
+#include <vlc_poll.h>
 #include <vlc_plugin.h>
 #include <assert.h>
 
@@ -57,6 +60,10 @@
 #   include <net/if.h>
 #endif
 
+#ifdef HAVE_SEARCH_H
+#   include <search.h>
+#endif
+
 #include "access/rtp/sdp.h"
 
 /************************************************************************
@@ -76,6 +83,23 @@
 /* Link-local SAP address */
 #define SAP_V4_LINK_ADDRESS     "224.0.0.255"
 #define ADD_SESSION 1
+
+typedef struct
+{
+    vlc_thread_t thread;
+
+    /* Socket descriptors */
+    int i_fd;
+    int *pi_fd;
+
+    /* Table of announces */
+    int i_announces;
+    struct sap_announce_t **pp_announces;
+
+    vlc_tick_t i_timeout;
+
+    void *root_cat;
+} services_discovery_sys_t;
 
 static int Decompress( const unsigned char *psz_src, unsigned char **_dst, int i_len )
 {
@@ -125,6 +149,66 @@ static int Decompress( const unsigned char *psz_src, unsigned char **_dst, int i
 #endif
 }
 
+struct category
+{
+    input_item_t *item;
+    services_discovery_t *sd;
+    char name[];
+};
+
+static void DestroyCategory(void *data)
+{
+    struct category *c = data;
+
+    services_discovery_RemoveItem(c->sd, c->item);
+    input_item_Release(c->item);
+    free(c);
+}
+
+static int cmpcat (const void *a, const void *b)
+{
+    const struct category *ca = a, *cb = b;
+    return strcmp(ca->name, cb->name);
+}
+
+static input_item_t *AddCategory (services_discovery_t *sd, const char *name)
+{
+    services_discovery_sys_t *sys = sd->p_sys;
+
+    struct category *c = malloc(sizeof(*c) + strlen(name) + 1);
+    if (unlikely(c == NULL))
+        return NULL;
+    strcpy(c->name, name);
+
+    void **cp = tsearch(c, &sys->root_cat, cmpcat);
+    if (cp == NULL) /* Out-of-memory */
+    {
+        free(c);
+        return NULL;
+    }
+    if (*cp != c)
+    {
+        free(c);
+        c = *cp;
+        assert(c->item != NULL);
+        return c->item;
+    }
+
+    c->item = input_item_NewExt("vlc://nop", c->name,
+                                INPUT_DURATION_INDEFINITE,
+                                ITEM_TYPE_NODE, ITEM_LOCAL);
+
+    if (unlikely(c->item == NULL))
+    {
+        tdelete(c, &sys->root_cat, cmpcat);
+        return NULL;
+    }
+    services_discovery_AddItem(sd, c->item);
+    c->sd = sd;
+
+    return c->item;
+}
+
 typedef struct sap_announce_t
 {
     vlc_tick_t i_last;
@@ -146,19 +230,17 @@ static sap_announce_t *CreateAnnounce(services_discovery_t *p_sd,
     if (p_sdp == NULL)
         return NULL;
 
+    sap_announce_t *p_sap = malloc(sizeof (*p_sap));
+    if( p_sap == NULL )
+        goto error;
+
     char *uri = NULL;
 
     if (asprintf(&uri, "sdp://%s", psz_sdp) == -1)
-    {
-        vlc_sdp_free(p_sdp);
-        return NULL;
-    }
+        goto error;
 
     input_item_t *p_input;
     const char *psz_value;
-    sap_announce_t *p_sap = malloc(sizeof (*p_sap));
-    if( p_sap == NULL )
-        return NULL;
 
     p_sap->i_last = vlc_tick_now();
     p_sap->i_period = 0;
@@ -169,19 +251,13 @@ static sap_announce_t *CreateAnnounce(services_discovery_t *p_sd,
     /* Released in RemoveAnnounce */
     p_input = input_item_NewStream(uri, p_sdp->name,
                                    INPUT_DURATION_INDEFINITE);
+    free(uri);
     if( unlikely(p_input == NULL) )
-    {
-        free( p_sap );
-        return NULL;
-    }
+        goto error;
+
     p_sap->p_item = p_input;
 
-    vlc_meta_t *p_meta = vlc_meta_New();
-    if( likely(p_meta != NULL) )
-    {
-        vlc_meta_Set(p_meta, vlc_meta_Description, p_sdp->info);
-        p_input->p_meta = p_meta;
-    }
+    input_item_SetMeta(p_input, vlc_meta_Description, p_sdp->info);
 
     psz_value = vlc_sdp_attr_value(p_sdp, "tool");
     if( psz_value != NULL )
@@ -191,42 +267,35 @@ static sap_announce_t *CreateAnnounce(services_discovery_t *p_sd,
 
     /* Handle category */
     psz_value = vlc_sdp_attr_value(p_sdp, "cat");
+    char *str = NULL;
     if (psz_value != NULL)
     {
         /* a=cat provides a dot-separated hierarchy.
          * For the time being only replace dots with pipe. TODO: FIXME */
-        char *str = strdup(psz_value);
+        str = strdup(psz_value);
         if (likely(str != NULL))
+        {
             for (char *p = strchr(str, '.'); p != NULL; p = strchr(p, '.'))
                 *(p++) = '|';
-        services_discovery_AddItemCat(p_sd, p_input, str ? str : psz_value);
-        free(str);
+            psz_value = str;
+        }
     }
     else
     {
         /* backward compatibility with VLC 0.7.3-2.0.0 senders */
         psz_value = vlc_sdp_attr_value(p_sdp, "x-plgroup");
-        services_discovery_AddItemCat(p_sd, p_input, psz_value);
     }
+    input_item_t *cat = psz_value == NULL ? NULL : AddCategory(p_sd, psz_value);
+    free(str);
+    services_discovery_AddSubItem(p_sd, cat, p_input);
 
     vlc_sdp_free(p_sdp);
     return p_sap;
+error:
+    free(p_sap);
+    vlc_sdp_free(p_sdp);
+    return NULL;
 }
-
-typedef struct
-{
-    vlc_thread_t thread;
-
-    /* Socket descriptors */
-    int i_fd;
-    int *pi_fd;
-
-    /* Table of announces */
-    int i_announces;
-    struct sap_announce_t **pp_announces;
-
-    vlc_tick_t i_timeout;
-} services_discovery_sys_t;
 
 static int RemoveAnnounce( services_discovery_t *p_sd,
                            sap_announce_t *p_announce )
@@ -582,6 +651,7 @@ static int Open( vlc_object_t *p_this )
 
     p_sys->i_announces = 0;
     p_sys->pp_announces = NULL;
+    p_sys->root_cat = NULL;
     /* TODO: create sockets here, and fix racy sockets table */
     if (vlc_clone (&p_sys->thread, Run, p_sd))
     {
@@ -615,6 +685,7 @@ static void Close( vlc_object_t *p_this )
         RemoveAnnounce( p_sd, p_sys->pp_announces[i] );
     }
     FREENULL( p_sys->pp_announces );
+    tdestroy(p_sys->root_cat, DestroyCategory);
 
     free( p_sys );
 }

@@ -32,6 +32,7 @@
 
 #include "../renderer_common.hpp"
 #include "chromecast.h"
+#include <vlc_configuration.h>
 #include <vlc_dialog.h>
 
 #include <vlc_sout.h>
@@ -115,7 +116,7 @@ struct sout_stream_sys_t
     {
     }
 
-    bool canDecodeVideo( vlc_fourcc_t i_codec ) const;
+    bool canDecodeVideo( const es_format_t * ) const;
     bool canDecodeAudio( sout_stream_t* p_stream, vlc_fourcc_t i_codec,
                          const audio_format_t* p_fmt ) const;
     bool startSoutChain(sout_stream_t* p_stream,
@@ -164,6 +165,7 @@ private:
 struct sout_stream_id_sys_t
 {
     es_format_t           fmt;
+    const char            *es_id;
     sout_stream_id_sys_t  *p_sub_id;
     bool                  flushed;
 };
@@ -180,7 +182,7 @@ static const char DEFAULT_MUXER_WEBM[] = "avformat{mux=webm,options={live=1},res
  * Local prototypes
  *****************************************************************************/
 static int Open(vlc_object_t *);
-static void Close(vlc_object_t *);
+static void Close(sout_stream_t *);
 static int ProxyOpen(vlc_object_t *);
 static int AccessOpen(vlc_object_t *);
 static void AccessClose(vlc_object_t *);
@@ -215,7 +217,7 @@ vlc_module_begin ()
     set_capability("sout output", 0)
     add_shortcut("chromecast")
     set_subcategory(SUBCAT_SOUT_STREAM)
-    set_callbacks(Open, Close)
+    set_callback(Open)
 
     add_string(SOUT_CFG_PREFIX "ip", NULL, NULL, NULL)
         change_private()
@@ -240,10 +242,10 @@ vlc_module_begin ()
         set_callbacks(AccessOpen, AccessClose)
 vlc_module_end ()
 
-static void *ProxyAdd(sout_stream_t *p_stream, const es_format_t *p_fmt)
+static void *ProxyAdd(sout_stream_t *p_stream, const es_format_t *p_fmt, const char* es_id)
 {
     sout_stream_sys_t *p_sys = reinterpret_cast<sout_stream_sys_t *>( p_stream->p_sys );
-    sout_stream_id_sys_t *id = reinterpret_cast<sout_stream_id_sys_t *>( sout_StreamIdAdd(p_stream->p_next, p_fmt) );
+    sout_stream_id_sys_t *id = reinterpret_cast<sout_stream_id_sys_t *>( sout_StreamIdAdd(p_stream->p_next, p_fmt, es_id) );
     if (id)
     {
         if (p_fmt->i_cat == VIDEO_ES)
@@ -312,9 +314,14 @@ static void ProxyFlush(sout_stream_t *p_stream, void *id)
     sout_StreamFlush(p_stream->p_next, id);
 }
 
-static const struct sout_stream_operations proxy_ops = {
-    ProxyAdd, ProxyDel, ProxySend, nullptr, ProxyFlush, nullptr,
-};
+static const struct sout_stream_operations proxy_ops = [] {
+    struct sout_stream_operations ops{};
+    ops.add = ProxyAdd;
+    ops.del = ProxyDel;
+    ops.send = ProxySend;
+    ops.flush = ProxyFlush;
+    return ops;
+}();
 
 static int ProxyOpen(vlc_object_t *p_this)
 {
@@ -656,7 +663,7 @@ static void AccessClose(vlc_object_t *p_this)
 /*****************************************************************************
  * Sout callbacks
  *****************************************************************************/
-static void *Add(sout_stream_t *p_stream, const es_format_t *p_fmt)
+static void *Add(sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id)
 {
     sout_stream_sys_t *p_sys = reinterpret_cast<sout_stream_sys_t *>( p_stream->p_sys );
     vlc_mutex_locker locker(&p_sys->lock);
@@ -671,6 +678,7 @@ static void *Add(sout_stream_t *p_stream, const es_format_t *p_fmt)
     if (p_sys_id != NULL)
     {
         es_format_Copy( &p_sys_id->fmt, p_fmt );
+        p_sys_id->es_id = es_id;
         p_sys_id->p_sub_id = NULL;
         p_sys_id->flushed = false;
 
@@ -755,12 +763,26 @@ static void Del(sout_stream_t *p_stream, void *_id)
  * Supported formats: https://developers.google.com/cast/docs/media
  */
 
-bool sout_stream_sys_t::canDecodeVideo( vlc_fourcc_t i_codec ) const
+bool sout_stream_sys_t::canDecodeVideo( const es_format_t *es ) const
 {
     if( transcoding_state & TRANSCODING_VIDEO )
         return false;
-    return i_codec == VLC_CODEC_H264 || i_codec == VLC_CODEC_HEVC
-        || i_codec == VLC_CODEC_VP8 || i_codec == VLC_CODEC_VP9;
+    switch( es->i_codec )
+    {
+        case VLC_CODEC_H264:
+        case VLC_CODEC_HEVC:
+            return true;
+        case VLC_CODEC_VP8:
+            if (es->i_level != 0 && es->i_level != -1) // contains alpha extradata
+                return false;
+            return true;
+        case VLC_CODEC_VP9:
+            if (es->i_level != 0 && es->i_level != -1) // contains alpha extradata
+                return false;
+            return true;
+        default:
+            return false;
+    }
 }
 
 bool sout_stream_sys_t::canDecodeAudio( sout_stream_t *p_stream,
@@ -769,19 +791,25 @@ bool sout_stream_sys_t::canDecodeAudio( sout_stream_t *p_stream,
 {
     if( transcoding_state & TRANSCODING_AUDIO )
         return false;
-    if ( i_codec == VLC_CODEC_A52 || i_codec == VLC_CODEC_EAC3 )
+    switch( i_codec )
     {
-        return var_InheritBool( p_stream, SOUT_CFG_PREFIX "audio-passthrough" );
+        case VLC_CODEC_A52:
+        case VLC_CODEC_EAC3:
+            return var_InheritBool( p_stream, SOUT_CFG_PREFIX "audio-passthrough" );
+        case VLC_FOURCC('h', 'a', 'a', 'c'):
+        case VLC_FOURCC('l', 'a', 'a', 'c'):
+        case VLC_FOURCC('s', 'a', 'a', 'c'):
+        case VLC_CODEC_MP4A:
+            return p_fmt->i_channels <= 2;
+        case VLC_CODEC_VORBIS:
+        case VLC_CODEC_OPUS:
+        case VLC_CODEC_MP3:
+        case VLC_CODEC_MP2:
+        case VLC_CODEC_MPGA:
+            return true;
+        default:
+            return false;
     }
-    if ( i_codec == VLC_FOURCC('h', 'a', 'a', 'c') ||
-            i_codec == VLC_FOURCC('l', 'a', 'a', 'c') ||
-            i_codec == VLC_FOURCC('s', 'a', 'a', 'c') ||
-            i_codec == VLC_CODEC_MP4A )
-    {
-        return p_fmt->i_channels <= 2;
-    }
-    return i_codec == VLC_CODEC_VORBIS || i_codec == VLC_CODEC_OPUS ||
-           i_codec == VLC_CODEC_MP3;
 }
 
 void sout_stream_sys_t::stopSoutChain(sout_stream_t *p_stream)
@@ -834,7 +862,8 @@ bool sout_stream_sys_t::startSoutChain(sout_stream_t *p_stream,
          it != out_streams.end(); )
     {
         sout_stream_id_sys_t *p_sys_id = *it;
-        p_sys_id->p_sub_id = reinterpret_cast<sout_stream_id_sys_t *>( sout_StreamIdAdd( p_out, &p_sys_id->fmt ) );
+        p_sys_id->p_sub_id = reinterpret_cast<sout_stream_id_sys_t *>(
+            sout_StreamIdAdd(p_out, &p_sys_id->fmt, p_sys_id->es_id) );
         if ( p_sys_id->p_sub_id == NULL )
         {
             msg_Err( p_stream, "can't handle %4.4s stream", (char *)&p_sys_id->fmt.i_codec );
@@ -963,7 +992,7 @@ bool sout_stream_sys_t::UpdateOutput( sout_stream_t *p_stream )
         {
             if (p_es->i_cat == VIDEO_ES && p_original_video == NULL)
             {
-                if (!canDecodeVideo( p_es->i_codec ))
+                if (!canDecodeVideo( p_es ))
                 {
                     msg_Dbg( p_stream, "can't remux video track %d codec %4.4s",
                              p_es->i_id, (const char*)&p_es->i_codec );
@@ -1222,9 +1251,15 @@ static void on_input_event_cb(void *data, enum cc_input_event event, union cc_in
     }
 }
 
-static const struct sout_stream_operations ops = {
-    Add, Del, Send, nullptr, Flush, nullptr
-};
+static const struct sout_stream_operations ops = [] {
+    struct sout_stream_operations ops{};
+    ops.add = Add;
+    ops.del = Del;
+    ops.send = Send;
+    ops.flush = Flush;
+    ops.close = Close;
+    return ops;
+}();
 
 /*****************************************************************************
  * Open: connect to the Chromecast and initialize the sout
@@ -1323,10 +1358,9 @@ error:
 /*****************************************************************************
  * Close: destroy interface
  *****************************************************************************/
-static void Close(vlc_object_t *p_this)
+static void Close(sout_stream_t *p_stream)
 {
-    vlc_object_t *parent = vlc_object_parent(p_this);
-    sout_stream_t *p_stream = reinterpret_cast<sout_stream_t*>(p_this);
+    vlc_object_t *parent = vlc_object_parent(p_stream);
     sout_stream_sys_t *p_sys = reinterpret_cast<sout_stream_sys_t *>( p_stream->p_sys );
 
     assert(p_sys->out_streams.empty() && p_sys->streams.empty());

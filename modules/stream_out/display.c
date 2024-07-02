@@ -29,6 +29,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 
 #include <vlc_decoder.h>
 #include <vlc_frame.h>
@@ -46,7 +47,7 @@
 #define DELAY_LONGTEXT N_( "Introduces a delay in the display of the stream." )
 
 static int  Open ( vlc_object_t * );
-static void Close( vlc_object_t * );
+static void Close( sout_stream_t * );
 
 #define SOUT_CFG_PREFIX "sout-display-"
 
@@ -63,7 +64,7 @@ vlc_module_begin()
               VIDEO_LONGTEXT )
     add_integer( SOUT_CFG_PREFIX "delay", 100, DELAY_TEXT,
                  DELAY_LONGTEXT )
-    set_callbacks( Open, Close )
+    set_callback( Open )
 vlc_module_end()
 
 
@@ -93,7 +94,7 @@ typedef struct
     vlc_clock_t *clock;
 } sout_stream_id_sys_t;
 
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id )
 {
     sout_stream_sys_t *p_sys = p_stream->p_sys;
 
@@ -115,7 +116,7 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
     }
 
     id->dec = vlc_input_decoder_Create(
-        VLC_OBJECT(p_stream), p_fmt, id->clock, p_sys->p_resource );
+        VLC_OBJECT(p_stream), p_fmt, es_id, id->clock, p_sys->p_resource );
     if( id->dec == NULL )
     {
         msg_Err( p_stream, "cannot create decoder for fcc=`%4.4s'",
@@ -136,6 +137,7 @@ static void Del( sout_stream_t *p_stream, void *id )
     (void) p_stream;
 
     sout_stream_id_sys_t *id_sys = id;
+    vlc_input_decoder_Flush(id_sys->dec);
     vlc_input_decoder_Delete( id_sys->dec );
     sout_ClockDelete( id_sys->clock );
     free( id_sys );
@@ -180,7 +182,7 @@ static int Control( sout_stream_t *p_stream, int i_query, va_list args )
         case SOUT_STREAM_ID_SPU_HIGHLIGHT:
         {
             sout_stream_id_sys_t *id = va_arg( args, void * );
-            void *spu_hl = va_arg( args, void * );
+            const vlc_spu_highlight_t *spu_hl = va_arg( args, const vlc_spu_highlight_t * );
             return vlc_input_decoder_SetSpuHighlight( id->dec, spu_hl );
         }
 
@@ -207,7 +209,12 @@ static void SetPCR( sout_stream_t *p_stream, vlc_tick_t pcr )
 }
 
 static const struct sout_stream_operations ops = {
-    Add, Del, Send, Control, NULL, SetPCR
+    .add = Add,
+    .del = Del,
+    .send = Send,
+    .control = Control,
+    .set_pcr = SetPCR,
+    .close = Close,
 };
 
 /*****************************************************************************
@@ -255,9 +262,8 @@ static int Open( vlc_object_t *p_this )
 /*****************************************************************************
  * Close:
  *****************************************************************************/
-static void Close( vlc_object_t * p_this )
+static void Close( sout_stream_t *p_stream )
 {
-    sout_stream_t *p_stream = (sout_stream_t*)p_this;
     sout_stream_sys_t *p_sys = p_stream->p_sys;
 
     input_resource_Release( p_sys->p_resource );

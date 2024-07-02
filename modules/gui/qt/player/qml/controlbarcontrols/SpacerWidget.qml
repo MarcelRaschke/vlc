@@ -15,8 +15,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as T
+import QtQuick
+import QtQuick.Templates as T
 
 import org.videolan.vlc 0.1
 
@@ -27,8 +27,13 @@ import "qrc:///style/"
 Item {
     id: spacer
     enabled: false
-    implicitWidth: VLCStyle.icon_toolbar
+
+    // NOTE: We already have spacing between components in the ControlLayout so this should be set
+    //       to zero, except in the customize panel.
+    implicitWidth: (paintOnly) ? VLCStyle.icon_toolbar : 0
+
     implicitHeight: VLCStyle.icon_toolbar
+
     property alias spacetextExt: spacetext
     property bool paintOnly: false
 
@@ -52,5 +57,7 @@ Item {
 
         verticalAlignment: Text.AlignVCenter
         horizontalAlignment: Text.AlignHCenter
+
+        Accessible.ignored: true
     }
 }

@@ -17,8 +17,6 @@
  *****************************************************************************/
 #include "compositor_dummy.hpp"
 
-#include <QQuickView>
-
 #include "maininterface/mainctx.hpp"
 #include "maininterface/mainui.hpp"
 #include "maininterface/interface_window_handler.hpp"
@@ -35,11 +33,6 @@ CompositorDummy::~CompositorDummy()
 {
 }
 
-bool CompositorDummy::preInit(qt_intf_t *)
-{
-    return true;
-}
-
 bool CompositorDummy::init()
 {
     return true;
@@ -49,6 +42,8 @@ bool CompositorDummy::makeMainInterface(MainCtx* mainCtx)
 {
     m_mainCtx = mainCtx;
 
+    QQuickWindow::setDefaultAlphaBuffer(false);
+
     m_qmlWidget = std::make_unique<QQuickView>();
     if (m_mainCtx->useClientSideDecoration())
         m_qmlWidget->setFlag(Qt::FramelessWindowHint);
@@ -57,8 +52,13 @@ bool CompositorDummy::makeMainInterface(MainCtx* mainCtx)
     m_intfWindowHandler = std::make_unique<InterfaceWindowHandler>(m_intf, m_mainCtx, m_qmlWidget.get(), nullptr);
 
     MainUI* ui = new MainUI(m_intf, m_mainCtx, m_qmlWidget.get(), m_qmlWidget.get());
-    ui->setup(m_qmlWidget->engine());
+    if (!ui->setup(m_qmlWidget->engine()))
+        return false;
+
     m_qmlWidget->setContent(QUrl(), ui->getComponent(), ui->createRootItem());
+
+    if (m_qmlWidget->status() != QQuickView::Ready)
+        return false;
 
     m_qmlWidget->show();
 

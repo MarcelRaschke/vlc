@@ -37,7 +37,8 @@
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
 
-struct screen_data_t
+namespace {
+struct dxgi_screen
 {
     const d3d_format_t             *output_format = nullptr;
     vlc_video_context              *vctx = nullptr;
@@ -47,12 +48,13 @@ struct screen_data_t
 
     ComPtr<IDXGIOutputDuplication> duplication;
 
-    ~screen_data_t()
+    ~dxgi_screen()
     {
         if (vctx)
             vlc_video_context_Release(vctx);
     }
 };
+} // namespace
 
 static void CaptureBlockRelease( block_t *p_block )
 {
@@ -64,7 +66,7 @@ static void CaptureBlockRelease( block_t *p_block )
 static block_t *screen_Capture(demux_t *p_demux)
 {
     demux_sys_t *p_sys = static_cast<demux_sys_t*>(p_demux->p_sys);
-    screen_data_t *p_data = p_sys->p_data;
+    dxgi_screen *p_data = static_cast<dxgi_screen *>(p_sys->p_data);
     block_sys_d3d11_t *d3d11_block = new (std::nothrow) block_sys_d3d11_t();
     ComPtr<IDXGIResource> resource;
     ComPtr<ID3D11Resource> d3d11res;
@@ -99,7 +101,7 @@ static block_t *screen_Capture(demux_t *p_demux)
         goto error;
     }
 
-#if defined(SCREEN_SUBSCREEN) && !defined(VLC_WINSTORE_APP)
+#if defined(SCREEN_SUBSCREEN) && WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
     if( p_sys->b_follow_mouse )
     {
         POINT pos;
@@ -108,7 +110,7 @@ static block_t *screen_Capture(demux_t *p_demux)
         pos.y -= p_data->screen_y;
         FollowMouse( p_sys, pos.x, pos.y );
     }
-#endif // SCREEN_SUBSCREEN && !VLC_WINSTORE_APP
+#endif // SCREEN_SUBSCREEN && WINAPI_PARTITION_DESKTOP
 
     /* copy the texture into the block texture */
     hr = resource.As(&d3d11res);
@@ -151,15 +153,16 @@ error:
     return nullptr;
 }
 
-static void screen_CloseCapture(screen_data_t *p_data)
+static void screen_CloseCapture(void *opaque)
 {
+    dxgi_screen *p_data = static_cast<dxgi_screen*>(opaque);
     delete p_data;
 }
 
 int screen_InitCaptureDXGI(demux_t *p_demux)
 {
     demux_sys_t *p_sys = static_cast<demux_sys_t*>(p_demux->p_sys);
-    screen_data_t *p_data;
+    dxgi_screen *p_data;
     vlc_decoder_device *dec_dev;
     HRESULT hr;
 
@@ -177,19 +180,19 @@ int screen_InitCaptureDXGI(demux_t *p_demux)
         return VLC_ENOTSUP;
     }
 
-#ifdef VLC_WINSTORE_APP
+#if !WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
     if (p_sys->b_follow_mouse)
     {
         msg_Dbg(p_demux, "screen-follow-mouse not supported in UWP DXGI");
         return VLC_ENOTSUP;
     }
-#endif // VLC_WINSTORE_APP
+#endif // !WINAPI_PARTITION_DESKTOP
 
-    p_data = new (std::nothrow) screen_data_t();
+    p_data = new (std::nothrow) dxgi_screen();
     if (unlikely(p_data == nullptr))
         return VLC_ENOMEM;
 
-#ifndef VLC_WINSTORE_APP
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
     p_data->screen_x = GetSystemMetrics( SM_XVIRTUALSCREEN );
     p_data->screen_y = GetSystemMetrics( SM_YVIRTUALSCREEN );
 #endif
@@ -245,37 +248,26 @@ int screen_InitCaptureDXGI(demux_t *p_demux)
     DXGI_OUTDUPL_DESC outDesc;
     p_data->duplication->GetDesc(&outDesc);
 
-    for (p_data->output_format = DxgiGetRenderFormatList();
-         p_data->output_format->name != nullptr; ++p_data->output_format)
-    {
-        if (p_data->output_format->formatTexture == outDesc.ModeDesc.Format &&
-            is_d3d11_opaque(p_data->output_format->fourcc))
-            break;
-    }
-    if (unlikely(!p_data->output_format->name))
+    p_data->output_format = D3D11_RenderFormat(outDesc.ModeDesc.Format, DXGI_FORMAT_UNKNOWN ,true);
+    if (unlikely(!p_data->output_format))
     {
         msg_Err(p_demux, "Unknown texture format %d", outDesc.ModeDesc.Format);
         goto error;
     }
 
-    p_data->vctx = D3D11CreateVideoContext(dec_dev, p_data->output_format->formatTexture);
+    p_data->vctx = D3D11CreateVideoContext(dec_dev, p_data->output_format->formatTexture, p_data->output_format->alphaTexture);
     vlc_decoder_device_Release(dec_dev);
     dec_dev = nullptr;
     if (unlikely(p_data->vctx == nullptr))
         goto error;
 
     es_format_Init( &p_sys->fmt, VIDEO_ES, p_data->output_format->fourcc );
-    p_sys->fmt.video.i_visible_width    =
-    p_sys->fmt.video.i_width            = outDesc.ModeDesc.Width;
-    p_sys->fmt.video.i_visible_height   =
-    p_sys->fmt.video.i_height           = outDesc.ModeDesc.Height;
-    p_sys->fmt.video.i_bits_per_pixel   = 4 * p_data->output_format->bitsPerChannel; /* FIXME */
-    p_sys->fmt.video.i_sar_num = p_sys->fmt.video.i_sar_den = 1;
-    p_sys->fmt.video.i_chroma           = p_sys->fmt.i_codec;
+    video_format_Setup( &p_sys->fmt.video, p_sys->fmt.i_codec,
+                        outDesc.ModeDesc.Width, outDesc.ModeDesc.Height,
+                        outDesc.ModeDesc.Width, outDesc.ModeDesc.Height, 1, 1);
     p_sys->fmt.video.color_range        = COLOR_RANGE_FULL;
     p_sys->fmt.video.i_frame_rate       = outDesc.ModeDesc.RefreshRate.Numerator;
     p_sys->fmt.video.i_frame_rate_base  = outDesc.ModeDesc.RefreshRate.Denominator;
-    DxgiFormatMask( outDesc.ModeDesc.Format, &p_sys->fmt.video );
 
     p_sys->p_data = p_data;
     static const screen_capture_operations ops = {
@@ -296,7 +288,7 @@ int screen_InitCapture(demux_t *p_demux)
     int ret = screen_InitCaptureDXGI(p_demux);
     if (ret == VLC_SUCCESS)
         return VLC_SUCCESS;
-#if defined(_WIN32) && !defined(VLC_WINSTORE_APP)
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
     return screen_InitCaptureGDI(p_demux);
 #else
     return ret;

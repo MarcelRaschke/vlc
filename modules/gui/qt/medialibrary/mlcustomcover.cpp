@@ -127,7 +127,7 @@ QStringList getGenreMediaThumbnails(vlc_medialibrary_t* p_ml, const int count, c
 {
     QStringList thumbnails;
 
-    vlc_ml_query_params_t params {};
+    vlc_ml_query_params_t params = vlc_ml_query_params_create();
 
     // NOTE: We retrieve twice the count to maximize our chances to get a valid thumbnail.
     params.i_nbResults = count * 2;
@@ -143,7 +143,7 @@ ThumbnailList extractChildMediaThumbnailsOrIDs(vlc_medialibrary_t *p_ml, const i
 {
     ThumbnailList result;
 
-    vlc_ml_query_params_t params {};
+    vlc_ml_query_params_t params = vlc_ml_query_params_create();
 
     // NOTE: We retrieve twice the count to maximize our chances to get a valid thumbnail.
     params.i_nbResults = count * 2;
@@ -192,6 +192,13 @@ public:
     QQuickTextureFactory *textureFactory() const override
     {
         return !image.isNull() ? QQuickTextureFactory::textureFactoryForImage(image) : nullptr;
+    }
+
+    QString errorString() const override
+    {
+        if (image.isNull())
+            return QStringLiteral("Unspecified error.");
+        return QStringLiteral("");
     }
 
 private:

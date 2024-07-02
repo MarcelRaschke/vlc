@@ -27,6 +27,7 @@
 #define VLC_DBUS_DBUS_TRACKLIST_H_
 
 #include <vlc_common.h>
+#include <vlc_arrays.h>
 #include <vlc_interface.h>
 #include "dbus_common.h"
 
@@ -73,7 +74,7 @@ void tracklist_append_event_destroy( tracklist_append_event_t *event );
 void tracklist_remove_event_destroy( tracklist_remove_event_t *event );
 
 /* Gets next event in the list */
-static tracklist_append_event_t *
+static inline tracklist_append_event_t *
 tracklist_append_event_next( tracklist_append_event_t *event ) {
     if( !event )
         return NULL;
@@ -82,7 +83,7 @@ tracklist_append_event_next( tracklist_append_event_t *event ) {
         (p - offsetof(struct tracklist_append_event, change_ev));
 }
 
-static tracklist_remove_event_t *
+static inline tracklist_remove_event_t *
 tracklist_remove_event_next( tracklist_remove_event_t *event ) {
     if( !event )
         return NULL;

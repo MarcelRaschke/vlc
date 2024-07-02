@@ -16,52 +16,19 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
+import QtQuick
+import QtQuick.Controls
 
 import org.videolan.vlc 0.1
 import "qrc:///style/"
 
 Rectangle {
-
-    property int orientation: Qt.Vertical
-    property int margin: VLCStyle.margin_xxxsmall
-
     readonly property ColorContext colorContext: ColorContext {
         id: theme
     }
 
     color: theme.accent
-    width: orientation === Qt.Vertical ? VLCStyle.heightBar_xxxsmall : parent.width
-    height: orientation === Qt.Horizontal ? VLCStyle.heightBar_xxxsmall : parent.height
 
-    onOrientationChanged: {
-        if (orientation == Qt.Vertical) {
-            anchors.horizontalCenter = undefined
-            anchors.verticalCenter = Qt.binding(function () {
-                return parent.verticalCenter
-            })
-            anchors.left = Qt.binding(function () {
-                return parent.left
-            })
-            anchors.right = undefined
-            anchors.leftMargin = Qt.binding(function () {
-                return margin
-            })
-            anchors.bottomMargin = 0
-        } else {
-            anchors.top = undefined
-            anchors.bottom = Qt.binding(function () {
-                return parent.bottom
-            })
-            anchors.horizontalCenter = Qt.binding(function () {
-                return parent.horizontalCenter
-            })
-            anchors.verticalCenter = undefined
-            anchors.leftMargin = 0
-            anchors.bottomMargin = Qt.binding(function () {
-                return margin
-            })
-        }
-    }
+    implicitWidth: VLCStyle.heightBar_xxxsmall
+    implicitHeight: VLCStyle.heightBar_xxxsmall
 }

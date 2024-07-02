@@ -28,10 +28,14 @@
 
 #include "qt.hpp"
 
-#include "maininterface/mainctx.hpp"
+#include "mainctx.hpp"
+#include "mainctx_submodels.hpp"
+#include "medialibrary/mlhelper.hpp"
+
 #include "compositor.hpp"
 #include "util/renderer_manager.hpp"
 #include "util/csdbuttonmodel.hpp"
+#include "util/workerthreadset.hpp"
 
 #include "widgets/native/customwidgets.hpp"               // qtEventToVLCKey, QVLCStackedWidget
 #include "util/qt_dirs.hpp"                     // toNativeSeparators
@@ -48,7 +52,6 @@
 
 #include "dialogs/toolbar/controlbar_profile_model.hpp"
 
-
 #include <QKeyEvent>
 
 #include <QUrl>
@@ -60,9 +63,14 @@
 
 #include <QWindow>
 #include <QScreen>
+
+#include <QOperatingSystemVersion>
+
 #ifdef _WIN32
 #include <QFileInfo>
 #endif
+
+#include <vlc_interface.h>
 
 #define VLC_REFERENCE_SCALE_FACTOR 96.
 
@@ -122,6 +130,22 @@ MainCtx::MainCtx(qt_intf_t *_p_intf)
     settings = getSettings();
     m_colorScheme = new ColorSchemeModel(this);
 
+    m_sort = new SortCtx(this);
+    m_search = new SearchCtx(this);
+
+    // getOSInfo();
+    QOperatingSystemVersion currentOS = QOperatingSystemVersion::current();
+    switch (currentOS.type()) {
+    case QOperatingSystemVersion::OSType::Windows:
+        m_osName = Windows;
+        break;
+
+    default:
+        m_osName = Unknown;
+        break;
+    }
+    m_osVersion = (currentOS.majorVersion());
+
     loadPrefs(false);
     loadFromSettingsImpl(false);
 
@@ -141,9 +165,7 @@ MainCtx::MainCtx(qt_intf_t *_p_intf)
 
     QString platformName = QGuiApplication::platformName();
 
-#ifdef QT5_HAS_WAYLAND
     b_hasWayland = platformName.startsWith(QLatin1String("wayland"), Qt::CaseInsensitive);
-#endif
 
     /*********************************
      * Create the Systray Management *
@@ -197,6 +219,10 @@ MainCtx::MainCtx(qt_intf_t *_p_intf)
             THEDP->firstRunDialog();
         }, Qt::QueuedConnection);
     }
+    else if (m_medialib)
+    {
+        QMetaObject::invokeMethod(m_medialib, &MediaLib::reload, Qt::QueuedConnection);
+    }
 }
 
 MainCtx::~MainCtx()
@@ -208,11 +234,12 @@ MainCtx::~MainCtx()
     settings->beginGroup("MainWindow");
     settings->setValue( "pl-dock-status", b_playlistDocked );
     settings->setValue( "ShowRemainingTime", m_showRemainingTime );
-    settings->setValue( "interface-scale", m_intfUserScaleFactor );
+    settings->setValue( "interface-scale", QString::number( m_intfUserScaleFactor ) );
 
     /* Save playlist state */
-    settings->setValue( "playlist-visible", playlistVisible );
-    settings->setValue( "playlist-width-factor", playlistWidthFactor);
+    settings->setValue( "playlist-visible", m_playlistVisible );
+    settings->setValue( "playlist-width-factor", QString::number( m_playlistWidthFactor ) );
+    settings->setValue( "player-playlist-width-factor", QString::number( m_playerPlaylistWidthFactor ) );
 
     settings->setValue( "grid-view", m_gridView );
     settings->setValue( "grouping", m_grouping );
@@ -265,6 +292,20 @@ void MainCtx::setUseGlobalShortcuts( bool useShortcuts )
     emit useGlobalShortcutsChanged(m_useGlobalShortcuts);
 }
 
+void MainCtx::setWindowSuportExtendedFrame(bool support) {
+    if (m_windowSuportExtendedFrame == support)
+        return;
+    m_windowSuportExtendedFrame = support;
+    emit windowSuportExtendedFrameChanged();
+}
+
+void MainCtx::setWindowExtendedMargin(unsigned int margin) {
+    if (margin == m_windowExtendedMargin)
+        return;
+    m_windowExtendedMargin = margin;
+    emit windowExtendedMarginChanged(margin);
+}
+
 /*****************************
  *   Main UI handling        *
  *****************************/
@@ -299,9 +340,7 @@ void MainCtx::loadPrefs(const bool callSignals)
 
     loadFromVLCOption(m_hasToolbarMenu, "qt-menubar", &MainCtx::hasToolbarMenuChanged);
 
-#if QT_CLIENT_SIDE_DECORATION_AVAILABLE
     loadFromVLCOption(m_windowTitlebar, "qt-titlebar" , &MainCtx::useClientSideDecorationChanged);
-#endif
 
     loadFromVLCOption(m_smoothScroll, "qt-smooth-scrolling", &MainCtx::smoothScrollChanged);
 
@@ -310,6 +349,8 @@ void MainCtx::loadPrefs(const bool callSignals)
     loadFromVLCOption(m_pinVideoControls, "qt-pin-controls", &MainCtx::pinVideoControlsChanged);
 
     loadFromVLCOption(m_pinOpacity, "qt-fs-opacity", &MainCtx::pinOpacityChanged);
+
+    loadFromVLCOption(m_safeArea, "qt-safe-area", &MainCtx::safeAreaChanged);
 }
 
 void MainCtx::loadFromSettingsImpl(const bool callSignals)
@@ -330,9 +371,11 @@ void MainCtx::loadFromSettingsImpl(const bool callSignals)
 
     loadFromSettings(b_playlistDocked, "MainWindow/pl-dock-status", true, &MainCtx::playlistDockedChanged);
 
-    loadFromSettings(playlistVisible, "MainWindow/playlist-visible", false, &MainCtx::playlistVisibleChanged);
+    loadFromSettings(m_playlistVisible, "MainWindow/playlist-visible", false, &MainCtx::playlistVisibleChanged);
 
-    loadFromSettings(playlistWidthFactor, "MainWindow/playlist-width-factor", 4.0 , &MainCtx::playlistWidthFactorChanged);
+    loadFromSettings(m_playlistWidthFactor, "MainWindow/playlist-width-factor", 4.0 , &MainCtx::playlistWidthFactorChanged);
+
+    loadFromSettings(m_playerPlaylistWidthFactor, "MainWindow/player-playlist-width-factor", 4.0 , &MainCtx::playerPlaylistFactorChanged);
 
     loadFromSettings(m_gridView, "MainWindow/grid-view", true, &MainCtx::gridViewChanged);
 
@@ -480,6 +523,46 @@ inline void MainCtx::initSystray()
         createSystray();
 }
 
+WorkerThreadSet* MainCtx::workersThreads() const
+{
+    if (!m_workersThreads)
+    {
+        m_workersThreads.reset( new WorkerThreadSet );
+    }
+
+    return m_workersThreads.get();
+}
+
+QUrl MainCtx::folderMRL(const QString &fileMRL) const
+{
+    return folderMRL(QUrl::fromUserInput(fileMRL));
+}
+
+QUrl MainCtx::folderMRL(const QUrl &fileMRL) const
+{
+    if (fileMRL.isLocalFile())
+    {
+        const QString f = fileMRL.toLocalFile();
+        return QUrl::fromLocalFile(QFileInfo(f).absoluteDir().absolutePath());
+    }
+
+    return {};
+}
+
+QString MainCtx::displayMRL(const QUrl &mrl) const
+{
+    return urlToDisplayString(mrl);
+}
+
+void MainCtx::setMediaLibraryVisible( bool visible )
+{
+    if (m_mediaLibraryVisible == visible)
+        return;
+
+    m_mediaLibraryVisible = visible;
+
+    emit mediaLibraryVisibleChanged(visible);
+}
 
 void MainCtx::setPlaylistDocked( bool docked )
 {
@@ -490,7 +573,7 @@ void MainCtx::setPlaylistDocked( bool docked )
 
 void MainCtx::setPlaylistVisible( bool visible )
 {
-    playlistVisible = visible;
+    m_playlistVisible = visible;
 
     emit playlistVisibleChanged(visible);
 }
@@ -499,8 +582,17 @@ void MainCtx::setPlaylistWidthFactor( double factor )
 {
     if (factor > 0.0)
     {
-        playlistWidthFactor = factor;
+        m_playlistWidthFactor = factor;
         emit playlistWidthFactorChanged(factor);
+    }
+}
+
+void MainCtx::setPlayerPlaylistWidthFactor( double factor )
+{
+    if (factor > 0.0)
+    {
+        m_playerPlaylistWidthFactor = factor;
+        emit playerPlaylistFactorChanged(factor);
     }
 }
 
@@ -561,7 +653,7 @@ VideoSurfaceProvider* MainCtx::getVideoSurfaceProvider() const
 void MainCtx::createSystray()
 {
     QIcon iconVLC;
-    if( QDate::currentDate().dayOfYear() >= QT_XMAS_JOKE_DAY && var_InheritBool( p_intf, "qt-icon-change" ) )
+    if( useXmasCone() )
         iconVLC = QIcon::fromTheme( "vlc-xmas", QIcon( ":/logo/vlc128-xmas.png" ) );
     else
         iconVLC = QIcon::fromTheme( "vlc", QIcon( ":/logo/vlc256.png" ) );
@@ -624,9 +716,8 @@ void MainCtx::handleSystrayClick(
 #endif
             break;
         case QSystemTrayIcon::MiddleClick:
-            sysTray->showMessage( qtr( "VLC media player" ),
-                    qtr( "Control menu for the player" ),
-                    QSystemTrayIcon::Information, 3000 );
+            if (PlaylistController* const playlistController = p_intf->p_mainPlaylistController)
+                playlistController->togglePlayPause();
             break;
         default:
             break;
@@ -672,7 +763,7 @@ void MainCtx::updateSystrayTooltipStatus( PlayerController::PlayingState )
 
 bool MainCtx::onWindowClose( QWindow* )
 {
-    PlaylistControllerModel* playlistController = p_intf->p_mainPlaylistController;
+    PlaylistController* playlistController = p_intf->p_mainPlaylistController;
     PlayerController* playerController = p_intf->p_mainPlayerController;
 
     if (m_videoSurfaceProvider)
@@ -858,12 +949,13 @@ void MainCtx::setAttachedToolTip(QObject *toolTip)
     // one that is set
 #ifndef NDEBUG
     QQmlComponent component(engine);
-    component.setData(QByteArrayLiteral("import QtQuick 2.11; import QtQuick.Controls 2.4; Item { }"), {});
+    component.setData(QByteArrayLiteral("import QtQuick; import QtQuick.Controls; Item { }"), {});
     QObject* const obj = component.create();
     assert(obj);
     // Consider disabling setting of custom attached
     // tooltip if the following assertion fails:
-    assert(QQmlProperty::read(obj, QStringLiteral("ToolTip.toolTip"), qmlContext(obj)).value<QObject*>() == toolTip);
+    if (QQmlProperty::read(obj, QStringLiteral("ToolTip.toolTip"), qmlContext(obj)).value<QObject*>() != toolTip)
+        qmlWarning(obj) << "Could not set self as custom ToolTip!";
     obj->deleteLater();
 #endif
 }
@@ -876,4 +968,76 @@ double MainCtx::dp(const double px, const double scale)
 double MainCtx::dp(const double px) const
 {
     return dp(px, m_intfScaleFactor);
+}
+
+bool MainCtx::useXmasCone() const
+{
+    return (QDate::currentDate().dayOfYear() >= QT_XMAS_JOKE_DAY)
+            && var_InheritBool( p_intf, "qt-icon-change" );
+}
+
+bool WindowStateHolder::holdFullscreen(QWindow *window, Source source, bool hold)
+{
+    QVariant prop = window->property("__windowFullScreen");
+    bool ok = false;
+    unsigned fullscreenCounter = prop.toUInt(&ok);
+    if (!ok)
+        fullscreenCounter = 0;
+
+    if (hold)
+        fullscreenCounter |= source;
+    else
+        fullscreenCounter &= ~source;
+
+    Qt::WindowStates oldflags = window->windowStates();
+    Qt::WindowStates newflags;
+
+    if( fullscreenCounter != 0 )
+        newflags = oldflags | Qt::WindowFullScreen;
+    else
+        newflags = oldflags & ~Qt::WindowFullScreen;
+
+    if( newflags != oldflags )
+    {
+        window->setWindowStates( newflags );
+    }
+
+    window->setProperty("__windowFullScreen", QVariant::fromValue(fullscreenCounter));
+
+    return fullscreenCounter != 0;
+}
+
+bool WindowStateHolder::holdOnTop(QWindow *window, Source source, bool hold)
+{
+    QVariant prop = window->property("__windowOnTop");
+    bool ok = false;
+    unsigned onTopCounter = prop.toUInt(&ok);
+    if (!ok)
+        onTopCounter = 0;
+
+    if (hold)
+        onTopCounter |= source;
+    else
+        onTopCounter &= ~source;
+
+    Qt::WindowStates oldStates = window->windowStates();
+    Qt::WindowFlags oldflags = window->flags();
+    Qt::WindowFlags newflags;
+
+    if( onTopCounter != 0 )
+        newflags = oldflags | Qt::WindowStaysOnTopHint;
+    else
+        newflags = oldflags & ~Qt::WindowStaysOnTopHint;
+    if( newflags != oldflags )
+    {
+
+        window->setFlags( newflags );
+        window->show(); /* necessary to apply window flags */
+        //workaround: removing onTop state might drop fullscreen state
+        window->setWindowStates(oldStates);
+    }
+
+    window->setProperty("__windowOnTop", QVariant::fromValue(onTopCounter));
+
+    return onTopCounter != 0;
 }

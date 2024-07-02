@@ -100,6 +100,7 @@ typedef struct
 typedef struct
 {
     DXGI_FORMAT         format;
+    DXGI_FORMAT         secondary; // alpha source in combined formats
 } d3d11_video_context_t;
 
 /* index to use for texture/resource that use a known DXGI format
@@ -111,7 +112,8 @@ static inline bool is_d3d11_opaque(vlc_fourcc_t chroma)
     return chroma == VLC_CODEC_D3D11_OPAQUE ||
            chroma == VLC_CODEC_D3D11_OPAQUE_10B ||
            chroma == VLC_CODEC_D3D11_OPAQUE_RGBA ||
-           chroma == VLC_CODEC_D3D11_OPAQUE_BGRA;
+           chroma == VLC_CODEC_D3D11_OPAQUE_BGRA ||
+           chroma == VLC_CODEC_D3D11_OPAQUE_ALPHA;
 }
 
 extern const struct vlc_video_context_operations d3d11_vctx_ops;
@@ -145,11 +147,27 @@ static inline d3d11_video_context_t *GetD3D11ContextPrivate(vlc_video_context *v
     return (d3d11_video_context_t *) vlc_video_context_GetPrivate( vctx, VLC_VIDEO_CONTEXT_D3D11VA );
 }
 
-vlc_video_context *D3D11CreateVideoContext(vlc_decoder_device *, DXGI_FORMAT);
+vlc_video_context *D3D11CreateVideoContext(vlc_decoder_device *, DXGI_FORMAT, DXGI_FORMAT);
 
 void AcquireD3D11PictureSys(picture_sys_d3d11_t *p_sys);
 
 void ReleaseD3D11PictureSys(picture_sys_d3d11_t *p_sys);
+
+static inline const d3d_format_t *D3D11_RenderFormat(DXGI_FORMAT opaque, DXGI_FORMAT alpha, bool gpu_based)
+{
+    for (const d3d_format_t *output_format = DxgiGetRenderFormatList();
+            output_format->name != NULL; ++output_format)
+    {
+        if (output_format->formatTexture == opaque &&
+            output_format->alphaTexture == alpha &&
+            is_d3d11_opaque(output_format->fourcc) == gpu_based)
+        {
+            return output_format;
+        }
+    }
+    return NULL;
+}
+
 
 /* map texture planes to resource views */
 int D3D11_AllocateResourceView(struct vlc_logger *obj, ID3D11Device *d3ddevice,
@@ -179,10 +197,11 @@ const d3d_format_t *FindD3D11Format(vlc_object_t *,
                                     uint8_t bits_per_channel,
                                     uint8_t widthDenominator,
                                     uint8_t heightDenominator,
+                                    int alpha_bits,
                                     int cpu_gpu,
                                     UINT supportFlags);
-#define FindD3D11Format(a,b,c,d,e,f,g,h,i)  \
-    FindD3D11Format(VLC_OBJECT(a),b,c,d,e,f,g,h,i)
+#define FindD3D11Format(a,b,c,d,e,f,g,h,i,j)  \
+    FindD3D11Format(VLC_OBJECT(a),b,c,d,e,f,g,h,i,j)
 
 int AllocateTextures(vlc_object_t *, d3d11_device_t *, const d3d_format_t *,
                      const video_format_t *, bool, ID3D11Texture2D *textures[],
@@ -206,7 +225,10 @@ picture_context_t *d3d11_pic_context_copy(picture_context_t *);
 
 picture_t *D3D11_AllocPicture(vlc_object_t *,
                               const video_format_t *, vlc_video_context *,
-                              bool, const d3d_format_t *);
+                              bool shared, const d3d_format_t *);
+int D3D11_PictureFill(vlc_object_t *,
+                      picture_t *, vlc_video_context *,
+                      bool shared, const d3d_format_t *);
 
 void D3D11_PictureAttach(picture_t *, ID3D11Texture2D *textures, const d3d_format_t *cfg);
 

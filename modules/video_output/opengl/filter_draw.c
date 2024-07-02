@@ -24,11 +24,12 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_modules.h>
 #include <vlc_opengl.h>
+#include <vlc_opengl_filter.h>
 
-#include "filter.h"
 #include "gl_api.h"
 #include "gl_common.h"
 #include "gl_util.h"
@@ -109,6 +110,7 @@ Draw(struct vlc_gl_filter *filter, const struct vlc_gl_picture *pic,
 
     vt->Clear(GL_COLOR_BUFFER_BIT);
     vt->DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    GL_ASSERT_NOERROR(vt);
 
     return VLC_SUCCESS;
 }
@@ -167,30 +169,17 @@ Open(struct vlc_gl_filter *filter, const config_chain_t *config,
 
     const opengl_vtable_t *vt = &filter->api->vt;
 
-    const char *shader_version;
-    const char *shader_precision;
-    if (filter->api->is_gles)
-    {
-        shader_version = "#version 100\n";
-        shader_precision = "precision highp float;\n";
-    }
-    else
-    {
-        shader_version = "#version 120\n";
-        shader_precision = "";
-    }
-
     config_ChainParse(filter, DRAW_CFG_PREFIX, filter_options, config);
     sys->vflip = var_InheritBool(filter, DRAW_CFG_PREFIX "vflip");
 
     const char *vertex_shader[] = {
-        shader_version,
+        sampler->shader.version,
         VERTEX_SHADER_BODY,
     };
     const char *fragment_shader[] = {
-        shader_version,
+        sampler->shader.version,
         extensions,
-        shader_precision,
+        sampler->shader.precision,
         sampler->shader.body,
         FRAGMENT_SHADER_BODY,
     };

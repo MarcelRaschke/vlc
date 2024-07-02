@@ -53,6 +53,7 @@ vlc_frame_GetAncillary
 vlc_frame_heap_Alloc
 vlc_frame_Init
 vlc_frame_mmap_Alloc
+vlc_frame_New
 vlc_frame_shm_Alloc
 vlc_frame_Realloc
 vlc_frame_Release
@@ -111,6 +112,8 @@ es_format_Copy
 es_format_Init
 es_format_InitFromVideo
 es_format_IsSimilar
+es_format_LogDifferences
+vlc_extension_VaControl
 filter_AddProxyCallbacks
 filter_DelProxyCallbacks
 filter_Blend
@@ -126,7 +129,6 @@ filter_chain_MouseFilter
 filter_chain_NewVideo
 filter_chain_Reset
 filter_chain_Clear
-filter_chain_SubFilter
 filter_chain_VideoFilter
 filter_chain_VideoFlush
 filter_chain_ForEach
@@ -198,13 +200,13 @@ input_item_GetName
 input_item_GetNowPlayingFb
 input_item_GetTitleFbName
 input_item_GetURI
-input_item_HasErrorWhenReading
 input_item_IsArtFetched
 input_item_IsPreparsed
 input_item_MetaMatch
 input_item_MergeInfos
 input_item_NewExt
 input_item_Hold
+input_item_Playable
 input_item_Release
 input_item_node_AppendItem
 input_item_node_AppendNode
@@ -223,6 +225,9 @@ input_item_AddSlave
 input_item_Parse
 input_item_parser_id_Interrupt
 input_item_parser_id_Release
+input_item_GetMetaExtra
+input_item_GetMetaExtraNames
+input_item_SetMetaExtra
 input_resource_New
 input_resource_Release
 vlc_readdir_helper_init
@@ -230,10 +235,6 @@ vlc_readdir_helper_finish
 vlc_readdir_helper_additem
 intf_Create
 libvlc_InternalAddIntf
-libvlc_InternalDialogInit
-libvlc_InternalDialogClean
-libvlc_InternalKeystoreInit
-libvlc_InternalKeystoreClean
 libvlc_InternalPlay
 libvlc_InternalCleanup
 libvlc_InternalCreate
@@ -243,7 +244,6 @@ libvlc_Quit
 libvlc_SetExitHandler
 libvlc_MetadataRequest
 libvlc_MetadataCancel
-libvlc_ArtRequest
 vlc_UrlParse
 vlc_UrlParseFixup
 vlc_UrlClean
@@ -263,6 +263,7 @@ module_config_get
 module_find
 module_get_capability
 module_get_help
+module_get_help_html
 module_get_name
 module_get_object
 module_get_score
@@ -283,9 +284,12 @@ vlc_memstream_putc
 vlc_memstream_puts
 vlc_memstream_vprintf
 vlc_memstream_printf
+vlc_ntp_time
 vlc_Log
 vlc_LogSet
 vlc_vaLog
+vlc_tracer_Create
+vlc_tracer_Destroy
 vlc_tracer_TraceWithTs
 vlc_LogHeaderCreate
 vlc_LogDestroy
@@ -307,7 +311,6 @@ net_OpenDgram
 net_Read
 net_SetCSCov
 net_Write
-NTPtime64
 picture_AttachAncillary
 picture_AttachNewAncillary
 picture_BlendSubpicture
@@ -331,7 +334,6 @@ picture_pool_Release
 picture_pool_Get
 picture_pool_New
 picture_pool_NewFromFormat
-picture_pool_Reserve
 picture_pool_Wait
 picture_Reset
 picture_Setup
@@ -352,6 +354,7 @@ sout_MuxGetStream
 sout_MuxNew
 sout_MuxSendBuffer
 sout_MuxFlush
+sout_StreamNew
 sout_StreamChainDelete
 sout_StreamChainNew
 sout_StreamIdAdd
@@ -404,10 +407,13 @@ subpicture_Delete
 subpicture_New
 subpicture_NewFromPicture
 subpicture_Update
-subpicture_region_ChainDelete
-subpicture_region_Copy
+vlc_spu_regions_Clear
+vlc_render_subpicture_New
+vlc_render_subpicture_Delete
 subpicture_region_Delete
 subpicture_region_New
+subpicture_region_NewText
+subpicture_region_ForPicture
 text_segment_New
 text_segment_NewInheritStyle
 text_segment_Delete
@@ -438,6 +444,8 @@ update_Download
 update_GetRelease
 update_NeedUpgrade
 update_New
+vlc_vfprintf_c
+vlc_fprintf_c
 vlc_asprintf_c
 vlc_strtod_c
 vlc_strtof_c
@@ -448,6 +456,7 @@ utf8_fprintf
 vlc_loaddir
 vlc_lstat
 vlc_mkdir
+vlc_mkdir_parent
 vlc_mkstemp
 vlc_open
 vlc_openat
@@ -496,12 +505,13 @@ var_InheritURational
 var_LocationParse
 video_format_CopyCrop
 video_format_ScaleCropAr
-video_format_FixRgb
 video_format_ApplyRotation
 video_format_TransformBy
 video_format_TransformTo
 video_format_GetTransform
 video_format_IsSimilar
+video_format_LogDifferences
+video_format_IsSameChroma
 video_format_Setup
 video_format_Print
 vlc_actions_get_id
@@ -527,6 +537,12 @@ vlc_cond_init
 vlc_cond_signal
 vlc_cond_timedwait
 vlc_cond_wait
+vlc_config_cat_Count
+vlc_config_cat_Find
+vlc_config_cat_GetAt
+vlc_config_subcat_Count
+vlc_config_subcat_Find
+vlc_config_subcat_GetAt
 vlc_credential_init
 vlc_credential_clean
 vlc_credential_get
@@ -567,8 +583,6 @@ vlc_control_cancel
 vlc_GetCPUCount
 vlc_CPU
 vlc_CPU_functions_init
-vlc_event_attach
-vlc_event_detach
 vlc_filenamecmp
 vlc_fourcc_GetCodec
 vlc_fourcc_GetCodecAudio
@@ -579,7 +593,6 @@ vlc_fourcc_IsYUV
 vlc_fourcc_GetRGBFallback
 vlc_fourcc_GetYUVFallback
 vlc_fourcc_GetFallback
-vlc_fourcc_AreUVPlanesSwapped
 vlc_getaddrinfo
 vlc_getaddrinfo_i11e
 vlc_getnameinfo
@@ -653,7 +666,7 @@ vlc_killed
 vlc_join
 vlc_thread_set_name
 vlc_list_children
-vlc_meta_AddExtra
+vlc_meta_SetExtra
 vlc_meta_CopyExtraNames
 vlc_meta_Delete
 vlc_meta_Get
@@ -842,10 +855,12 @@ vlc_player_CondWait
 vlc_player_DisplayPosition
 vlc_player_DecrementRate
 vlc_player_Delete
+vlc_player_GetAtoBLoop
 vlc_player_GetCapabilities
 vlc_player_GetCategoryDelay
 vlc_player_GetCategoryLanguage
 vlc_player_GetCurrentMedia
+vlc_player_GetNextMedia
 vlc_player_GetError
 vlc_player_GetEsIdDelay
 vlc_player_GetEsIdFromVout
@@ -872,7 +887,6 @@ vlc_player_GetTrackCount
 vlc_player_GetV4l2Object
 vlc_player_HasTeletextMenu
 vlc_player_IncrementRate
-vlc_player_InvalidateNextMedia
 vlc_player_IsRecording
 vlc_player_IsTeletextEnabled
 vlc_player_IsTeletextTransparent
@@ -915,8 +929,8 @@ vlc_player_SetAssociatedSubsFPS
 vlc_player_SetAtoBLoop
 vlc_player_SetCategoryDelay
 vlc_player_SetCurrentMedia
+vlc_player_SetNextMedia
 vlc_player_SetEsIdDelay
-vlc_player_SetMediaStoppedAction
 vlc_player_SetRecordingEnabled
 vlc_player_SetRenderer
 vlc_player_SetStartPaused
@@ -990,6 +1004,7 @@ vlc_playlist_Pause
 vlc_playlist_Resume
 vlc_playlist_Preparse
 vlc_playlist_Export
+vlc_playlist_SetMediaStoppedAction
 vlc_intf_GetMainPlaylist
 vlc_media_source_Hold
 vlc_media_source_Release
@@ -1012,6 +1027,7 @@ vlc_media_tree_Find
 vlc_media_tree_Preparse
 vlc_media_tree_PreparseCancel
 vlc_viewpoint_to_4x4
+vlc_viewpoint_from_orientation
 vlc_video_context_Create
 vlc_video_context_Release
 vlc_video_context_GetType
@@ -1026,3 +1042,8 @@ vlc_executor_WaitIdle
 vlc_input_attachment_Release
 vlc_input_attachment_New
 vlc_input_attachment_Hold
+vlc_preparser_New
+vlc_preparser_Push
+vlc_preparser_Cancel
+vlc_preparser_Delete
+vlc_preparser_Deactivate

@@ -35,6 +35,7 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_codec.h>
 #include <vlc_timestamp_helper.h>
@@ -46,6 +47,7 @@
  *****************************************************************************/
 static int        OpenDecoder  ( vlc_object_t * );
 static void       CloseDecoder ( vlc_object_t * );
+#ifdef ENABLE_SOUT
 static int        OpenEncoder  ( vlc_object_t * );
 static void       CloseEncoder ( encoder_t * );
 
@@ -353,6 +355,7 @@ static const char *const ppsz_enc_options[] = {
     ENC_ME_GLOBAL_MOTION, ENC_ME_PHASECORR, ENC_SCD, ENC_FORCE_PROFILE,
     NULL
 };
+#endif // !ENABLE_SOUT
 
 
 /* Module declaration */
@@ -365,6 +368,7 @@ vlc_module_begin ()
     set_callbacks( OpenDecoder, CloseDecoder )
     add_shortcut( "schroedinger" )
 
+#ifdef ENABLE_SOUT
     /* encoder */
     add_submodule()
     set_section( N_("Encoding") , NULL )
@@ -379,23 +383,23 @@ vlc_module_begin ()
 
     add_float( ENC_CFG_PREFIX ENC_QUALITY, -1.,
                ENC_QUALITY_TEXT, ENC_QUALITY_LONGTEXT )
-    change_float_range(-1., 10.);
+    change_float_range(-1., 10.)
 
     add_float( ENC_CFG_PREFIX ENC_NOISE_THRESHOLD, -1.,
                ENC_NOISE_THRESHOLD_TEXT, ENC_NOISE_THRESHOLD_LONGTEXT )
-    change_float_range(-1., 100.);
+    change_float_range(-1., 100.)
 
     add_integer( ENC_CFG_PREFIX ENC_BITRATE, -1,
                  ENC_BITRATE_TEXT, ENC_BITRATE_LONGTEXT )
-    change_integer_range(-1, INT_MAX);
+    change_integer_range(-1, INT_MAX)
 
     add_integer( ENC_CFG_PREFIX ENC_MAX_BITRATE, -1,
                  ENC_MAX_BITRATE_TEXT, ENC_MAX_BITRATE_LONGTEXT )
-    change_integer_range(-1, INT_MAX);
+    change_integer_range(-1, INT_MAX)
 
     add_integer( ENC_CFG_PREFIX ENC_MIN_BITRATE, -1,
                  ENC_MIN_BITRATE_TEXT, ENC_MIN_BITRATE_LONGTEXT )
-    change_integer_range(-1, INT_MAX);
+    change_integer_range(-1, INT_MAX)
 
     add_string( ENC_CFG_PREFIX ENC_GOP_STRUCTURE, NULL,
                  ENC_GOP_STRUCTURE_TEXT, ENC_GOP_STRUCTURE_LONGTEXT )
@@ -403,7 +407,7 @@ vlc_module_begin ()
 
     add_integer( ENC_CFG_PREFIX ENC_AU_DISTANCE, -1,
                  ENC_AU_DISTANCE_TEXT, ENC_AU_DISTANCE_LONGTEXT )
-    change_integer_range(-1, INT_MAX);
+    change_integer_range(-1, INT_MAX)
 
     add_string( ENC_CFG_PREFIX ENC_CHROMAFMT, "420",
                 ENC_CHROMAFMT_TEXT, ENC_CHROMAFMT_LONGTEXT )
@@ -431,27 +435,27 @@ vlc_module_begin ()
     /* advanced option only */
     add_integer( ENC_CFG_PREFIX ENC_ME_COMBINED, -1,
               ENC_ME_COMBINED_TEXT, ENC_ME_COMBINED_LONGTEXT )
-    change_integer_range(-1, 1 );
+    change_integer_range(-1, 1 )
 
     /* advanced option only */
     add_integer( ENC_CFG_PREFIX ENC_ME_HIERARCHICAL, -1,
                  ENC_ME_HIERARCHICAL_TEXT, NULL )
-    change_integer_range(-1, 1 );
+    change_integer_range(-1, 1 )
 
     /* advanced option only */
     add_integer( ENC_CFG_PREFIX ENC_ME_DOWNSAMPLE_LEVELS, -1,
                  ENC_ME_DOWNSAMPLE_LEVELS_TEXT, ENC_ME_DOWNSAMPLE_LEVELS_LONGTEXT )
-    change_integer_range(-1, 8 );
+    change_integer_range(-1, 8 )
 
     /* advanced option only */
     add_integer( ENC_CFG_PREFIX ENC_ME_GLOBAL_MOTION, -1,
                  ENC_ME_GLOBAL_MOTION_TEXT, NULL )
-    change_integer_range(-1, 1 );
+    change_integer_range(-1, 1 )
 
     /* advanced option only */
     add_integer( ENC_CFG_PREFIX ENC_ME_PHASECORR, -1,
                  ENC_ME_PHASECORR_TEXT, NULL )
-    change_integer_range(-1, 1 );
+    change_integer_range(-1, 1 )
 
     add_string( ENC_CFG_PREFIX ENC_DWTINTRA, NULL,
                 ENC_DWTINTRA_TEXT, NULL )
@@ -463,12 +467,12 @@ vlc_module_begin ()
 
     add_integer( ENC_CFG_PREFIX ENC_DWTDEPTH, -1,
                  ENC_DWTDEPTH_TEXT, ENC_DWTDEPTH_LONGTEXT )
-    change_integer_range(-1, SCHRO_LIMIT_ENCODER_TRANSFORM_DEPTH );
+    change_integer_range(-1, SCHRO_LIMIT_ENCODER_TRANSFORM_DEPTH )
 
     /* advanced option only */
     add_integer( ENC_CFG_PREFIX ENC_MULTIQUANT, -1,
                  ENC_MULTIQUANT_TEXT, ENC_MULTIQUANT_LONGTEXT )
-    change_integer_range(-1, 1 );
+    change_integer_range(-1, 1 )
 
     /* advanced option only */
     add_string( ENC_CFG_PREFIX ENC_SCBLK_SIZE, NULL,
@@ -481,12 +485,12 @@ vlc_module_begin ()
 
     add_float( ENC_CFG_PREFIX ENC_PREFILTER_STRENGTH, -1.,
                  ENC_PREFILTER_STRENGTH_TEXT, ENC_PREFILTER_STRENGTH_LONGTEXT )
-    change_float_range(-1., 100.0);
+    change_float_range(-1., 100.0)
 
     /* advanced option only */
     add_integer( ENC_CFG_PREFIX ENC_SCD, -1,
                  ENC_SCD_TEXT, NULL )
-    change_integer_range(-1, 1 );
+    change_integer_range(-1, 1 )
 
     /* advanced option only */
     add_string( ENC_CFG_PREFIX ENC_PWT, NULL,
@@ -496,27 +500,28 @@ vlc_module_begin ()
     /* advanced option only */
     add_float( ENC_CFG_PREFIX ENC_PDIST, -1,
                ENC_PDIST_TEXT, ENC_PDIST_LONGTEXT )
-    change_float_range(-1., 100.);
+    change_float_range(-1., 100.)
 
     /* advanced option only */
     add_integer( ENC_CFG_PREFIX ENC_NOAC, -1,
               ENC_NOAC_TEXT, ENC_NOAC_LONGTEXT )
-    change_integer_range(-1, 1 );
+    change_integer_range(-1, 1 )
 
     /* advanced option only */
     add_integer( ENC_CFG_PREFIX ENC_HSLICES, -1,
                  ENC_HSLICES_TEXT, ENC_HSLICES_LONGTEXT )
-    change_integer_range(-1, INT_MAX );
+    change_integer_range(-1, INT_MAX )
 
     /* advanced option only */
     add_integer( ENC_CFG_PREFIX ENC_VSLICES, -1,
                  ENC_VSLICES_TEXT, ENC_VSLICES_LONGTEXT )
-    change_integer_range(-1, INT_MAX );
+    change_integer_range(-1, INT_MAX )
 
     /* advanced option only */
     add_string( ENC_CFG_PREFIX ENC_FORCE_PROFILE, NULL,
                 ENC_FORCE_PROFILE_TEXT, NULL )
     change_string_list( enc_profile_list, enc_profile_list_text )
+#endif // !ENABLE_SOUT
 
 vlc_module_end ()
 
@@ -870,6 +875,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
     }
 }
 
+#ifdef ENABLE_SOUT
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
@@ -1013,24 +1019,21 @@ static inline bool SchroSetEnum( encoder_t *p_enc, int i_list_size, const char *
     return false;
 }
 
-static bool SetEncChromaFormat( encoder_t *p_enc, uint32_t i_codec )
+static bool SetEncChromaFormat( encoder_t *p_enc, vlc_fourcc_t chroma )
 {
     encoder_sys_t *p_sys = p_enc->p_sys;
 
-    switch( i_codec ) {
+    switch( chroma ) {
     case VLC_CODEC_I420:
-        p_enc->fmt_in.i_codec = i_codec;
-        p_enc->fmt_in.video.i_bits_per_pixel = 12;
+        p_enc->fmt_in.video.i_chroma = p_enc->fmt_in.i_codec = chroma;
         p_sys->p_format->chroma_format = SCHRO_CHROMA_420;
-           break;
+        break;
     case VLC_CODEC_I422:
-        p_enc->fmt_in.i_codec = i_codec;
-        p_enc->fmt_in.video.i_bits_per_pixel = 16;
+        p_enc->fmt_in.video.i_chroma = p_enc->fmt_in.i_codec = chroma;
         p_sys->p_format->chroma_format = SCHRO_CHROMA_422;
         break;
     case VLC_CODEC_I444:
-        p_enc->fmt_in.i_codec = i_codec;
-        p_enc->fmt_in.video.i_bits_per_pixel = 24;
+        p_enc->fmt_in.video.i_chroma = p_enc->fmt_in.i_codec = chroma;
         p_sys->p_format->chroma_format = SCHRO_CHROMA_444;
         break;
     default:
@@ -1167,22 +1170,22 @@ static int OpenEncoder( vlc_object_t *p_this )
     if( !psz_tmp )
         goto error;
     else {
-        uint32_t i_codec;
+        vlc_fourcc_t i_chroma;
         if( !strcmp( psz_tmp, "420" ) ) {
-            i_codec = VLC_CODEC_I420;
+            i_chroma = VLC_CODEC_I420;
         }
         else if( !strcmp( psz_tmp, "422" ) ) {
-            i_codec = VLC_CODEC_I422;
+            i_chroma = VLC_CODEC_I422;
         }
         else if( !strcmp( psz_tmp, "444" ) ) {
-            i_codec = VLC_CODEC_I444;
+            i_chroma = VLC_CODEC_I444;
         }
         else {
             msg_Err( p_enc, "Invalid chroma format: %s", psz_tmp );
             free( psz_tmp );
             goto error;
         }
-        SetEncChromaFormat( p_enc, i_codec );
+        SetEncChromaFormat( p_enc, i_chroma );
     }
     free( psz_tmp );
 
@@ -1449,14 +1452,12 @@ static block_t *Encode( encoder_t *p_enc, picture_t *p_pic )
         date_t date;
 
         if( p_pic->format.i_chroma != p_enc->fmt_in.i_codec ) {
-            char chroma_in[5], chroma_out[5];
-            vlc_fourcc_to_char( p_pic->format.i_chroma, chroma_in );
-            chroma_in[4]  = '\0';
-            chroma_out[4] = '\0';
-            vlc_fourcc_to_char( p_enc->fmt_in.i_codec, chroma_out );
-            msg_Warn( p_enc, "Resetting chroma from %s to %s", chroma_out, chroma_in );
+            msg_Warn( p_enc, "Resetting chroma from %4.4s to %4.4s",
+                      (const char*)&p_enc->fmt_in.i_codec,
+                      (const char*)&p_pic->format.i_chroma );
             if( !SetEncChromaFormat( p_enc, p_pic->format.i_chroma ) ) {
-                msg_Err( p_enc, "Could not reset chroma format to %s", chroma_in );
+                msg_Err( p_enc, "Could not reset chroma format to %4.4s",
+                         (const char*)&p_pic->format.i_chroma );
                 return NULL;
             }
         }
@@ -1608,3 +1609,4 @@ static void CloseEncoder( encoder_t *p_enc )
     /* We need to reset p_sys since CloseEncoder is also called during error. */
     p_enc->p_sys = NULL;
 }
+#endif // !ENABLE_SOUT

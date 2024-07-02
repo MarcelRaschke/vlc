@@ -29,25 +29,22 @@
 #endif
 
 #include <vlc_common.h>
-#include <vlc_player.h>
+#include <vlc_configuration.h>
+#include <vlc_threads.h>
+
+#include <memory>
 
 #include <qconfig.h>
 
 #define QT_NO_CAST_TO_ASCII
 #include <QString>
 
-static_assert (QT_VERSION >= QT_VERSION_CHECK(5, 11, 0),
-               "Update your Qt version to at least 5.11.0");
+static_assert (QT_VERSION >= QT_VERSION_CHECK(6, 2, 0),
+               "Update your Qt version to at least 6.2.0");
 
-#if ( QT_VERSION < QT_VERSION_CHECK(5, 15, 0) )
-# define QSIGNALMAPPER_MAPPEDINT_SIGNAL QOverload<int>::of(&QSignalMapper::mapped)
-# define QSIGNALMAPPER_MAPPEDSTR_SIGNAL QOverload<const QString &>::of(&QSignalMapper::mapped)
-# define QSIGNALMAPPER_MAPPEDOBJ_SIGNAL QOverload<QObject *>::of(&QSignalMapper::mapped)
-#else
 # define QSIGNALMAPPER_MAPPEDINT_SIGNAL &QSignalMapper::mappedInt
 # define QSIGNALMAPPER_MAPPEDSTR_SIGNAL &QSignalMapper::mappedString
 # define QSIGNALMAPPER_MAPPEDOBJ_SIGNAL &QSignalMapper::mappedObject
-#endif
 
 
 enum {
@@ -67,13 +64,14 @@ extern "C" {
 typedef struct intf_dialog_args_t intf_dialog_args_t;
 typedef struct vlc_playlist vlc_playlist_t;
 typedef struct intf_thread_t intf_thread_t;
+typedef struct vlc_player_t vlc_player_t;
 }
 
 namespace vlc {
 class Compositor;
 
 namespace playlist {
-class PlaylistControllerModel;
+class PlaylistController;
 }
 
 }
@@ -94,7 +92,6 @@ struct qt_intf_t
 
     vlc_thread_t thread;
 
-    class QVLCApp *p_app;          /* Main Qt Application */
     class MainCtx *p_mi;     /* Main Interface, NULL if DialogProvider Mode */
     class QSettings *mainSettings; /* Qt State settings not messing main VLC ones */
 
@@ -103,9 +100,9 @@ struct qt_intf_t
 
     vlc_playlist_t *p_playlist;  /* playlist */
     vlc_player_t *p_player; /* player */
-    vlc::playlist::PlaylistControllerModel* p_mainPlaylistController;
+    vlc::playlist::PlaylistController* p_mainPlaylistController;
     PlayerController* p_mainPlayerController;
-    vlc::Compositor*  p_compositor;
+    std::unique_ptr<vlc::Compositor>  p_compositor;
 
 #ifdef _WIN32
     bool disable_volume_keys;
@@ -115,26 +112,21 @@ struct qt_intf_t
     bool isShuttingDown;
 };
 
-/**
- * This class may be used for scope-bound locking/unlocking
- * of a player_t*. As hinted, the player is locked when
- * the object is created, and unlocked when the object is
- * destroyed.
- */
-struct vlc_player_locker {
-    vlc_player_locker( vlc_player_t* p_player )
-        : p_player( p_player )
+template <typename T, void (*LOCK)(T *), void (*UNLOCK)(T *)>
+class vlc_locker {
+    T * const ptr = nullptr;
+
+public:
+    explicit vlc_locker(T * const ptr)
+        : ptr(ptr)
     {
-        vlc_player_Lock( p_player );
+        LOCK(ptr);
     }
 
-    ~vlc_player_locker()
+    ~vlc_locker()
     {
-        vlc_player_Unlock( p_player );
+        UNLOCK(ptr);
     }
-
-    private:
-        vlc_player_t* p_player;
 };
 
 #define THEDP DialogsProvider::getInstance()
@@ -150,11 +142,6 @@ struct vlc_player_locker {
 #define qtr( i ) qfut( i )
 
 #define BUTTONACT( b, a ) connect( b, &QAbstractButton::clicked, this, a )
-
-#define BUTTON_SET_ACT( button, text, tooltip, thisslot ) \
-    button->setText( text );       \
-    button->setToolTip( tooltip ); \
-    BUTTONACT( button, thisslot );
 
 #define getSettings() p_intf->mainSettings
 
@@ -173,7 +160,5 @@ static inline QString QVLCUserDir( vlc_userdir_t type )
  * Note this icon doesn't represent an endorsment of Coca-Cola company.
  */
 #define QT_XMAS_JOKE_DAY 354
-
-#define QT_CLIENT_SIDE_DECORATION_AVAILABLE (QT_VERSION >= QT_VERSION_CHECK(5,15,0))
 
 #endif

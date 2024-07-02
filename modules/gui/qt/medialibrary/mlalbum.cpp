@@ -18,9 +18,10 @@
 #include <cassert>
 #include "mlalbum.hpp"
 
-MLAlbum::MLAlbum(const vlc_ml_album_t *_data, QObject *_parent)
-    : QObject( _parent )
-    , MLItem        ( MLItemId( _data->i_id, VLC_ML_PARENT_ALBUM ) )
+#include "util/vlctick.hpp"
+
+MLAlbum::MLAlbum(const vlc_ml_album_t *_data)
+    : MLItem        ( MLItemId( _data->i_id, VLC_ML_PARENT_ALBUM ) )
     , m_title       ( QString::fromUtf8( _data->psz_title ) )
     , m_releaseYear ( _data->i_year )
     , m_shortSummary( QString::fromUtf8( _data->psz_summary ) )
@@ -67,20 +68,3 @@ VLCTick MLAlbum::getDuration() const
 {
     return VLCTick::fromMS(m_duration);
 }
-
-QString MLAlbum::getPresName() const
-{
-    return m_title;
-}
-
-QString MLAlbum::getPresImage() const
-{
-    return m_cover;
-}
-
-QString MLAlbum::getPresInfo() const
-{
-    return m_shortSummary;
-}
-
-

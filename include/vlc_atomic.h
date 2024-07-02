@@ -36,9 +36,12 @@ using std::memory_order_relaxed;
 using std::memory_order_acq_rel;
 #endif
 # include <vlc_common.h>
+# include <vlc_tick.h>
+
+#include <time.h> /* vlc_atomic_timedwait_daytime */
 
 #define VLC_STATIC_RC { \
-    .refs = ATOMIC_VAR_INIT(0) \
+    .refs = (uintptr_t) 1 \
 }
 
 typedef struct vlc_atomic_rc_t {

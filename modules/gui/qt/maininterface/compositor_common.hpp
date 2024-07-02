@@ -22,6 +22,8 @@
 #include <QWindow>
 #include <QQuickWindow>
 
+#include <memory>
+
 namespace vlc {
 
 /**
@@ -34,9 +36,11 @@ class DummyRenderWindow : public QWindow
 {
     Q_OBJECT
 public:
+    ~DummyRenderWindow();
+
     explicit DummyRenderWindow(QWindow* parent = nullptr);
 
-    virtual QAccessibleInterface *accessibleRoot() const override;
+    QAccessibleInterface *accessibleRoot() const override;
 
 protected:
     bool event(QEvent *event) override;
@@ -47,8 +51,8 @@ private:
     void init();
     void render();
 
-    QBackingStore* m_backingStore = nullptr;
-    bool m_initialized = false;;
+    std::unique_ptr<QBackingStore> m_backingStore;
+    bool m_initialized = false;
 };
 
 

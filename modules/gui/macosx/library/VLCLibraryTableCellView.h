@@ -22,14 +22,19 @@
 
 #import <Cocoa/Cocoa.h>
 
+#import "library/VLCLibraryTableCellViewProtocol.h"
+
 NS_ASSUME_NONNULL_BEGIN
 
 @class VLCImageView;
 @class VLCTrackingView;
 @protocol VLCMediaLibraryItemProtocol;
 @class VLCInputItem;
+@class VLCLibraryRepresentedItem;
 
-@interface VLCLibraryTableCellView : NSTableCellView
+extern NSString * const VLCLibraryTableCellViewIdentifier;
+
+@interface VLCLibraryTableCellView : NSTableCellView<VLCLibraryTableCellViewProtocol>
 
 + (instancetype)fromNibWithOwner:(id)owner;
 
@@ -40,7 +45,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readwrite, assign) IBOutlet VLCImageView *representedImageView;
 @property (readwrite, assign) IBOutlet NSButton *playInstantlyButton;
 
-@property (readwrite, strong, nonatomic) id<VLCMediaLibraryItemProtocol> representedItem;
+@property (readwrite, strong, nonatomic) VLCLibraryRepresentedItem *representedItem;
 @property (readwrite, strong, nonatomic) VLCInputItem *representedInputItem;
 @property (readwrite, nonatomic) NSUInteger representedVideoLibrarySection;
 

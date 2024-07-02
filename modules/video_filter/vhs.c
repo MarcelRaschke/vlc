@@ -126,7 +126,8 @@ static int Open( filter_t *p_filter )
     const vlc_fourcc_t fourcc = p_filter->fmt_in.video.i_chroma;
     const vlc_chroma_description_t *p_chroma =
         vlc_fourcc_GetChromaDescription( p_filter->fmt_in.video.i_chroma );
-    if( !p_chroma || p_chroma->pixel_size == 0
+    assert( p_chroma != NULL );
+    if( p_chroma->pixel_size == 0
         || p_chroma->plane_count < 3 || p_chroma->pixel_size > 1
         || !vlc_fourcc_IsYUV( fourcc ) )
     {
@@ -488,7 +489,7 @@ static int vhs_sliding_effect_apply( filter_t *p_filter, picture_t *p_pic_out )
         uint8_t *p_temp_buf;
         if ( !p_sys->i_sliding_type_duplicate ) {
             p_temp_buf= calloc( p_pic_out->p[i_p].i_lines
-                                * p_pic_out->p[i_p].i_pitch, sizeof(uint8_t) );
+                                * p_pic_out->p[i_p].i_pitch, 1 );
             if ( unlikely( !p_temp_buf ) )
                 return VLC_ENOMEM;
             memcpy( p_temp_buf, p_pic_out->p[i_p].p_pixels,

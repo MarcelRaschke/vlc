@@ -88,58 +88,17 @@ enum vlc_player_lock_type
 };
 
 /**
- * Action when the player is stopped
- *
- * @see vlc_player_SetMediaStoppedAction()
- */
-enum vlc_player_media_stopped_action {
-    /** Continue (or stop if there is no next media), default behavior */
-    VLC_PLAYER_MEDIA_STOPPED_CONTINUE,
-    /** Pause when reaching the end of file */
-    VLC_PLAYER_MEDIA_STOPPED_PAUSE,
-    /** Stop, even if there is a next media to play */
-    VLC_PLAYER_MEDIA_STOPPED_STOP,
-    /** Exit VLC */
-    VLC_PLAYER_MEDIA_STOPPED_EXIT,
-};
-
-/**
- * Callbacks for the owner of the player.
- *
- * These callbacks are needed to control the player flow (via the
- * vlc_playlist_t as a owner for example). It can only be set when creating the
- * player via vlc_player_New().
- *
- * All callbacks are called with the player locked (cf. vlc_player_Lock()), and
- * from any thread (even the current one).
- */
-struct vlc_player_media_provider
-{
-    /**
-     * Called when the player requires a new media
-     *
-     * @note The returned media must be already held with input_item_Hold()
-     *
-     * @param player locked player instance
-     * @param data opaque pointer set from vlc_player_New()
-     * @return the next media to play, held by the callee with input_item_Hold()
-     */
-    input_item_t *(*get_next)(vlc_player_t *player, void *data);
-};
-
-/**
  * Create a new player instance
  *
  * @param parent parent VLC object
+ * @param lock_type whether the player lock is reentrant or not
  * @param media_provider pointer to a media_provider structure or NULL, the
  * structure must be valid during the lifetime of the player
  * @param media_provider_data opaque data used by provider callbacks
  * @return a pointer to a valid player instance or NULL in case of error
  */
 VLC_API vlc_player_t *
-vlc_player_New(vlc_object_t *parent, enum vlc_player_lock_type lock_type,
-               const struct vlc_player_media_provider *media_provider,
-               void *media_provider_data);
+vlc_player_New(vlc_object_t *parent, enum vlc_player_lock_type lock_type);
 
 /**
  * Delete a player instance
@@ -184,16 +143,6 @@ vlc_player_Unlock(vlc_player_t *player);
  */
 VLC_API void
 vlc_player_CondWait(vlc_player_t *player, vlc_cond_t *cond);
-
-/**
- * Setup an action when a media is stopped
- *
- * @param player locked player instance
- * @param action action to do when a media is stopped
- */
-VLC_API void
-vlc_player_SetMediaStoppedAction(vlc_player_t *player,
-                                 enum vlc_player_media_stopped_action action);
 
 /**
  * Ask to start in a paused state
@@ -390,6 +339,9 @@ enum vlc_player_restore_playback_pos
  * blocking. If a media is currently being played, this media will be stopped
  * and the requested media will be set after.
  *
+ * @note The function will open the media, without starting it, allowing the
+ * user to send controls (like seek requests) before Starting the player.
+ *
  * @warning This function is either synchronous (if the player state is
  * STOPPED) or asynchronous. In the later case, vlc_player_GetCurrentMedia()
  * will return the old media, even after this call, and until the
@@ -403,6 +355,25 @@ VLC_API int
 vlc_player_SetCurrentMedia(vlc_player_t *player, input_item_t *media);
 
 /**
+ * Set the next media
+ *
+ * This function replaces the next media to be played.
+ * The user should set the next media from the
+ * vlc_player_cbs.current_media_changed callback or anytime before the current
+ * media is stopped.
+ *
+ * @note The media won't be opened directly by this function. If there is no
+ * current media, the next media will be opened from vlc_player_Start(). If
+ * there is a current playing media, the next media will be opened and played
+ * automatically.
+ *
+ * @param player locked player instance
+ * @param media next media to play (will be held by the player)
+ */
+VLC_API void
+vlc_player_SetNextMedia(vlc_player_t *player, input_item_t *media);
+
+/**
  * Get the current played media.
  *
  * @see vlc_player_cbs.on_current_media_changed
@@ -414,6 +385,17 @@ VLC_API input_item_t *
 vlc_player_GetCurrentMedia(vlc_player_t *player);
 
 /**
+ * Get the next played media.
+ *
+ * This function return the media set by vlc_player_SetNextMedia()
+ *
+ * @param player locked player instance
+ * @return a valid media or NULL (if no next media is set)
+ */
+VLC_API input_item_t *
+vlc_player_GetNextMedia(vlc_player_t *player);
+
+/**
  * Helper that hold the current media
  */
 static inline input_item_t *
@@ -422,21 +404,6 @@ vlc_player_HoldCurrentMedia(vlc_player_t *player)
     input_item_t *item = vlc_player_GetCurrentMedia(player);
     return item ? input_item_Hold(item) : NULL;
 }
-
-/**
- * Invalidate the next media.
- *
- * This function can be used to invalidate the media returned by the
- * vlc_player_media_provider.get_next callback. This can be used when the next
- * item from a playlist was changed by the user.
- *
- * Calling this function will trigger the
- * vlc_player_media_provider.get_next callback to be called again.
- *
- * @param player locked player instance
- */
-VLC_API void
-vlc_player_InvalidateNextMedia(vlc_player_t *player);
 
 /**
  * Start the playback of the current media.
@@ -789,10 +756,12 @@ vlc_player_DisplayPosition(vlc_player_t *player);
  * Enable A to B loop of the current media
  *
  * This function need to be called 2 times with VLC_PLAYER_ABLOOP_A and
- * VLC_PLAYER_ABLOOP_B to setup an A to B loop. It current the current
- * time/position when called. The B time must be higher than the A time.
+ * VLC_PLAYER_ABLOOP_B to setup an A to B loop. It uses and stores the
+ * current time/position when called. The B time must be higher than the
+ * A time.
  *
  * @param player locked player instance
+ * @param abloop select which A/B cursor to set
  * @return VLC_SUCCESS or a VLC error code
  */
 VLC_API int
@@ -896,6 +865,10 @@ vlc_player_AddAssociatedMedia(vlc_player_t *player,
  * Get the signal quality and strength of the current media
  *
  * @param player locked player instance
+ * @param quality a pointer that will be assigned with the signal quality
+ * @param strength a pointer that will be assigned with the signal strength
+ * @retval VLC_SUCCESS when quality and strength have been assigned
+ * @retval VLC_EGENERIC in case of error (strength and quality are not assigned)
  */
 VLC_API int
 vlc_player_GetSignal(vlc_player_t *player, float *quality, float *strength);
@@ -1008,6 +981,7 @@ vlc_player_title_list_GetCount(vlc_player_title_list *titles);
 /**
  * Get the title at a given index
  *
+ * @param titles a valid title list
  * @param idx index in the range [0; count[
  * @return a valid title (can't be NULL)
  */
@@ -1138,7 +1112,7 @@ vlc_player_GetSelectedChapter(vlc_player_t *player)
  * Select a chapter index for the current media
  *
  * @note A successful call will trigger the
- * vlc_player_cbs.on_chaper_selection_changed event.
+ * vlc_player_cbs.on_chapter_selection_changed event.
  *
  * @see vlc_player_title.chapters
  *
@@ -1980,6 +1954,26 @@ vlc_player_SetAudioDelay(vlc_player_t *player, vlc_tick_t delay,
 }
 
 /**
+ * Helper to get the audio delay
+ */
+static inline vlc_tick_t
+vlc_player_GetVideoDelay(vlc_player_t *player)
+{
+    return vlc_player_GetCategoryDelay(player, VIDEO_ES);
+}
+
+/**
+ * Helper to set the audio delay
+ */
+static inline void
+vlc_player_SetVideoDelay(vlc_player_t *player, vlc_tick_t delay,
+                         enum vlc_player_whence whence)
+
+{
+    vlc_player_SetCategoryDelay(player, VIDEO_ES, delay, whence);
+}
+
+/**
  * Helper to get the subtitle delay
  */
 static inline vlc_tick_t
@@ -2240,6 +2234,7 @@ union vlc_player_metadata_cbs
  * vlc_player_RemoveMetadataListener().
  *
  * @param player locked player instance
+ * @param option select which metadata to listen
  * @param cbs pointer to a vlc_player_metadata_cbs union, the
  * structure must be valid during the lifetime of the player
  * @param cbs_data opaque pointer used by the callbacks
@@ -2751,8 +2746,10 @@ struct vlc_player_cbs
      * the next media internally) or from the STOPPED state (from
      * vlc_player_SetCurrentMedia() or from an internal transition).
      *
+     * The user could set the next media via vlc_player_SetNextMedia() from
+     * the current callback or anytime before the current media is stopped.
+
      * @see vlc_player_SetCurrentMedia()
-     * @see vlc_player_InvalidateNextMedia()
      *
      * @param player locked player instance
      * @param new_media new media currently played or NULL (when there is no
@@ -3115,19 +3112,7 @@ struct vlc_player_cbs
         void *data);
 
     /**
-     * Called when media stopped action has changed
-     *
-     * @see vlc_player_SetMediaStoppedAction()
-     *
-     * @param player locked player instance
-     * @param new_action action to execute when a media is stopped
-     * @param data opaque pointer set by vlc_player_AddListener()
-     */
-    void (*on_media_stopped_action_changed)(vlc_player_t *player,
-        enum vlc_player_media_stopped_action new_action, void *data);
-
-    /**
-     * Called when the media meta has changed
+     * Called when the media meta and/or info has changed
      *
      * @param player locked player instance
      * @param media current media
@@ -3156,6 +3141,24 @@ struct vlc_player_cbs
      */
     void (*on_media_subitems_changed)(vlc_player_t *player,
         input_item_t *media, input_item_node_t *new_subitems, void *data);
+
+    /**
+     * Called when new attachments are added to the media
+     *
+     * @note It can be called several times for one parse request. The array
+     * contains only new elements after a second call.
+     *
+     * @param player locked player instance
+     * @param media current media
+     * @param array valid array containing new elements, should only be used
+     * within the callback. One and all elements can be held and stored on a
+     * new variable or new array.
+     * @param count number of elements in the array
+     * @param data opaque pointer set by vlc_player_AddListener()
+     */
+    void (*on_media_attachments_added)(vlc_player_t *player,
+        input_item_t *media, input_attachment_t *const *array, size_t count,
+        void *data);
 
     /**
      * Called when a vout is started or stopped
@@ -3212,6 +3215,23 @@ struct vlc_player_cbs
      * @param data opaque pointer set by vlc_player_AddListener()
      */
     void (*on_playback_restore_queried)(vlc_player_t *player, void *data);
+
+    /**
+     * Called when the player will stop the current media.
+     *
+     * @note This can be called from the PLAYING state, before the
+     * player requests the next media, or from the STOPPING state, ie.
+     * when the player is stopping.
+     *
+     * @see vlc_player_SetCurrentMedia()
+     * @see vlc_player_Stop()
+     *
+     * @param player locked player instance
+     * @param prev_media media currently stopping
+     * @param data opaque pointer set by vlc_player_AddListener()
+     */
+    void (*on_stopping_current_media)(vlc_player_t *player,
+            input_item_t *current_media, void *data);
 };
 
 /**
@@ -3335,6 +3355,15 @@ struct vlc_player_timer_cbs
      * @param data opaque pointer set by vlc_player_AddTimer()
      */
     void (*on_discontinuity)(vlc_tick_t system_date, void *data);
+
+    /**
+     * Called when the player is seeking or finished seeking
+     *
+     * @param value point of the seek request or NULL when seeking is finished
+     * value.system_date = VLC_TICK_MAX in that case
+     * @param data opaque pointer set by vlc_player_AddTimer()
+     */
+    void (*on_seek)(const struct vlc_player_timer_point *value, void *data);
 };
 
 /**

@@ -24,96 +24,22 @@
 
 #include <assert.h>
 
-#include <vlc_common.h>
+#include "h26x.h"
+#include "fmtp.h"
+
 #include <vlc_plugin.h>
-#include <vlc_block.h>
-#include <vlc_strings.h>
 #include <vlc_codec.h>
 
-#include "rtp.h"
-#include "sdp.h"
-
-struct rtp_h26x_sys
+struct h264_pt_opaque
 {
-    vlc_tick_t pts;
-    block_t **pp_packets_next;
-    block_t *p_packets;
-    block_t *xps;
-    struct vlc_rtp_es *es;
+    block_t *sdpxps;
+    vlc_object_t *obj;
 };
-
-static void rtp_h26x_clear(struct rtp_h26x_sys *sys)
-{
-    block_ChainRelease(sys->p_packets);
-    if(sys->xps)
-        block_Release(sys->xps);
-}
-
-static void rtp_h26x_init(struct rtp_h26x_sys *sys)
-{
-    sys->pts = VLC_TICK_INVALID;
-    sys->p_packets = NULL;
-    sys->pp_packets_next = &sys->p_packets;
-    sys->xps = NULL;
-    sys->es = NULL;
-}
-
-static const uint8_t annexbheader[] = { 0, 0, 0, 1 };
-
-static block_t * h26x_wrap_prefix(block_t *block, bool b_annexb)
-{
-    block = block_Realloc(block, 4, block->i_buffer);
-    if(block)
-    {
-        if(b_annexb)
-            memcpy(block->p_buffer, annexbheader, 4);
-        else
-            SetDWBE(block->p_buffer, block->i_buffer - 4);
-    }
-    return block;
-}
-
-static void h26x_extractbase64xps(const char *psz64,
-                                  const char *pszend,
-                                  void(*pf_output)(void *, uint8_t *, size_t),
-                                  void *outputsys)
-{
-    do
-    {
-        psz64 += strspn(psz64, " ");
-        uint8_t *xps = NULL;
-        size_t xpssz = vlc_b64_decode_binary(&xps, psz64);
-        pf_output(outputsys, xps, xpssz);
-        psz64 = strchr(psz64, ',');
-        if(psz64)
-            ++psz64;
-    } while(psz64 && *psz64 && psz64 < pszend);
-}
-
-static void h264_add_xps(void *priv, uint8_t *xps, size_t xpssz)
-{
-    block_t *b = block_heap_Alloc(xps, xpssz);
-    if(!b || !(b = h26x_wrap_prefix(b, true)))
-        return;
-
-    block_t ***ppp_append = priv;
-    **ppp_append = b;
-    *ppp_append = &((**ppp_append)->p_next);
-}
-
-static block_t * h264_fillextradata (const char *psz)
-{
-    block_t *xps = NULL;
-    block_t **pxps = &xps;
-    h26x_extractbase64xps(psz, strchr(psz, ';'), h264_add_xps, &pxps);
-    if(xps)
-        xps = block_ChainGather(xps);
-    return xps;
-}
 
 static void *rtp_h264_init(struct vlc_rtp_pt *pt)
 {
-    block_t *sdpparams = pt->opaque;
+    struct h264_pt_opaque *opaque = pt->opaque;
+    block_t *sdpparams = opaque->sdpxps;
     struct rtp_h26x_sys *sys = malloc(sizeof(*sys));
     if(!sys)
         return NULL;
@@ -123,7 +49,14 @@ static void *rtp_h264_init(struct vlc_rtp_pt *pt)
     es_format_Init (&fmt, VIDEO_ES, VLC_CODEC_H264);
     fmt.b_packetized = false;
 
-    sys->es = vlc_rtp_pt_request_es(pt, &fmt);
+    sys->p_packetizer = demux_PacketizerNew(opaque->obj, &fmt, "rtp packetizer");
+    if(!sys->p_packetizer)
+    {
+        free(sys);
+        return NULL;
+    }
+
+    sys->es = vlc_rtp_pt_request_es(pt, &sys->p_packetizer->fmt_out);
     if(sdpparams)
         sys->xps = block_Duplicate(sdpparams);
 
@@ -136,6 +69,8 @@ static void rtp_h264_destroy(struct vlc_rtp_pt *pt, void *data)
     struct rtp_h26x_sys *sys = data;
     if(sys)
     {
+        if(sys->p_packetizer)
+            demux_PacketizerDestroy(sys->p_packetizer);
         vlc_rtp_es_destroy(sys->es);
         rtp_h26x_clear(sys);
         free(sys);
@@ -224,41 +159,6 @@ static block_t * h264_chainsplit_MTAP(block_t *block, bool b_24ext,
     }
     block_Release(block);
     return p_chain;
-}
-
-static void h26x_output(struct rtp_h26x_sys *sys,
-                        block_t *block,
-                        vlc_tick_t pts, bool pcr, bool au_end)
-{
-//    if(pcr)
-//        es_out_SetPCR(out, pts);
-
-    if(!block)
-        return;
-
-    if(sys->xps)
-    {
-        block_t *xps = sys->xps;
-        sys->xps = NULL;
-        h26x_output(sys, xps, pts, pcr, false);
-    }
-
-    block->i_pts = pts;
-    block->i_dts = VLC_TICK_INVALID; /* RTP does not specify this */
-    if(au_end)
-        block->i_flags |= BLOCK_FLAG_AU_END;
-    vlc_rtp_es_send(sys->es, block);
-}
-
-static void h26x_output_blocks(struct rtp_h26x_sys *sys, bool b_annexb)
-{
-    if(!sys->p_packets)
-        return;
-    block_t *out = block_ChainGather(sys->p_packets);
-    sys->p_packets = NULL;
-    sys->pp_packets_next = &sys->p_packets;
-    out = h26x_wrap_prefix(out, b_annexb);
-    h26x_output(sys, out, sys->pts, true, false);
 }
 
 static void rtp_h264_decode(struct vlc_rtp_pt *pt, void *data, block_t *block,
@@ -354,9 +254,10 @@ drop:
 
 static void rtp_h264_release(struct vlc_rtp_pt *pt)
 {
-    block_t *sdpparams = pt->opaque;
-    if(sdpparams)
-        block_Release(sdpparams);
+    struct h264_pt_opaque *opaque = pt->opaque;
+    if(opaque->sdpxps)
+        block_Release(opaque->sdpxps);
+    free(opaque);
 }
 
 static const struct vlc_rtp_pt_operations rtp_h264_ops = {
@@ -371,8 +272,9 @@ static int rtp_h264_open(vlc_object_t *obj, struct vlc_rtp_pt *pt,
     if(!desc->parameters)
         return VLC_ENOTSUP;
 
-    const char *psz = strstr(desc->parameters, "packetization-mode=");
-    if(!psz || psz[19] == '\0' || atoi(&psz[19]) > 1)
+    uint8_t mode = 0;
+    int ret = vlc_sdp_fmtp_get(desc, "packetization-mode", &mode);
+    if ((ret && ret != -ENOENT) || mode > 1)
         return VLC_ENOTSUP;
 
     if (vlc_ascii_strcasecmp(desc->name, "H264") == 0)
@@ -380,13 +282,17 @@ static int rtp_h264_open(vlc_object_t *obj, struct vlc_rtp_pt *pt,
     else
         return VLC_ENOTSUP;
 
-    pt->opaque = NULL;
-    if(desc->parameters)
-    {
-        psz = strstr(desc->parameters, "sprop-parameter-sets=");
-        if(psz)
-            pt->opaque = h264_fillextradata(psz + 21);
-    }
+    struct h264_pt_opaque *opaque = calloc(1, sizeof(*opaque));
+    if(!opaque)
+        return VLC_ENOMEM;
+    pt->opaque = opaque;
+
+    opaque->obj = obj;
+
+    size_t sprop_len;
+    const char *sprop = vlc_sdp_fmtp_get_str(desc, "sprop-parameter-sets", &sprop_len);
+    if (sprop && sprop_len)
+        opaque->sdpxps = h26x_fillextradata(sprop);
 
     return VLC_SUCCESS;
 }

@@ -56,7 +56,7 @@ void AbstractConnectionManager::updateDownloadRate(const adaptive::ID &sourceid,
     {
         BwDebug(msg_Dbg(p_object,
                 "%" PRId64 "Kbps downloaded %zuKBytes in %" PRId64 "ms latency %" PRId64 "ms [%s]",
-                1000 * size * 8 / (time ? time : 1), size / 1024, MS_FROM_VLC_TICK(time),
+                INT64_C(1000) * size * 8 / (time ? time : 1), size / 1024, MS_FROM_VLC_TICK(time),
                 latency / 1000, sourceid.str().c_str()));
         rateObserver->updateDownloadRate(sourceid, size, time, latency);
     }
@@ -93,7 +93,7 @@ HTTPConnectionManager::~HTTPConnectionManager   ()
         cache.pop_back();
         assert(cache_total >= purged->contentLength);
         cache_total -= purged->contentLength;
-        CacheDebug(msg_Dbg(p_object, "Cache DEL '%s' usage %u bytes",
+        CacheDebug(msg_Dbg(p_object, "Cache DEL '%s' usage %zu bytes",
                             purged->getStorageID().c_str(), cache_total));
         deleteSource(purged);
     }
@@ -184,7 +184,7 @@ AbstractChunkSource *HTTPConnectionManager::makeSource(const std::string &url,
                     cache.remove(s);
                     assert(cache_total >= s->contentLength);
                     cache_total -= s->contentLength;
-                    CacheDebug(msg_Dbg(p_object, "Cache GET '%s' usage %u bytes",
+                    CacheDebug(msg_Dbg(p_object, "Cache GET '%s' usage %zu bytes",
                                        storageid.c_str(), cache_total));
                     return s;
                 }
@@ -217,7 +217,7 @@ void HTTPConnectionManager::recycleSource(AbstractChunkSource *source)
 
     HTTPChunkBufferedSource *buf = dynamic_cast<HTTPChunkBufferedSource *>(source);
     if(buf && b_cacheable && !buf->getStorageID().empty() &&
-       buf->contentLength < cache_max)
+       buf->contentLength && buf->contentLength < cache_max)
     {
         while(cache_max < cache_total + buf->contentLength)
         {
@@ -225,13 +225,13 @@ void HTTPConnectionManager::recycleSource(AbstractChunkSource *source)
             cache.pop_back();
             assert(cache_total >= purged->contentLength);
             cache_total -= purged->contentLength;
-            CacheDebug(msg_Dbg(p_object, "Cache DEL '%s' usage %u bytes",
+            CacheDebug(msg_Dbg(p_object, "Cache DEL '%s' usage %zu bytes",
                                purged->getStorageID().c_str(), cache_total));
             deleteSource(purged);
         }
         cache.push_front(buf);
         cache_total += buf->contentLength;
-        CacheDebug(msg_Dbg(p_object, "Cache PUT '%s' usage %u bytes",
+        CacheDebug(msg_Dbg(p_object, "Cache PUT '%s' usage %zu bytes",
                            buf->getStorageID().c_str(), cache_total));
     }
     else

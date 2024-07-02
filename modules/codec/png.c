@@ -31,6 +31,7 @@
 #include <vlc_plugin.h>
 #include <vlc_codec.h>
 #include <vlc_rand.h>
+#include <vlc_ancillary.h>
 #include <png.h>
 
 /* PNG_SYS_COMMON_MEMBERS:
@@ -90,12 +91,22 @@ vlc_module_begin ()
     set_callback( OpenDecoder )
     add_shortcut( "png" )
 
-    /* encoder submodule */
+#ifdef ENABLE_SOUT
+    /* video encoder submodule */
     add_submodule()
     add_shortcut("png")
     set_section(N_("Encoding"), NULL)
     set_description(N_("PNG video encoder"))
     set_capability("video encoder", 1000)
+    set_callback(OpenEncoder)
+#endif
+
+    /* image encoder submodule */
+    add_submodule()
+    add_shortcut("png")
+    set_section(N_("Encoding"), NULL)
+    set_description(N_("PNG image encoder"))
+    set_capability("image encoder", 1000)
     set_callback(OpenEncoder)
 vlc_module_end ()
 
@@ -156,7 +167,7 @@ static void user_write( png_structp p_png, png_bytep data, png_size_t i_length )
 {
     block_t *p_block = (block_t *)png_get_io_ptr( p_png );
     if( i_length > p_block->i_buffer ) {
-        char err_str[64];
+        char err_str[128];
         snprintf( err_str, sizeof(err_str),
                   "block size %zu too small for %zu encoded bytes",
                   p_block->i_buffer, i_length );
@@ -212,7 +223,7 @@ static int make_xmp_packet( const video_format_t *fmt, png_textp chunk )
                "</rdf:Description>"
               "</rdf:RDF>"
              "</x:xmpmeta>"
-            "<?xpacket end='r'?>", id, ORIENT_TO_EXIF(fmt->orientation) );
+            "<?xpacket end='r'?>", id, (uint8_t)ORIENT_TO_EXIF(fmt->orientation) );
     if(len == 0)
     {
         free(chunk->text);
@@ -419,9 +430,8 @@ static int OpenEncoder(vlc_object_t *p_this)
     p_sys->i_blocksize = 3 * p_enc->fmt_in.video.i_visible_width *
         p_enc->fmt_in.video.i_visible_height;
 
-    p_enc->fmt_in.i_codec = VLC_CODEC_RGB24;
-    p_enc->fmt_in.video.i_bmask = 0;
-    video_format_FixRgb( &p_enc->fmt_in.video );
+    p_enc->fmt_in.i_codec =
+    p_enc->fmt_in.video.i_chroma = VLC_CODEC_RGB24;
 
     static const struct vlc_encoder_operations ops =
         { .encode_video = EncodeBlock };

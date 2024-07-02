@@ -1,9 +1,9 @@
 /*****************************************************************************
- * VLCLibraryTableView.m: MacOS X interface module
+ * VLCLibraryTableView.h: MacOS X interface module
  *****************************************************************************
  * Copyright (C) 2022 VLC authors and VideoLAN
  *
- * Authors: Claudio Cambra <claudio.cambra@gmail.com>
+ * Authors: Claudio Cambra <developer@claudiocambra.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,15 +23,6 @@
 #import <Cocoa/Cocoa.h>
 
 NS_ASSUME_NONNULL_BEGIN
-
-@protocol VLCMediaLibraryItemProtocol;
-
-@protocol VLCLibraryTableViewDataSource <NSTableViewDataSource>
-
-- (id<VLCMediaLibraryItemProtocol>)libraryItemAtRow:(NSInteger)row
-                                       forTableView:(NSTableView *)tableView;
-
-@end
 
 @interface VLCLibraryTableView : NSTableView<NSMenuDelegate>
 

@@ -43,6 +43,8 @@
 #include <vlc_media_library.h>
 #include <ftw.h>
 
+#include "../lib/libvlc_internal.h"
+
 const char vlc_module_name[] = MODULE_STRING;
 
 static int exitcode = 0;
@@ -104,7 +106,7 @@ static int cleanup_tmpdir(const char *dirpath, const struct stat *sb,
     return remove(dirpath);
 }
 
-int main()
+int main(void)
 {
     char template[] = "/tmp/vlc.test." MODULE_STRING ".XXXXXX";
     const char *tempdir = mkdtemp(template);
@@ -113,8 +115,8 @@ int main()
         assert(tempdir != NULL);
         return -1;
     }
-    fprintf(stderr, "Using XDG_DATA_HOME directory %s\n", tempdir);
-    setenv("XDG_DATA_HOME", tempdir, 1);
+    fprintf(stderr, "Using VLC_USERDATA_PATH directory %s\n", tempdir);
+    setenv("VLC_USERDATA_PATH", tempdir, 1);
 
     test_init();
 
@@ -125,8 +127,8 @@ int main()
 
     libvlc_instance_t *vlc = libvlc_new(ARRAY_SIZE(args), args);
 
-    libvlc_add_intf(vlc, MODULE_STRING);
-    libvlc_playlist_play(vlc);
+    libvlc_InternalAddIntf(vlc->p_libvlc_int, MODULE_STRING);
+    libvlc_InternalPlay(vlc->p_libvlc_int);
 
     libvlc_release(vlc);
 

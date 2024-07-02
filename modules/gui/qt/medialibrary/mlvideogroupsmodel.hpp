@@ -36,6 +36,7 @@ public:
     {
         // NOTE: Group specific.
         GROUP_IS_VIDEO = VIDEO_TITLE_FIRST_SYMBOL + 1,
+        GROUP_TITLE_FIRST_SYMBOL,
         GROUP_DATE,
         GROUP_COUNT
     };
@@ -55,18 +56,18 @@ protected: // MLVideoModel reimplementation
 
     QByteArray criteriaToName(vlc_ml_sorting_criteria_t criteria) const override;
 
-    std::unique_ptr<MLBaseModel::BaseLoader> createLoader() const override;
+    std::unique_ptr<MLListCacheLoader> createMLLoader() const override;
 
     void onVlcMlEvent(const MLEvent & event) override;
 
 private:
-    struct Loader : public BaseLoader
+    struct Loader : public MLListCacheLoader::MLOp
     {
-        Loader(const MLVideoGroupsModel & model);
+        using MLListCacheLoader::MLOp::MLOp;
 
-        size_t count(vlc_medialibrary_t* ml) const override;
+        size_t count(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const override;
 
-        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, size_t index, size_t count) const override;
+        std::vector<std::unique_ptr<MLItem>> load(vlc_medialibrary_t* ml, const vlc_ml_query_params_t* queryParams) const override;
 
         std::unique_ptr<MLItem> loadItemById(vlc_medialibrary_t* ml, MLItemId itemId) const override;
     };

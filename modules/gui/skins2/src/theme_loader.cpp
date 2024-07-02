@@ -32,9 +32,11 @@
 #include <memory>
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_fs.h>
 #include <vlc_url.h>
 #include <vlc_stream_extractor.h>
+#include <vlc_charset.h>
 
 #include "theme_loader.hpp"
 #include "theme.hpp"
@@ -47,6 +49,18 @@
 #define DEFAULT_XML_FILE "theme.xml"
 #define WINAMP2_XML_FILE "winamp2.xml"
 
+#if defined( __OS2__ )
+/// Wrapper around FromLocale, to avoid the need to call LocaleFree()
+static inline std::string sFromLocale( const std::string &rLocale )
+{
+    const char *s = FromLocale( rLocale.c_str() );
+    std::string res = s;
+    LocaleFree( s );
+    return res;
+}
+#endif
+
+
 /* Recursive make directory
  * Abort if you get an ENOENT errno somewhere in the middle
  * e.g. ignore error "mkdir on existing directory"
@@ -55,45 +69,11 @@
  */
 static int makedir( const char *newdir )
 {
-    char *p, *buffer = strdup( newdir );
-    int  len = strlen( buffer );
-
-    if( len <= 0 )
-    {
-        free( buffer );
-        return 0;
-    }
-
-    if( buffer[len-1] == '/' )
-    {
-        buffer[len-1] = '\0';
-    }
-
-    if( vlc_mkdir( buffer, 0775 ) == 0 )
-    {
-        free( buffer );
+    int ret = vlc_mkdir_parent(newdir, 0775);
+    if (ret == 0)
         return 1;
-    }
-
-    p = buffer + 1;
-    while( 1 )
-    {
-        char hold;
-
-        while( *p && *p != '\\' && *p != '/' ) p++;
-        hold = *p;
-        *p = 0;
-        if( ( vlc_mkdir( buffer, 0775 ) == -1 ) && ( errno == ENOENT ) )
-        {
-            fprintf( stderr, "couldn't create directory %s\n", buffer );
-            free( buffer );
-            return 0;
-        }
-        if( hold == 0 ) break;
-        *p++ = hold;
-    }
-    free( buffer );
-    return 1;
+    fprintf(stderr, "couldn't create directory %s\n", newdir);
+    return 0;
 }
 
 bool ThemeLoader::load( const std::string &fileName )
@@ -213,7 +193,7 @@ bool ThemeLoader::unarchive( const std::string& fileName, const std::string &tem
     }
 
     stream_t* stream = input.get();
-    if( vlc_stream_directory_Attach( &stream, NULL ) )
+    if( vlc_stream_directory_Attach( &stream, NULL, NULL, 0 ) )
     {
         msg_Err( getIntf(), "unable to attach stream_directory, treat as XML!" );
     }

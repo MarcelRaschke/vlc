@@ -27,7 +27,7 @@
  * C++ memory management helpers
  ******************************************************************************/
 
-#ifdef __cplusplus
+#if defined(__cplusplus) || defined(DOC)
 
 #include <memory>
 #include <utility>
@@ -258,8 +258,8 @@ public:
      * If hold is false, then the caller transfers the ownership to this
      * wrapper.
      *
-     * \param ptr  the raw pointer (can be nullptr)
-     * \param hold whether the resource must be hold
+     * \param newptr  the raw pointer (can be nullptr)
+     * \param hold    whether the resource must be hold
      */
     void reset(T *newptr = nullptr, bool hold = true)
     {
@@ -276,7 +276,7 @@ public:
     ::vlc::vlc_shared_data_ptr<type, decltype(&hold), decltype(&release), \
                                &hold, &release>
 
-#ifdef VLC_THREADS_H_
+#if defined(VLC_THREADS_H_) || defined(DOC)
 
 namespace threads
 {

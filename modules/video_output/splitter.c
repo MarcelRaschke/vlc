@@ -52,7 +52,7 @@ typedef struct vout_display_sys_t {
 } vout_display_sys_t;
 
 static void vlc_vidsplit_Prepare(vout_display_t *vd, picture_t *pic,
-                                 subpicture_t *subpic, vlc_tick_t date)
+                                 const vlc_render_subpicture *subpic, vlc_tick_t date)
 {
     vout_display_sys_t *sys = vd->sys;
 
@@ -102,10 +102,9 @@ static int vlc_vidsplit_Control(vout_display_t *vd, int query)
 
     switch (query) {
         case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
-        case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
-        case VOUT_DISPLAY_CHANGE_ZOOM:
         case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
         case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
+        case VOUT_DISPLAY_CHANGE_SOURCE_PLACE:
             return VLC_SUCCESS;
     }
     return VLC_EGENERIC;
@@ -256,6 +255,8 @@ static int vlc_vidsplit_Open(vout_display_t *vd,
 
     vlc_mutex_init(&sys->lock);
     video_format_Copy(&splitter->fmt, vd->source);
+    splitter->fmt.orientation = ORIENT_NORMAL;
+    fmtp->orientation = ORIENT_NORMAL;
 
     splitter->p_module = module_need(splitter, "video splitter", name, true);
     free(name);
@@ -285,6 +286,7 @@ static int vlc_vidsplit_Open(vout_display_t *vd,
                 .align = { 0, 0 } /* TODO */,
                 .fitting = VLC_VIDEO_FIT_SMALLER,
                 .zoom = { 1, 1 },
+                .full_fill = true,
             },
         };
         const char *modname = output->psz_module;
@@ -324,7 +326,6 @@ static int vlc_vidsplit_Open(vout_display_t *vd,
     }
 
     vd->ops = &ops;
-    (void) fmtp;
     return VLC_SUCCESS;
 }
 

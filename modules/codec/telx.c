@@ -325,6 +325,11 @@ static void to_utf8( char * res, uint16_t ch )
     }
 }
 
+/**
+ * Decode a packet, potentially decoding strings from utc-2 to utf-8.
+ *
+ * Decoding a packet of size \p len will write at most `len * 3 + 1`.
+ */
 static void decode_string( char * res, int res_len,
                            decoder_sys_t *p_sys, int magazine,
                            const uint8_t * packet, int len )
@@ -410,6 +415,7 @@ static void decode_string( char * res, int res_len,
         /* convert to utf-8 */
         to_utf8( utf8, out );
         l = strlen( utf8 );
+        assert(l < 4);
         if ( pt + l < res + res_len - 1 )
         {
             strcpy(pt, utf8);
@@ -428,7 +434,6 @@ static bool DecodePageHeaderPacket( decoder_t *p_dec, const uint8_t *packet,
     decoder_sys_t *p_sys = p_dec->p_sys;
 
     int flag = 0;
-    char psz_line[256];
 
     for ( int a = 0; a < 6; a++ )
     {
@@ -442,6 +447,7 @@ static bool DecodePageHeaderPacket( decoder_t *p_dec, const uint8_t *packet,
     p_sys->i_page[magazine] = (0xF0 & bytereverse( hamming_8_4(packet[7]) )) | /* tens */
                               (0x0F & (bytereverse( hamming_8_4(packet[6]) ) >> 4) ); /* units */
 
+    char psz_line[(40 - 14) * 3 + 1];
     decode_string( psz_line, sizeof(psz_line), p_sys, magazine,
                    packet + 14, 40 - 14 );
 
@@ -498,8 +504,8 @@ static bool DecodePageHeaderPacket( decoder_t *p_dec, const uint8_t *packet,
     /* replace the row if it's different */
     if ( strcmp(psz_line, p_sys->ppsz_lines[0]) )
     {
-        strncpy( p_sys->ppsz_lines[0], psz_line,
-                 sizeof(p_sys->ppsz_lines[0]) - 1);
+        strlcpy( p_sys->ppsz_lines[0], psz_line,
+                 sizeof(p_sys->ppsz_lines[0]) );
     }
 
     return true;
@@ -511,13 +517,13 @@ static bool DecodePacketX1_X23( decoder_t *p_dec, const uint8_t *packet,
     decoder_sys_t *p_sys = p_dec->p_sys;
 
     bool b_update = false;
-    char psz_line[256];
     char * t;
     int i;
 
     if ( p_sys->i_wanted_page == -1 && p_sys->i_page[magazine] > 0x99)
         return false;
 
+    char psz_line[40 * 3 + 1];
     decode_string( psz_line, sizeof(psz_line), p_sys, magazine,
                    packet + 6, 40 );
     t = psz_line;
@@ -532,8 +538,8 @@ static bool DecodePacketX1_X23( decoder_t *p_dec, const uint8_t *packet,
     /* replace the row if it's different */
     if ( strcmp( t, p_sys->ppsz_lines[row] ) )
     {
-        strncpy( p_sys->ppsz_lines[row], t,
-                 sizeof(p_sys->ppsz_lines[row]) - 1 );
+        strlcpy( p_sys->ppsz_lines[row], t,
+                 sizeof(p_sys->ppsz_lines[row]) );
         b_update = true;
     }
 
@@ -573,15 +579,15 @@ static bool DecodePacketX25( decoder_t *p_dec, const uint8_t *packet,
     decoder_sys_t *p_sys = p_dec->p_sys;
 
     /* row 25 : alternate header line */
-    char psz_line[256];
+    char psz_line[40 * 3 + 1];
     decode_string( psz_line, sizeof(psz_line), p_sys, magazine,
                    packet + 6, 40 );
 
     /* replace the row if it's different */
     if ( strcmp( psz_line, p_sys->ppsz_lines[0] ) )
     {
-        strncpy( p_sys->ppsz_lines[0], psz_line,
-                 sizeof(p_sys->ppsz_lines[0]) - 1 );
+        strlcpy( p_sys->ppsz_lines[0], psz_line,
+                 sizeof(p_sys->ppsz_lines[0]) );
         /* return true; */
     }
 
@@ -614,7 +620,6 @@ static int Decode( decoder_t *p_dec, block_t *p_block )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
     subpicture_t  *p_spu = NULL;
-    video_format_t fmt;
     /* int erase = 0; */
 #if 0
     int i_wanted_magazine = i_conf_wanted_page / 100;
@@ -724,24 +729,24 @@ static int Decode( decoder_t *p_dec, block_t *p_block )
     }
 
     /* Create a new subpicture region */
-    video_format_Init(&fmt, VLC_CODEC_TEXT);
-    p_spu->p_region = subpicture_region_New( &fmt );
-    if( p_spu->p_region == NULL )
+    subpicture_region_t *p_region = subpicture_region_NewText();
+    if( p_region == NULL )
     {
         msg_Err( p_dec, "cannot allocate SPU region" );
         goto error;
     }
+    vlc_spu_regions_push( &p_spu->regions, p_region );
 
     /* Normal text subs, easy markup */
-    p_spu->p_region->i_align = SUBPICTURE_ALIGN_BOTTOM | p_sys->i_align;
-    p_spu->p_region->i_x = p_sys->i_align ? 20 : 0;
-    p_spu->p_region->i_y = 10;
-    p_spu->p_region->p_text = text_segment_New(psz_text);
+    p_region->b_absolute = false;
+    p_region->i_align = SUBPICTURE_ALIGN_BOTTOM | p_sys->i_align;
+    p_region->i_x = p_sys->i_align ? 20 : 0;
+    p_region->i_y = 10;
+    p_region->p_text = text_segment_New(psz_text);
 
     p_spu->i_start = p_block->i_pts;
     p_spu->i_stop = p_block->i_pts + p_block->i_length;
     p_spu->b_ephemer = (p_block->i_length == 0);
-    p_spu->b_absolute = false;
     dbg((p_dec, "%ld --> %ld", (long int) p_block->i_pts/100000, (long int)p_block->i_length/100000));
 
     block_Release( p_block );

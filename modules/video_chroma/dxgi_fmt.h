@@ -27,7 +27,6 @@
 #include <dxgiformat.h>
 
 #include <vlc_common.h>
-#include <vlc_fourcc.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,25 +46,27 @@ typedef struct
 {
     const char   *name;
     DXGI_FORMAT  formatTexture;
+    DXGI_FORMAT  alphaTexture;
     vlc_fourcc_t fourcc;
     uint8_t      bitsPerChannel;
     uint8_t      widthDenominator;
     uint8_t      heightDenominator;
+    uint8_t      bitsForAlpha;
+    uint8_t      resourceFactor; // the plane depth doesn't match the resource depth
     DXGI_FORMAT  resourceFormat[DXGI_MAX_SHADER_VIEW];
 } d3d_format_t;
 
 const char *DxgiFormatToStr(DXGI_FORMAT format);
 vlc_fourcc_t DxgiFormatFourcc(DXGI_FORMAT format);
+DXGI_FORMAT DxgiFourccFormat(vlc_fourcc_t format);
 const d3d_format_t *DxgiGetRenderFormatList(void);
-void DxgiFormatMask(DXGI_FORMAT format, video_format_t *);
-DXGI_FORMAT DxgiFourccFormat(vlc_fourcc_t fcc);
 const char *DxgiVendorStr(unsigned int gpu_vendor);
 UINT DxgiResourceCount(const d3d_format_t *);
 
 bool DxgiIsRGBFormat(const d3d_format_t *);
 
-#define DXGI_RGB_FORMAT  1
-#define DXGI_YUV_FORMAT  2
+#define DXGI_RGB_FORMAT    (1 << 0)
+#define DXGI_YUV_FORMAT    (1 << 1)
 
 #define DXGI_CHROMA_CPU 1
 #define DXGI_CHROMA_GPU 2

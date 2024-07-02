@@ -48,6 +48,15 @@
 
 #include "clock/clock.h"
 
+#ifdef HAVE_DYNAMIC_PLUGINS
+#define VLC_META_EXPORT_DECL( name, value ) \
+    VLC_API const char * CDECL_SYMBOL \
+    VLC_SYMBOL(vlc_entry_ ## name)(void); \
+
+VLC_META_EXPORT_DECL(copyright, VLC_MODULE_COPYRIGHT)
+VLC_META_EXPORT_DECL(license, VLC_MODULE_LICENSE)
+#endif
+
 static const char *const ppsz_snap_formats[] =
 { "png", "jpg", "tiff", "webp" };
 
@@ -678,7 +687,7 @@ static const char *const ppsz_prefres[] = {
 
 #define INPUT_LOWDELAY_TEXT N_("Low delay mode")
 #define INPUT_LOWDELAY_LONGTEXT N_(\
-    "Try to minimize delay along decoding chain."\
+    "Try to minimize delay along decoding chain. "\
     "Might break with non compliant streams.")
 
 #define INPUT_REPEAT_TEXT N_("Input repetitions")
@@ -786,6 +795,10 @@ static const char* const ppsz_restore_playback_desc[] = {
 #define SPU_TEXT N_("Enable sub-pictures")
 #define SPU_LONGTEXT N_( \
     "You can completely disable the sub-picture processing.")
+
+#define SPU_FULL_TEXT N_("Display sub-pictures on full window")
+#define SPU_FULL_LONGTEXT N_( \
+    "It allows showing subtitles in black bars.")
 
 #define SECONDARY_SUB_POSITION_TEXT N_("Position of secondary subtitles")
 #define SECONDARY_SUB_POSITION_LONGTEXT N_( \
@@ -1555,6 +1568,18 @@ static const char *const mouse_wheel_texts[] = {
  * add_bool( option_name, b_value, N_(text), N_(longtext) )
  */
 
+#define add_category_hint(text, longtext) \
+    add_typedesc_inner( CONFIG_HINT_CATEGORY, text, longtext )
+
+#define add_module_cat(name, subcategory, value, text, longtext) \
+    add_string_inner(CONFIG_ITEM_MODULE_CAT, name, text, longtext, value) \
+    change_integer_range (subcategory /* gruik */, 0)
+
+#define add_module_list_cat(name, subcategory, value, text, longtext) \
+    add_string_inner(CONFIG_ITEM_MODULE_LIST_CAT, name, text, longtext, \
+                     value) \
+    change_integer_range (subcategory /* gruik */, 0)
+
 vlc_module_begin ()
     set_description( N_("core program") )
 
@@ -1748,6 +1773,8 @@ vlc_module_begin ()
 
     add_bool( "spu", true, SPU_TEXT, SPU_LONGTEXT )
         change_safe ()
+    add_bool( "spu-fill", true, SPU_FULL_TEXT, SPU_FULL_LONGTEXT )
+        change_safe ()
     add_bool( "osd", true, OSD_TEXT, OSD_LONGTEXT )
     add_module("text-renderer", "text renderer", "any",
                TEXTRENDERER_TEXT, TEXTRENDERER_LONGTEXT)
@@ -1866,11 +1893,11 @@ vlc_module_begin ()
                  BOOKMARKS_TEXT, BOOKMARKS_LONGTEXT )
         change_safe ()
 
-    add_bool( "save-recentplay", true, SAVE_RECENTPLAY, NULL );
+    add_bool( "save-recentplay", true, SAVE_RECENTPLAY, NULL )
 
     add_integer( "restore-playback-pos", VLC_PLAYER_RESTORE_PLAYBACK_POS_ASK,
                  RESTORE_PLAYBACK_POS_TEXT, RESTORE_PLAYBACK_POS_LONGTEXT )
-        change_integer_list( pi_restore_playback_values, ppsz_restore_playback_desc );
+        change_integer_list( pi_restore_playback_values, ppsz_restore_playback_desc )
 
     add_bool( "restore-playback-states", false,
                  RESTORE_PLAYBACK_STATE_TEXT, RESTORE_PLAYBACK_STATE_LONGTEXT )
@@ -1986,7 +2013,7 @@ vlc_module_begin ()
     add_integer( "input-timeshift-granularity", -1, INPUT_TIMESHIFT_GRANULARITY_TEXT,
                  INPUT_TIMESHIFT_GRANULARITY_LONGTEXT )
 
-    add_string( "input-title-format", "$Z", INPUT_TITLE_FORMAT_TEXT, INPUT_TITLE_FORMAT_LONGTEXT );
+    add_string( "input-title-format", "$Z", INPUT_TITLE_FORMAT_TEXT, INPUT_TITLE_FORMAT_LONGTEXT )
 
 /* Decoder options */
     add_category_hint(N_("Input access and codecs"), CODEC_CAT_LONGTEXT)

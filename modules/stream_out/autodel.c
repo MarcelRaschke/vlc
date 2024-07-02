@@ -36,6 +36,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_sout.h>
 #include <vlc_block.h>
@@ -46,6 +47,7 @@ struct sout_stream_id_sys_t
 {
     sout_stream_id_sys_t *id;
     es_format_t fmt;
+    const char *es_id;
     vlc_tick_t i_last;
     bool b_error;
     struct vlc_list node;
@@ -58,7 +60,7 @@ typedef struct
     struct vlc_list ids;
 } sout_stream_sys_t;
 
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt, const char *es_id )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
     sout_stream_id_sys_t *p_es = malloc( sizeof(sout_stream_id_sys_t) );
@@ -69,6 +71,7 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
 
     p_es->id = NULL;
     p_es->i_last = VLC_TICK_INVALID;
+    p_es->es_id = es_id;
     p_es->b_error = false;
     vlc_list_append(&p_es->node, &p_sys->ids);
     return p_es;
@@ -95,7 +98,7 @@ static int Send( sout_stream_t *p_stream, void *_p_es, block_t *p_buffer )
                                                            : p_sys->last_pcr;
     if ( !p_es->id && !p_es->b_error )
     {
-        p_es->id = sout_StreamIdAdd( p_stream->p_next, &p_es->fmt );
+        p_es->id = sout_StreamIdAdd( p_stream->p_next, &p_es->fmt, p_es->es_id );
         if ( p_es->id == NULL )
         {
             p_es->b_error = true;
@@ -132,7 +135,10 @@ static void SetPCR( sout_stream_t *stream, vlc_tick_t pcr )
 #define SOUT_CFG_PREFIX "sout-autodel-"
 
 static const struct sout_stream_operations ops = {
-    Add, Del, Send, NULL, NULL, SetPCR,
+    .add = Add,
+    .del = Del,
+    .send = Send,
+    .set_pcr = SetPCR,
 };
 
 static int Open( vlc_object_t *p_this )

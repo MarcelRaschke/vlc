@@ -252,6 +252,28 @@ void libvlc_video_set_aspect_ratio( libvlc_media_player_t *p_mi,
     free (pp_vouts);
 }
 
+libvlc_video_fit_mode_t libvlc_video_get_display_fit( libvlc_media_player_t *p_mi )
+{
+    return var_GetInteger (p_mi, "fit");
+}
+
+void libvlc_video_set_display_fit( libvlc_media_player_t *p_mi, libvlc_video_fit_mode_t fit )
+{
+    var_SetInteger (p_mi, "fit", fit);
+
+    size_t n;
+    vout_thread_t **pp_vouts = GetVouts (p_mi, &n);
+    for (size_t i = 0; i < n; i++)
+    {
+        vout_thread_t *p_vout = pp_vouts[i];
+
+        var_SetInteger (p_vout, "fit", fit);
+        vout_Release(p_vout);
+    }
+    free (pp_vouts);
+}
+
+
 libvlc_video_viewpoint_t *libvlc_video_new_viewpoint(void)
 {
     libvlc_video_viewpoint_t *p_vp = malloc(sizeof *p_vp);
@@ -284,62 +306,6 @@ int libvlc_video_update_viewpoint( libvlc_media_player_t *p_mi,
 
     /* may not fail anymore, keep int not to break the API */
     return 0;
-}
-
-int libvlc_video_get_spu( libvlc_media_player_t *p_mi )
-{
-    vlc_player_t *player = p_mi->player;
-    vlc_player_Lock(player);
-
-    const struct vlc_player_track *track =
-        vlc_player_GetSelectedTrack(player, SPU_ES);
-    int i_spu = track ? vlc_es_id_GetInputId(track->es_id) : -1;
-
-    vlc_player_Unlock(player);
-    return i_spu;
-}
-
-int libvlc_video_get_spu_count( libvlc_media_player_t *p_mi )
-{
-    vlc_player_t *player = p_mi->player;
-    vlc_player_Lock(player);
-
-    int ret = vlc_player_GetTrackCount(p_mi->player, SPU_ES);
-
-    vlc_player_Unlock(player);
-    return ret;
-}
-
-libvlc_track_description_t *
-        libvlc_video_get_spu_description( libvlc_media_player_t *p_mi )
-{
-    return libvlc_get_track_description( p_mi, SPU_ES );
-}
-
-int libvlc_video_set_spu( libvlc_media_player_t *p_mi, int i_spu )
-{
-    int i_ret = -1;
-
-    vlc_player_t *player = p_mi->player;
-    vlc_player_Lock(player);
-
-    size_t count = vlc_player_GetSubtitleTrackCount(player);
-    for (size_t i = 0; i < count; i++)
-    {
-        const struct vlc_player_track *track =
-            vlc_player_GetSubtitleTrackAt(player, i);
-        if (i_spu == vlc_es_id_GetInputId(track->es_id))
-        {
-            /* found */
-            vlc_player_SelectTrack(player, track, VLC_PLAYER_SELECT_EXCLUSIVE);
-            i_ret = 0;
-            goto end;
-        }
-    }
-    libvlc_printerr( "Track identifier not found" );
-end:
-    vlc_player_Unlock(player);
-    return i_ret;
 }
 
 int64_t libvlc_video_get_spu_delay( libvlc_media_player_t *p_mi )
@@ -415,7 +381,7 @@ void libvlc_video_set_crop_ratio(libvlc_media_player_t *mp,
     if (den == 0)
         geometry[0] = '\0';
     else
-        sprintf(geometry, "%u:%u", num, den);
+        snprintf(geometry, ARRAY_SIZE(geometry), "%u:%u", num, den);
 
     libvlc_video_set_crop(mp, geometry);
 }
@@ -427,7 +393,7 @@ void libvlc_video_set_crop_window(libvlc_media_player_t *mp,
     char geometry[4 * (3 * sizeof (unsigned) + 1)];
 
     assert(width != 0 && height != 0);
-    sprintf(geometry, "%ux%u+%u+%u", x, y, width, height);
+    snprintf(geometry, ARRAY_SIZE(geometry), "%ux%u+%u+%u", x, y, width, height);
     libvlc_video_set_crop(mp, geometry);
 }
 
@@ -437,7 +403,7 @@ void libvlc_video_set_crop_border(libvlc_media_player_t *mp,
 {
     char geometry[4 * (3 * sizeof (unsigned) + 1)];
 
-    sprintf(geometry, "%u+%u+%u+%u", left, top, right, bottom);
+    snprintf(geometry, ARRAY_SIZE(geometry), "%u+%u+%u+%u", left, top, right, bottom);
     libvlc_video_set_crop(mp, geometry);
 }
 
@@ -480,60 +446,26 @@ void libvlc_video_set_teletext( libvlc_media_player_t *p_mi, int i_page )
     vlc_player_Unlock(player);
 }
 
-int libvlc_video_get_track_count( libvlc_media_player_t *p_mi )
+void libvlc_video_set_teletext_transparency( libvlc_media_player_t *p_mi, bool transparent )
 {
     vlc_player_t *player = p_mi->player;
     vlc_player_Lock(player);
 
-    int ret = vlc_player_GetTrackCount(p_mi->player, VIDEO_ES);
+    vlc_player_SetTeletextTransparency(player, transparent);
 
     vlc_player_Unlock(player);
-    return ret;
 }
 
-libvlc_track_description_t *
-        libvlc_video_get_track_description( libvlc_media_player_t *p_mi )
-{
-    return libvlc_get_track_description( p_mi, VIDEO_ES );
-}
-
-int libvlc_video_get_track( libvlc_media_player_t *p_mi )
+bool libvlc_video_get_teletext_transparency( libvlc_media_player_t *p_mi )
 {
     vlc_player_t *player = p_mi->player;
     vlc_player_Lock(player);
 
-    const struct vlc_player_track * track =
-        vlc_player_GetSelectedTrack(player, VIDEO_ES);
-    int id = track ? vlc_es_id_GetInputId(track->es_id) : -1;
+    bool transparent = vlc_player_IsTeletextTransparent(player);
 
     vlc_player_Unlock(player);
-    return id;
-}
 
-int libvlc_video_set_track( libvlc_media_player_t *p_mi, int i_track )
-{
-    int i_ret = -1;
-
-    vlc_player_t *player = p_mi->player;
-    vlc_player_Lock(player);
-
-    size_t count = vlc_player_GetVideoTrackCount(player);
-    for( size_t i = 0; i < count; i++ )
-    {
-        const struct vlc_player_track *track =
-            vlc_player_GetVideoTrackAt(player, i);
-        if (i_track == vlc_es_id_GetInputId(track->es_id))
-        {
-            /* found */
-            vlc_player_SelectTrack(player, track, VLC_PLAYER_SELECT_EXCLUSIVE);
-            i_ret = 0;
-            goto end;
-        }
-    }
-    libvlc_printerr( "Track identifier not found" );
-end:
-    vlc_player_Unlock(player);
-    return i_ret;
+    return transparent;
 }
 
 /******************************************************************************

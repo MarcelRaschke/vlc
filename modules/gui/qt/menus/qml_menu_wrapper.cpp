@@ -31,6 +31,7 @@
 #include <QPainter>
 #include <QSignalMapper>
 #include <QScreen>
+#include <QActionGroup>
 
 namespace
 {
@@ -39,7 +40,7 @@ namespace
         assert(order == Qt::AscendingOrder || order == Qt::DescendingOrder);
 
         QStyleOptionHeader headerOption;
-        headerOption.init(widget);
+        headerOption.initFrom(widget);
         headerOption.sortIndicator = (order == Qt::AscendingOrder)
                 ? QStyleOptionHeader::SortDown
                 : QStyleOptionHeader::SortUp;
@@ -49,8 +50,11 @@ namespace
         if (arrowsize <= 0)
             arrowsize = 32;
 
+        qreal dpr = widget ? widget->devicePixelRatioF() : 1.0;
         headerOption.rect = QRect(0, 0, arrowsize, arrowsize);
-        QPixmap arrow(arrowsize, arrowsize);
+
+        QPixmap arrow(arrowsize * dpr, arrowsize * dpr);
+        arrow.setDevicePixelRatio(dpr);
         arrow.fill(Qt::transparent);
 
         {
@@ -85,6 +89,15 @@ void SortMenu::popup(const QPoint &point, const bool popupAbovePoint, const QVar
 {
     m_menu = std::make_unique<QMenu>();
 
+    connect( m_menu.get(), &QMenu::aboutToShow, this, [this]() {
+        m_shown = true;
+        shownChanged();
+    } );
+    connect( m_menu.get(), &QMenu::aboutToHide, this, [this]() {
+        m_shown = false;
+        shownChanged();
+    } );
+
     // model => [{text: "", checked: <bool>, order: <sort order> if checked else <invalid>}...]
     for (int i = 0; i != model.size(); ++i)
     {
@@ -107,14 +120,10 @@ void SortMenu::popup(const QPoint &point, const bool popupAbovePoint, const QVar
 
     onPopup(m_menu.get());
 
-    // m_menu->height() returns invalid height until initial popup call
-    // so in case of 'popupAbovePoint', first show the menu and then reposition it
-    m_menu->popup(point);
     if (popupAbovePoint)
-    {
-        // use 'popup' instead of 'move' so that menu can reposition itself if it's parts are hidden
-        m_menu->popup(QPoint(point.x(), point.y() - m_menu->height()));
-    }
+        m_menu->popup(QPoint(point.x(), point.y() - m_menu->sizeHint().height()));
+    else
+        m_menu->popup(point);
 }
 
 void SortMenu::close()
@@ -192,8 +201,16 @@ void QmlGlobalMenu::popup(QPoint pos)
     m_menu = std::make_unique<QMenu>();
     QMenu* submenu;
 
-    connect( m_menu.get(), &QMenu::aboutToShow, this, &QmlGlobalMenu::aboutToShow );
-    connect( m_menu.get(), &QMenu::aboutToHide, this, &QmlGlobalMenu::aboutToHide );
+    connect( m_menu.get(), &QMenu::aboutToShow, this, [this]() {
+        m_shown = true;
+        shownChanged();
+        aboutToShow();
+    });
+    connect( m_menu.get(), &QMenu::aboutToHide, this, [this]() {
+        m_shown = false;
+        shownChanged();
+        aboutToHide();
+    });
 
     submenu = m_menu->addMenu(qtr( "&Media" ));
     FileMenu( p_intf, submenu );
@@ -655,6 +672,17 @@ void PlaylistListContextMenu::popup(const QModelIndexList & selected, QPoint pos
         ml->addToPlaylist(ids);
     });
 
+    if (ids.count() == 1)
+    {
+        action = m_menu->addAction(qtr("Rename"));
+
+        QModelIndex index = selected.first();
+
+        connect(action, &QAction::triggered, [this, index]() {
+            m_model->showDialogRename(index);
+        });
+    }
+
     action = m_menu->addAction(qtr("Delete"));
 
     connect(action, &QAction::triggered, [this, ids]() {
@@ -709,7 +737,7 @@ void PlaylistMediaContextMenu::popup(const QModelIndexList & selected, QPoint po
         ml->addAndPlay(ids, {":no-video"});
     });
 
-    if (options.contains("information") && options["information"].type() == QVariant::Int) {
+    if (options.contains("information") && options["information"].typeId() == QMetaType::Int) {
         action = m_menu->addAction(qtr("Information"));
 
         QSignalMapper * mapper = new QSignalMapper(m_menu.get());
@@ -725,7 +753,7 @@ void PlaylistMediaContextMenu::popup(const QModelIndexList & selected, QPoint po
 
     action = m_menu->addAction(qtr("Remove Selected"));
 
-    action->setIcon(QIcon(":/menu/playlist_remove.svg"));
+    action->setIcon(QIcon(":/menu/remove.svg"));
 
     connect(action, &QAction::triggered, [this, selected]() {
         m_model->remove(selected);
@@ -820,33 +848,39 @@ PlaylistContextMenu::PlaylistContextMenu(QObject* parent)
     : QObject(parent)
 {}
 
-void PlaylistContextMenu::popup(int currentIndex, QPoint pos )
+void PlaylistContextMenu::popup(int selectedIndex, QPoint pos )
 {
-    if (!m_controler || !m_model)
+    if (!m_controler || !m_model || !m_selectionModel)
         return;
 
     m_menu = std::make_unique<QMenu>();
     QAction* action;
 
     QList<QUrl> selectedUrlList;
-    for (const int modelIndex : m_model->getSelection())
+    for (const int modelIndex : m_selectionModel->selectedIndexesFlat())
         selectedUrlList.push_back(m_model->itemAt(modelIndex).getUrl());
 
-    PlaylistItem currentItem;
-    if (currentIndex >= 0)
-        currentItem = m_model->itemAt(currentIndex);
+    PlaylistItem selectedItem;
+    if (selectedIndex >= 0)
+        selectedItem = m_model->itemAt(selectedIndex);
 
-    if (currentItem)
+    if (selectedItem)
     {
         action = m_menu->addAction( qtr("Play") );
-        connect(action, &QAction::triggered, [this, currentIndex]( ) {
-            m_controler->goTo(currentIndex, true);
+        connect(action, &QAction::triggered, [this, selectedIndex]( ) {
+            m_controler->goTo(selectedIndex, true);
         });
 
         m_menu->addSeparator();
     }
 
-    if (m_model->getSelectedCount() > 0) {
+    if (m_controler->currentIndex() != -1)
+    {
+        action = m_menu->addAction( qtr("Jump to current playing"));
+        connect(action, &QAction::triggered, this, &PlaylistContextMenu::jumpToCurrentPlaying);
+    }
+
+    if (m_selectionModel->hasSelection()) {
         action = m_menu->addAction( qtr("Stream") );
         connect(action, &QAction::triggered, [selectedUrlList]( ) {
             DialogsProvider::getInstance()->streamingDialog(selectedUrlList, false);
@@ -860,19 +894,19 @@ void PlaylistContextMenu::popup(int currentIndex, QPoint pos )
         m_menu->addSeparator();
     }
 
-    if (currentItem) {
+    if (selectedItem) {
         action = m_menu->addAction( qtr("Information") );
         action->setIcon(QIcon(":/menu/info.svg"));
-        connect(action, &QAction::triggered, [currentItem]( ) {
-            DialogsProvider::getInstance()->mediaInfoDialog(currentItem);
+        connect(action, &QAction::triggered, [selectedItem]( ) {
+            DialogsProvider::getInstance()->mediaInfoDialog(selectedItem);
         });
 
         m_menu->addSeparator();
 
         action = m_menu->addAction( qtr("Show Containing Directory...") );
         action->setIcon(QIcon(":/menu/folder.svg"));
-        connect(action, &QAction::triggered, [this, currentItem]( ) {
-            m_controler->explore(currentItem);
+        connect(action, &QAction::triggered, [this, selectedItem]( ) {
+            m_controler->explore(selectedItem);
         });
 
         m_menu->addSeparator();
@@ -898,7 +932,7 @@ void PlaylistContextMenu::popup(int currentIndex, QPoint pos )
 
     m_menu->addSeparator();
 
-    if (m_model->getSelectedCount() > 0)
+    if (m_selectionModel->hasSelection())
     {
         action = m_menu->addAction( qtr("Save Playlist to File...") );
         connect(action, &QAction::triggered, []( ) {
@@ -910,7 +944,7 @@ void PlaylistContextMenu::popup(int currentIndex, QPoint pos )
         action = m_menu->addAction( qtr("Remove Selected") );
         action->setIcon(QIcon(":/menu/remove.svg"));
         connect(action, &QAction::triggered, [this]( ) {
-            m_model->removeItems(m_model->getSelection());
+            m_model->removeItems(m_selectionModel->selectedIndexesFlat());
         });
     }
 
@@ -926,13 +960,13 @@ void PlaylistContextMenu::popup(int currentIndex, QPoint pos )
         m_menu->addSeparator();
 
         using namespace vlc::playlist;
-        PlaylistControllerModel::SortKey currentKey = m_controler->getSortKey();
-        PlaylistControllerModel::SortOrder currentOrder = m_controler->getSortOrder();
+        PlaylistController::SortKey currentKey = m_controler->getSortKey();
+        PlaylistController::SortOrder currentOrder = m_controler->getSortOrder();
 
         QMenu* sortMenu = m_menu->addMenu(qtr("Sort by"));
         QActionGroup * group = new QActionGroup(sortMenu);
 
-        auto addSortAction = [&](const QString& label, PlaylistControllerModel::SortKey key, PlaylistControllerModel::SortOrder order) {
+        auto addSortAction = [&](const QString& label, PlaylistController::SortKey key, PlaylistController::SortOrder order) {
             QAction* action = sortMenu->addAction(label);
             connect(action, &QAction::triggered, this, [this, key, order]( ) {
                 m_controler->sort(key, order);
@@ -947,15 +981,15 @@ void PlaylistContextMenu::popup(int currentIndex, QPoint pos )
         {
             const QVariantMap varmap = it.toMap();
 
-            auto key = static_cast<PlaylistControllerModel::SortKey>(varmap.value("key").toInt());
-            QString label = varmap.value("title").toString();
+            auto key = static_cast<PlaylistController::SortKey>(varmap.value("key").toInt());
+            QString label = varmap.value("text").toString();
 
-            addSortAction(qtr("%1 Ascending").arg(label), key, PlaylistControllerModel::SORT_ORDER_ASC);
-            addSortAction(qtr("%1 Descending").arg(label), key, PlaylistControllerModel::SORT_ORDER_DESC);
+            addSortAction(qtr("%1 Ascending").arg(label), key, PlaylistController::SORT_ORDER_ASC);
+            addSortAction(qtr("%1 Descending").arg(label), key, PlaylistController::SORT_ORDER_DESC);
         }
 
         action = m_menu->addAction( qtr("Shuffle the playlist") );
-        action->setIcon(QIcon(":/menu/shuffle_on.svg"));
+        action->setIcon(QIcon(":/menu/ic_fluent_arrow_shuffle_on.svg"));
         connect(action, &QAction::triggered, this, [this]( ) {
             m_controler->shuffle();
         });

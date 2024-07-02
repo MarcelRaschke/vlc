@@ -68,10 +68,8 @@ static void FillPresentationParameters(D3DPRESENT_PARAMETERS *d3dpp)
     d3dpp->hDeviceWindow          = NULL;
     d3dpp->SwapEffect             = D3DSWAPEFFECT_COPY;
     d3dpp->BackBufferCount        = 1;
-#ifndef VLC_WINSTORE_APP
     d3dpp->BackBufferWidth        = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     d3dpp->BackBufferHeight       = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-#endif // VLC_WINSTORE_APP
 }
 
 int D3D9_ResetDevice(vlc_object_t *o, d3d9_decoder_device_t *dec_dev)
@@ -333,4 +331,33 @@ picture_context_t *d3d9_pic_context_copy(picture_context_t *ctx)
     vlc_video_context_Hold(pic_ctx->s.vctx);
     AcquireD3D9PictureSys(&pic_ctx->picsys);
     return &pic_ctx->s;
+}
+
+/* XXX Preferred format must come first */
+static const d3d9_format_t d3d_formats[] = {
+    { "YV12",      MAKEFOURCC('Y','V','1','2'),    VLC_CODEC_YV12 },
+    { "NV12",      MAKEFOURCC('N','V','1','2'),    VLC_CODEC_NV12 },
+    //{ "IMC3",      MAKEFOURCC('I','M','C','3'),    VLC_CODEC_YV12 },
+    { "P010",      MAKEFOURCC('P','0','1','0'),    VLC_CODEC_P010 },
+    { "AYUV",      MAKEFOURCC('A','Y','U','V'),    VLC_CODEC_YUVA },
+    { "YUY2",      MAKEFOURCC('Y','U','Y','2'),    VLC_CODEC_YUYV },
+    { "Y410",      MAKEFOURCC('Y','4','1','0'),    VLC_CODEC_Y410 },
+    { "Y210",      MAKEFOURCC('Y','2','1','0'),    VLC_CODEC_Y210 },
+    { "UYVY",      D3DFMT_UYVY,                    VLC_CODEC_UYVY },
+    { "YUY2",      D3DFMT_YUY2,                    VLC_CODEC_YUYV },
+    { "X8R8G8B8",  D3DFMT_X8R8G8B8,                VLC_CODEC_BGRX },
+    { "A8R8G8B8",  D3DFMT_A8R8G8B8,                VLC_CODEC_BGRA },
+    { "R8G8B8",    D3DFMT_R8G8B8,                  VLC_CODEC_BGR24 },
+    { "R5G6B5",    D3DFMT_R5G6B5,                  VLC_CODEC_RGB565LE },
+    { "X1R5G5B5",  D3DFMT_X1R5G5B5,                VLC_CODEC_RGB555LE },
+};
+
+const d3d9_format_t *D3D9FormatFourcc(D3DFORMAT d3dfmt)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(d3d_formats); i++)
+    {
+        if (d3d_formats[i].format == d3dfmt)
+            return &d3d_formats[i];
+    }
+    return NULL;
 }

@@ -1,5 +1,5 @@
 /*
- * media_player.c - libvlc smoke test
+ * media.c - libvlc media smoke test
  *
  */
 
@@ -30,7 +30,6 @@
 #include <vlc_threads.h>
 #include <vlc_fs.h>
 #include <vlc_input_item.h>
-#include <vlc_events.h>
 
 static void media_parse_ended(const libvlc_event_t *event, void *user_data)
 {
@@ -103,10 +102,11 @@ static void print_media(libvlc_media_t *media)
     }
 }
 
-static void test_media_preparsed(libvlc_instance_t *vlc, const char *path,
-                                 const char *location,
-                                 libvlc_media_parse_flag_t parse_flags,
-                                 libvlc_media_parsed_status_t i_expected_status)
+static libvlc_media_t *
+test_media_preparsed_ext(libvlc_instance_t *vlc, const char *path,
+                         const char *location,
+                         libvlc_media_parse_flag_t parse_flags,
+                         libvlc_media_parsed_status_t i_expected_status)
 {
     test_log ("test_media_preparsed: %s, expected: %d\n", path ? path : location,
               i_expected_status);
@@ -136,6 +136,73 @@ static void test_media_preparsed(libvlc_instance_t *vlc, const char *path,
     assert (libvlc_media_get_parsed_status(media) == i_expected_status);
     if (i_expected_status == libvlc_media_parsed_status_done)
         print_media(media);
+
+    return media;
+}
+
+static void test_media_preparsed(libvlc_instance_t *vlc, const char *path,
+                                 const char *location,
+                                 libvlc_media_parse_flag_t parse_flags,
+                                 libvlc_media_parsed_status_t i_expected_status)
+{
+    libvlc_media_t *media = test_media_preparsed_ext(vlc, path, location,
+                                                     parse_flags,
+                                                     i_expected_status);
+    libvlc_media_release (media);
+}
+
+static void test_media_tracks(libvlc_instance_t *vlc)
+{
+    const char *url =
+        "mock://video_track_count=4;audio_track_count=42;"
+        "video_width=100;video_height=50;"
+        "audio_channels=2;audio_rate=48000;";
+    libvlc_media_t *media =
+        test_media_preparsed_ext(vlc, NULL, url,
+                                 libvlc_media_parse_local|libvlc_media_parse_forced,
+                                 libvlc_media_parsed_status_done);
+
+    char buf[32];
+    libvlc_media_tracklist_t *tracklist;
+
+    tracklist = libvlc_media_get_tracklist(media, libvlc_track_video);
+    assert(tracklist != NULL);
+    assert(libvlc_media_tracklist_count(tracklist) == 4);
+    for (size_t i = 0; i < libvlc_media_tracklist_count(tracklist); ++i)
+    {
+        libvlc_media_track_t *track = libvlc_media_tracklist_at(tracklist, i);
+        assert(track->i_type == libvlc_track_video);
+        assert(track->video != NULL);
+        assert(track->video->i_width == 100);
+        assert(track->video->i_height == 50);
+
+        sprintf(buf, "video/%zu", i);
+        assert(strcmp(track->psz_id, buf) == 0);
+        assert(track->id_stable);
+    }
+    libvlc_media_tracklist_delete(tracklist);
+
+    tracklist = libvlc_media_get_tracklist(media, libvlc_track_audio);
+    assert(tracklist != NULL);
+    assert(libvlc_media_tracklist_count(tracklist) == 42);
+    for (size_t i = 0; i < libvlc_media_tracklist_count(tracklist); ++i)
+    {
+        libvlc_media_track_t *track = libvlc_media_tracklist_at(tracklist, i);
+        assert(track->i_type == libvlc_track_audio);
+        assert(track->audio != NULL);
+        assert(track->audio->i_channels == 2);
+        assert(track->audio->i_rate == 48000);
+
+        sprintf(buf, "audio/%zu", i);
+        assert(strcmp(track->psz_id, buf) == 0);
+        assert(track->id_stable);
+    }
+    libvlc_media_tracklist_delete(tracklist);
+
+    tracklist = libvlc_media_get_tracklist(media, libvlc_track_text);
+    assert(tracklist != NULL);
+    assert(libvlc_media_tracklist_count(tracklist) == 0);
+    libvlc_media_tracklist_delete(tracklist);
 
     libvlc_media_release (media);
 }
@@ -169,7 +236,7 @@ static void test_input_metadata_timeout(libvlc_instance_t *vlc, int timeout,
 
     vlc_sem_t sem;
     vlc_sem_init (&sem, 0);
-    const struct input_preparser_callbacks_t cbs = {
+    const struct vlc_metadata_cbs cbs = {
         .on_preparse_ended = input_item_preparse_timeout,
     };
     i_ret = libvlc_MetadataRequest(vlc->p_libvlc_int, p_item,
@@ -394,6 +461,7 @@ int main(int i_argc, char *ppsz_argv[])
                           libvlc_media_parse_local,
                           libvlc_media_parsed_status_skipped);
     test_media_subitems (vlc);
+    test_media_tracks (vlc);
 
     /* Testing libvlc_MetadataRequest timeout and libvlc_MetadataCancel. For
      * that, we need to create a local input_item_t based on a pipe. There is

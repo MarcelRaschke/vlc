@@ -15,20 +15,19 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-import QtQuick 2.11
-import QtQuick.Controls 2.4
-import QtQuick.Templates 2.4 as T
-import QtQuick.Layouts 1.11
-import QtQml.Models 2.2
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Templates as T
+import QtQuick.Layouts
+import QtQml.Models
 
 import org.videolan.vlc 0.1
-import org.videolan.compat 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///util/Helpers.js" as Helpers
 import "qrc:///style/"
 
-T.Control {
+T.ItemDelegate {
     id: root
 
     // Properties
@@ -37,8 +36,6 @@ T.Control {
     property real pictureHeight: pictureWidth
     property int titleMargin: VLCStyle.margin_xsmall
     property Item dragItem: null
-
-    readonly property bool highlighted: (mouseHoverHandler.hovered || visualFocus)
 
     readonly property int selectedBorderWidth: VLCStyle.gridItemSelectedBorder
 
@@ -53,7 +50,10 @@ T.Control {
     // Aliases
 
     property alias image: picture.source
+    property alias cacheImage: picture.cacheImage
     property alias isImageReady: picture.isImageReady
+    property alias fallbackImage: picture.fallbackImageSource
+
     property alias title: titleLabel.text
     property alias subtitle: subtitleTxt.text
     property alias playCoverBorderWidth: picture.playCoverBorderWidth
@@ -69,8 +69,8 @@ T.Control {
 
     signal playClicked
     signal addToPlaylistClicked
-    signal itemClicked(Item menuParent, int key, int modifier)
-    signal itemDoubleClicked(Item menuParent, int keys, int modifier)
+    signal itemClicked(int modifier)
+    signal itemDoubleClicked(int modifier)
     signal contextMenuButtonClicked(Item menuParent, point globalMousePos)
 
     // Settings
@@ -78,8 +78,12 @@ T.Control {
     implicitWidth: layout.implicitWidth
     implicitHeight: layout.implicitHeight
 
+    highlighted: (mouseHoverHandler.hovered || visualFocus)
+
     Accessible.role: Accessible.Cell
     Accessible.name: title
+    Accessible.selected: root.selected
+    Accessible.onPressAction: root.playClicked()
 
     Keys.onMenuPressed: root.contextMenuButtonClicked(picture, root.mapToGlobal(0,0))
 
@@ -154,7 +158,7 @@ T.Control {
         id: theme
         colorSet: ColorContext.Item
 
-        focused: root.activeFocus
+        focused: root.visualFocus
         hovered: root.hovered
     }
 
@@ -165,13 +169,11 @@ T.Control {
         x: - selectedBorderWidth
         y: - selectedBorderWidth
 
-        active: visualFocus
-        animate: theme.initialized
+        enabled: theme.initialized
 
         //don't show the backgroud unless selected
-        backgroundColor: root.selected ?  theme.bg.highlight : theme.bg.primary
-        activeBorderColor: theme.visualFocus
-        visible: animationRunning || active || root.selected || root.hovered
+        color: root.selected ?  theme.bg.highlight : theme.bg.primary
+        border.color: visualFocus ? theme.visualFocus : "transparent"
     }
 
     contentItem: MouseArea {
@@ -184,44 +186,42 @@ T.Control {
 
         drag.axis: Drag.XAndYAxis
 
-        onClicked: {
+        drag.smoothed: false
+
+        onClicked: (mouse) => {
             if (mouse.button === Qt.RightButton)
                 contextMenuButtonClicked(picture, root.mapToGlobal(mouse.x,mouse.y));
-            else {
-                root.itemClicked(picture, mouse.button, mouse.modifiers);
+            else if (mouse.button === Qt.LeftButton) {
+                root.itemClicked(mouse.modifiers);
             }
         }
 
-        onDoubleClicked: {
+        onDoubleClicked: (mouse) => {
             if (mouse.button === Qt.LeftButton)
-                root.itemDoubleClicked(picture,mouse.buttons, mouse.modifiers)
+                root.itemDoubleClicked(mouse.modifiers)
         }
 
-        onPressed: _modifiersOnLastPress = mouse.modifiers
-
-        onPositionChanged: {
-            if (drag.active) {
-                var pos = drag.target.parent.mapFromItem(root, mouseX, mouseY)
-                drag.target.x = pos.x + VLCStyle.dragDelta
-                drag.target.y = pos.y + VLCStyle.dragDelta
-            }
+        onPressed: (mouse) => {
+            _modifiersOnLastPress = mouse.modifiers
         }
 
         drag.onActiveChanged: {
             // perform the "click" action because the click action is only executed on mouse release (we are in the pressed state)
             // but we will need the updated list on drop
             if (drag.active && !selected) {
-                root.itemClicked(picture, Qt.LeftButton, root._modifiersOnLastPress)
+                root.itemClicked(root._modifiersOnLastPress)
             } else if (root.dragItem) {
                 root.dragItem.Drag.drop()
             }
             root.dragItem.Drag.active = drag.active
         }
 
-        TouchScreenTapHandlerCompat {
-            onTapped: {
-                root.itemClicked(picture, Qt.LeftButton, Qt.NoModifier)
-                root.itemDoubleClicked(picture, Qt.LeftButton, Qt.NoModifier)
+        TapHandler {
+            acceptedDevices: PointerDevice.TouchScreen
+
+            onTapped: (eventPoint, button) => {
+                root.itemClicked(Qt.NoModifier)
+                root.itemDoubleClicked(Qt.NoModifier)
             }
 
             onLongPressed: {
@@ -229,8 +229,9 @@ T.Control {
             }
         }
 
-        MouseHoverHandlerCompat {
+        HoverHandler {
             id: mouseHoverHandler
+            acceptedDevices: PointerDevice.Mouse
         }
 
         ColumnLayout {
@@ -251,45 +252,41 @@ T.Control {
                 Layout.preferredWidth: pictureWidth
                 Layout.preferredHeight: pictureHeight
 
-                onPlayIconClicked: {
+                onPlayIconClicked: (mouse) => {
                     // emulate a mouse click before delivering the play signal as to select the item
                     // this helps in updating the selection and restore of initial index in the parent views
-                    root.itemClicked(picture, mouse.button, mouse.modifiers)
+                    root.itemClicked(mouse.modifiers)
                     root.playClicked()
                 }
 
-                DoubleShadow {
+                DefaultShadow {
                     id: unselectedShadow
 
-                    anchors.fill: parent
-                    anchors.margins: VLCStyle.dp(1) // outside border (unselected)
-                    z: -1
+                    anchors.centerIn: parent
 
-                    opacity: 0.62
                     visible: opacity > 0
 
-                    xRadius: parent.radius
-                    yRadius: parent.radius
+                    sourceItem: parent
 
-                    primaryVerticalOffset: VLCStyle.dp(1, VLCStyle.scale)
-                    primaryBlurRadius: VLCStyle.dp(3, VLCStyle.scale)
-
-                    secondaryVerticalOffset: VLCStyle.dp(6, VLCStyle.scale)
-                    secondaryBlurRadius: VLCStyle.dp(14, VLCStyle.scale)
+                    width: viewportWidth
+                    height: viewportHeight
+                    sourceSize: Qt.size(128, 128)
                 }
 
                 DoubleShadow {
                     id: selectedShadow
 
-                    anchors.fill: parent
-                    anchors.margins: VLCStyle.dp(1)
-                    z: -1
+                    anchors.centerIn: parent
 
                     visible: opacity > 0
                     opacity: 0
 
-                    xRadius: parent.radius
-                    yRadius: parent.radius
+                    sourceItem: parent
+
+                    width: viewportWidth
+                    height: viewportHeight
+
+                    sourceSize: Qt.size(128, 128)
 
                     primaryVerticalOffset: VLCStyle.dp(6, VLCStyle.scale)
                     primaryBlurRadius: VLCStyle.dp(18, VLCStyle.scale)
@@ -299,7 +296,7 @@ T.Control {
                 }
             }
 
-            Widgets.ScrollingText {
+            Widgets.TextAutoScroller {
                 id: titleTextRect
 
                 label: titleLabel
@@ -342,8 +339,9 @@ T.Control {
                 ToolTip.text: subtitleTxt.text
                 ToolTip.visible: subtitleTxtMouseHandler.hovered
 
-                MouseHoverHandlerCompat {
+                HoverHandler {
                     id: subtitleTxtMouseHandler
+                    acceptedDevices: PointerDevice.Mouse
                 }
             }
         }

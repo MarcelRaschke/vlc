@@ -38,6 +38,7 @@
 #include <vlc_codec.h>
 #include <vlc_input.h>
 #include <vlc_dialog.h>
+#include <vlc_stream.h>
 
 #include <ass/ass.h>
 
@@ -85,7 +86,6 @@ typedef struct
     /* */
     ASS_Library    *p_library;
     ASS_Renderer   *p_renderer;
-    video_format_t fmt;
 
     /* */
     ASS_Track      *p_track;
@@ -94,13 +94,9 @@ static void DecSysRelease( decoder_sys_t *p_sys );
 static void DecSysHold( decoder_sys_t *p_sys );
 
 /* */
-static int SubpictureValidate( subpicture_t *,
-                               bool, const video_format_t *,
-                               bool, const video_format_t *,
-                               vlc_tick_t );
 static void SubpictureUpdate( subpicture_t *,
-                              const video_format_t *,
-                              const video_format_t *,
+                              const video_format_t *, const video_format_t *,
+                              const video_format_t *, const video_format_t *,
                               vlc_tick_t );
 static void SubpictureDestroy( subpicture_t * );
 
@@ -108,8 +104,6 @@ typedef struct
 {
     decoder_sys_t *p_dec_sys;
     vlc_tick_t    i_pts;
-
-    ASS_Image     *p_img;
 } libass_spu_updater_sys_t;
 
 typedef struct
@@ -122,6 +116,7 @@ typedef struct
 
 static int BuildRegions( rectangle_t *p_region, int i_max_region, ASS_Image *p_img_list, int i_width, int i_height );
 static void RegionDraw( subpicture_region_t *p_region, ASS_Image *p_img );
+static void OldEngineClunkyRollInfoPatch( decoder_t *p_dec, ASS_Track * );
 
 //#define DEBUG_REGION
 
@@ -146,7 +141,6 @@ static int Create( vlc_object_t *p_this )
     /* */
     vlc_mutex_init( &p_sys->lock );
     p_sys->i_refcount = 1;
-    video_format_Init( &p_sys->fmt, 0 );
     p_sys->i_last_pts = VLC_TICK_INVALID;
     p_sys->i_max_stop = VLC_TICK_INVALID;
     p_sys->p_library  = NULL;
@@ -279,6 +273,7 @@ static int Create( vlc_object_t *p_this )
         return VLC_EGENERIC;
     }
     ass_process_codec_private( p_track, p_dec->fmt_in->p_extra, p_dec->fmt_in->i_extra );
+    OldEngineClunkyRollInfoPatch( p_dec, p_track );
 
     p_dec->fmt_out.i_codec = VLC_CODEC_RGBA;
 
@@ -368,11 +363,15 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
             return VLCDEC_SUCCESS;
         }
 
+        static const struct vlc_spu_updater_ops spu_ops =
+        {
+            .update   = SubpictureUpdate,
+            .destroy  = SubpictureDestroy,
+        };
+
         subpicture_updater_t updater = {
-            .pf_validate = SubpictureValidate,
-            .pf_update   = SubpictureUpdate,
-            .pf_destroy  = SubpictureDestroy,
-            .p_sys       = p_spu_sys,
+            .sys = p_spu_sys,
+            .ops = &spu_ops,
         };
 
         p_spu = decoder_NewSubpicture( p_dec, &updater );
@@ -384,13 +383,11 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
             return VLCDEC_SUCCESS;
         }
 
-        p_spu_sys->p_img = NULL;
         p_spu_sys->p_dec_sys = p_sys;
         p_spu_sys->i_pts = p_block->i_pts;
         p_spu->i_start = p_block->i_pts;
         p_spu->i_stop = __MAX( p_sys->i_max_stop, p_block->i_pts + p_block->i_length );
         p_spu->b_ephemer = true;
-        p_spu->b_absolute = true;
 
         p_sys->i_max_stop = p_spu->i_stop;
 
@@ -418,31 +415,33 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
 /****************************************************************************
  *
  ****************************************************************************/
-static int SubpictureValidate( subpicture_t *p_subpic,
-                               bool b_fmt_src, const video_format_t *p_fmt_src,
-                               bool b_fmt_dst, const video_format_t *p_fmt_dst,
-                               vlc_tick_t i_ts )
+static void SubpictureUpdate( subpicture_t *p_subpic,
+                              const video_format_t *prev_src, const video_format_t *p_fmt_src,
+                              const video_format_t *prev_dst, const video_format_t *p_fmt_dst,
+                              vlc_tick_t i_ts )
 {
-    libass_spu_updater_sys_t *p_spusys = p_subpic->updater.p_sys;
+    libass_spu_updater_sys_t *p_spusys = p_subpic->updater.sys;
     decoder_sys_t *p_sys = p_spusys->p_dec_sys;
+
+    bool b_fmt_src = p_fmt_src->i_visible_width  != prev_src->i_visible_width ||
+                     p_fmt_src->i_visible_height != prev_src->i_visible_height;
+    bool b_fmt_dst = !video_format_IsSimilar(prev_dst, p_fmt_dst);
 
     vlc_mutex_lock( &p_sys->lock );
 
-    video_format_t fmt = *p_fmt_dst;
-    fmt.i_chroma         = VLC_CODEC_RGBA;
-    fmt.i_bits_per_pixel = 0;
-    fmt.i_x_offset       = 0;
-    fmt.i_y_offset       = 0;
     if( b_fmt_src || b_fmt_dst )
     {
-        ass_set_frame_size( p_sys->p_renderer, fmt.i_visible_width, fmt.i_visible_height );
+        ass_set_frame_size( p_sys->p_renderer, p_fmt_dst->i_visible_width, p_fmt_dst->i_visible_height );
 #if LIBASS_VERSION > 0x01010000
         ass_set_storage_size( p_sys->p_renderer, p_fmt_src->i_visible_width, p_fmt_src->i_visible_height );
 #endif
         const double src_ratio = (double)p_fmt_src->i_visible_width / p_fmt_src->i_visible_height;
         const double dst_ratio = (double)p_fmt_dst->i_visible_width / p_fmt_dst->i_visible_height;
+#if LIBASS_VERSION >= 0x01020000
+        ass_set_pixel_aspect( p_sys->p_renderer, dst_ratio / src_ratio );
+#else
         ass_set_aspect_ratio( p_sys->p_renderer, dst_ratio / src_ratio, 1 );
-        p_sys->fmt = fmt;
+#endif
     }
 
     /* */
@@ -452,33 +451,17 @@ static int SubpictureValidate( subpicture_t *p_subpic,
                                          MS_FROM_VLC_TICK( i_stream_date ), &i_changed );
 
     if( !i_changed && !b_fmt_src && !b_fmt_dst &&
-        (p_img != NULL) == (p_subpic->p_region != NULL) )
+        (p_img != NULL) == (!vlc_spu_regions_is_empty(&p_subpic->regions)) )
     {
         vlc_mutex_unlock( &p_sys->lock );
-        return VLC_SUCCESS;
+        return;
     }
-    p_spusys->p_img = p_img;
 
-    /* The lock is released by SubpictureUpdate */
-    return VLC_EGENERIC;
-}
-
-static void SubpictureUpdate( subpicture_t *p_subpic,
-                              const video_format_t *p_fmt_src,
-                              const video_format_t *p_fmt_dst,
-                              vlc_tick_t i_ts )
-{
-    VLC_UNUSED( p_fmt_src ); VLC_UNUSED( p_fmt_dst ); VLC_UNUSED( i_ts );
-
-    libass_spu_updater_sys_t *p_spusys = p_subpic->updater.p_sys;
-    decoder_sys_t *p_sys = p_spusys->p_dec_sys;
-
-    video_format_t fmt = p_sys->fmt;
-    ASS_Image *p_img = p_spusys->p_img;
+    vlc_spu_regions_Clear( &p_subpic->regions );
 
     /* */
-    p_subpic->i_original_picture_height = fmt.i_visible_height;
-    p_subpic->i_original_picture_width = fmt.i_visible_width;
+    p_subpic->i_original_picture_height = p_fmt_dst->i_visible_height;
+    p_subpic->i_original_picture_width = p_fmt_dst->i_visible_width;
 
     /* XXX to improve efficiency we merge regions that are close minimizing
      * the lost surface.
@@ -488,7 +471,7 @@ static void SubpictureUpdate( subpicture_t *p_subpic,
      */
     const int i_max_region = 4;
     rectangle_t region[i_max_region];
-    const int i_region = BuildRegions( region, i_max_region, p_img, fmt.i_width, fmt.i_height );
+    const int i_region = BuildRegions( region, i_max_region, p_img, p_fmt_dst->i_width, p_fmt_dst->i_height );
 
     if( i_region <= 0 )
     {
@@ -497,15 +480,16 @@ static void SubpictureUpdate( subpicture_t *p_subpic,
     }
 
     /* Allocate the regions and draw them */
-    subpicture_region_t **pp_region_last = &p_subpic->p_region;
-
+    video_format_t fmt_region;
+    fmt_region = *p_fmt_dst;
+    fmt_region.i_chroma   = VLC_CODEC_RGBA;
+    fmt_region.i_x_offset = 0;
+    fmt_region.i_y_offset = 0;
     for( int i = 0; i < i_region; i++ )
     {
         subpicture_region_t *r;
-        video_format_t fmt_region;
 
         /* */
-        fmt_region = fmt;
         fmt_region.i_width =
         fmt_region.i_visible_width  = region[i].x1 - region[i].x0;
         fmt_region.i_height =
@@ -514,6 +498,7 @@ static void SubpictureUpdate( subpicture_t *p_subpic,
         r = subpicture_region_New( &fmt_region );
         if( !r )
             break;
+        r->b_absolute = true;
         r->i_x = region[i].x0;
         r->i_y = region[i].y0;
         r->i_align = SUBPICTURE_ALIGN_TOP | SUBPICTURE_ALIGN_LEFT;
@@ -522,15 +507,14 @@ static void SubpictureUpdate( subpicture_t *p_subpic,
         RegionDraw( r, p_img );
 
         /* */
-        *pp_region_last = r;
-        pp_region_last = &r->p_next;
+        vlc_spu_regions_push(&p_subpic->regions, r);
     }
     vlc_mutex_unlock( &p_sys->lock );
 
 }
 static void SubpictureDestroy( subpicture_t *p_subpic )
 {
-    libass_spu_updater_sys_t *p_spusys = p_subpic->updater.p_sys;
+    libass_spu_updater_sys_t *p_spusys = p_subpic->updater.sys;
 
     DecSysRelease( p_spusys->p_dec_sys );
     free( p_spusys );
@@ -695,8 +679,8 @@ static void RegionDraw( subpicture_region_t *p_region, ASS_Image *p_img )
     const plane_t *p = &p_region->p_picture->p[0];
     const int i_x = p_region->i_x;
     const int i_y = p_region->i_y;
-    const int i_width  = p_region->fmt.i_width;
-    const int i_height = p_region->fmt.i_height;
+    const int i_width  = p_region->p_picture->format.i_width;
+    const int i_height = p_region->p_picture->format.i_height;
 
     memset( p->p_pixels, 0x00, p->i_pitch * p->i_visible_lines );
     for( ; p_img != NULL; p_img = p_img->next )
@@ -771,3 +755,62 @@ static void RegionDraw( subpicture_region_t *p_region, ASS_Image *p_img )
 #endif
 }
 
+/* Patch [Script Info] aiming old and custom rendering engine
+ * See #27771 */
+static void OldEngineClunkyRollInfoPatch( decoder_t *p_dec, ASS_Track *p_track )
+{
+    if( !p_dec->fmt_in->i_extra )
+        return;
+
+    stream_t *p_memstream = vlc_stream_MemoryNew( p_dec, p_dec->fmt_in->p_extra,
+                                                  p_dec->fmt_in->i_extra, true );
+    char *s = vlc_stream_ReadLine( p_memstream );
+    unsigned playres[2] = {0, 0};
+    bool b_hotfix = false;
+    if( s && !strncmp( s, "[Script Info]", 13 ) )
+    {
+        free( s );
+        for( ;; )
+        {
+            s = vlc_stream_ReadLine( p_memstream );
+            if( !s || *s == '[' /* Next section */ )
+            {
+                break;
+            }
+            else if( !strncmp( s, "PlayResX: ", 10 ) ||
+                     !strncmp( s, "PlayResY: ", 10 ) )
+            {
+                playres[s[7] - 'X'] = atoi( &s[9] );
+            }
+            else if( !strncmp( s, "Original Script: ", 17 ) )
+            {
+                b_hotfix = !!strstr( s, "[http://www.crunchyroll.com/user/" );
+                if( !b_hotfix )
+                    break;
+            }
+            else if( !strncmp( s, "LayoutRes", 9 ) ||
+                     !strncmp( s, "ScaledBorderAndShadow:", 22  ) )
+            {
+                /* They can still have fixed their mess in the future. Tell me, Marty. */
+                b_hotfix = false;
+                break;
+            }
+            free( s );
+        }
+    }
+    free( s );
+    vlc_stream_Delete( p_memstream );
+    if( b_hotfix && playres[0] && playres[1] )
+    {
+	msg_Dbg( p_dec,"patching script info for custom rendering engine "
+                       "(built against libass 0x%X)", LIBASS_VERSION );
+        /* Only modify struct _before_ any ass_process_chunk calls
+           (see ass_types.h documentation for when modifications are allowed) */
+        p_track->ScaledBorderAndShadow = 1;
+        p_track->YCbCrMatrix = YCBCR_NONE;
+#if LIBASS_VERSION >= 0x01600020
+        p_track->LayoutResX = playres[0];
+        p_track->LayoutResY = playres[1];
+#endif
+    }
+}

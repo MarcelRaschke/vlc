@@ -17,18 +17,19 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
+import QtQuick
+import QtQuick.Templates as T
+import QtQml.Models
 
-import QtQuick 2.11
-import QtQuick.Templates 2.4 as T
-import QtQml.Models 2.2
-
-import QtGraphicalEffects 1.0
+import Qt5Compat.GraphicalEffects
 
 import org.videolan.vlc 0.1
+import org.videolan.controls 0.1
 
 import "qrc:///style/"
 import "qrc:///playlist/" as Playlist
 import "qrc:///util/Helpers.js" as Helpers
+import "qrc:///util/" as Util
 
 Item {
     id: dragItem
@@ -37,16 +38,19 @@ Item {
     // Properties
     //---------------------------------------------------------------------------------------------
 
-    readonly property int coverSize: VLCStyle.icon_normal
+    readonly property int coverSize: VLCStyle.icon_dragItem
 
     property var indexes: []
 
-    // data from last setData
-    readonly property alias indexesData: dragItem._data
+    // FIXME: This should not be required.
+    //        Qt does not pick the right method overload.
+    //        So we provide this additional information
+    //        in order to pick the right method.
+    property bool indexesFlat: false
 
     property string defaultCover: VLCStyle.noArtAlbumCover
 
-    property string defaultText: I18n.qtr("Unknown")
+    property string defaultText: qsTr("Unknown")
 
     // function(index, data) - returns cover for the index in the model in the form {artwork: <string> (file-name), cover: <component>}
     property var coverProvider: null
@@ -54,98 +58,120 @@ Item {
     // string => role
     property string coverRole: "cover"
 
-    // function(index, data) - returns title text for the index in the model i.e <string> title
-    property var titleProvider: null
+    property real padding: VLCStyle.margin_xsmall
 
-    // string => role
-    property string titleRole: "title"
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        palette: VLCStyle.palette
+        colorSet: ColorContext.Window
+    }
+
+    signal requestData(var indexes, var resolve, var reject)
+    signal requestInputItems(var indexes, var data, var resolve, var reject)
 
     function coversXPos(index) {
-        return VLCStyle.margin_small + (coverSize / 3) * index;
+        return VLCStyle.margin_small + (coverSize / 1.5) * index;
     }
 
-    signal requestData(var identifier)
-
-    function getSelectedInputItem(cb) {
-        console.assert(false, "getSelectedInputItem is not implemented.")
-
-        return undefined
-    }
-
-    function setData(id, data) {
-        if (id !== dragItem._currentRequest)
-            return
-
-        console.assert(data.length === indexes.length)
-        _data = data
-
-        if (!dragItem._active)
-            return
-
-        var covers = []
-        var titleList = []
-
-        for (var i in indexes) {
-            if (covers.length === _maxCovers)
-                break
-
-            var cover = _getCover(indexes[i], data[i])
-            var itemTitle = _getTitle(indexes[i], data[i])
-            if (!cover || !itemTitle) continue
-
-            covers.push(cover)
-            titleList.push(itemTitle)
-        }
-
-        if (covers.length === 0)
-            covers.push({artwork: dragItem.defaultCover})
-
-        if (titleList.length === 0)
-            titleList.push(defaultText)
-
-        _covers = covers
-        _title = titleList.join(",") + (indexes.length > _maxCovers ? "..." : "")
+    /**
+      * @return {Promise} Promise object of the input items
+      */
+    function getSelectedInputItem() {
+        if (_inputItems)
+            return Promise.resolve(dragItem._inputItems)
+        else if (dragItem._dropPromise)
+            return dragItem._dropPromise
+        else
+            dragItem._dropPromise = new Promise((resolve, reject) => {
+                dragItem._dropCallback = resolve
+                dragItem._dropFailedCallback = reject
+            })
+            return dragItem._dropPromise
     }
 
     //---------------------------------------------------------------------------------------------
     // Private
 
-    readonly property int _maxCovers: 3
-
-    readonly property bool _active: Drag.active
+    readonly property int _maxCovers: 10
 
     readonly property int _indexesSize: !!indexes ? indexes.length : 0
 
     readonly property int _displayedCoversCount: Math.min(_indexesSize, _maxCovers + 1)
 
+    property var _inputItems: []
+
     property var _data: []
 
     property var _covers: []
 
-    property string _title: ""
-
     property int _currentRequest: 0
 
-    Drag.onActiveChanged: {
-        // FIXME: This should not be ideally necessary
-        // TODO: Rework D&D positioning
-        if (!Drag.active)
-            x = y = -1
-    }
+    property int _grabImageRequest: 0
+
+    property bool _pendingNativeDragStart: false
+
+    property var _dropPromise: null
+    property var _dropCallback: null
+    property var _dropFailedCallback: null
 
     //---------------------------------------------------------------------------------------------
     // Implementation
     //---------------------------------------------------------------------------------------------
 
-    parent: g_mainDisplay
+    parent: T.Overlay.overlay
 
-    width: VLCStyle.colWidth(2)
+    visible: false
 
-    height: coverSize + VLCStyle.margin_small * 2
+    Drag.dragType: Drag.None
 
-    opacity: visible ? 0.90 : 0
+    Drag.hotSpot.x: - VLCStyle.dragDelta
 
-    visible: Drag.active
+    Drag.hotSpot.y: - VLCStyle.dragDelta
+
+    width: padding * 2
+           + coversXPos(_displayedCoversCount - 1) + coverSize + VLCStyle.margin_small
+           + subtitleLabel.width
+
+    height: coverSize + padding * 2
+
+    enabled: false
+
+    // Offscreen render:
+    layer.enabled: true
+    layer.effect: Item { }
+
+    function _setData(data) {
+        console.assert(data.length === indexes.length)
+        _data = data
+
+        const covers = []
+
+        for (let i in indexes) {
+            if (covers.length === _maxCovers)
+                break
+
+            const cover = _getCover(indexes[i], data[i])
+            if (!cover)
+                continue
+
+            covers.push(cover)
+        }
+
+        if (covers.length === 0)
+            covers.push({artwork: dragItem.defaultCover})
+
+        _covers = covers
+    }
+
+    function _setInputItems(inputItems) {
+        if (!Helpers.isArray(inputItems) || inputItems.length === 0) {
+            console.warn("can't convert items to input items");
+            dragItem._inputItems = null
+            return
+        }
+
+        dragItem._inputItems = inputItems
+    }
 
     function _getCover(index, data) {
         console.assert(dragItem.coverRole)
@@ -155,53 +181,210 @@ Item {
             return {artwork: data[dragItem.coverRole] || dragItem.defaultCover}
     }
 
-    function _getTitle(index, data) {
-        console.assert(dragItem.titleRole)
-        if (!!dragItem.titleProvider)
-            return dragItem.titleProvider(index, data)
-        else
-            return data[dragItem.titleRole] || dragItem.defaultText
+    function _startNativeDrag() {
+        if (!_pendingNativeDragStart)
+            return
+
+        _pendingNativeDragStart = false
+
+        const requestId = ++dragItem._grabImageRequest
+
+        visible = true
+
+        const s = dragItem.grabToImage(function (result) {
+            visible = false
+
+            if (requestId !== dragItem._grabImageRequest
+                    || fsmDragInactive.active)
+                return
+
+            dragItem.Drag.imageSource = result.url
+            dragItem.Drag.startDrag()
+        })
+
+        if (!s) {
+            // reject all pending requests
+            ++dragItem._grabImageRequest
+
+            dragItem.Drag.imageSource = ""
+            dragItem.Drag.startDrag()
+        }
     }
 
+    //NoRole because I'm not sure we need this to be accessible
+    //can drag items be considered Tooltip ? or is another class better suited
+    Accessible.role: Accessible.NoRole
+    Accessible.name: qsTr("drag item")
 
-    on_ActiveChanged: {
-        if (_active) {
-            dragItem._currentRequest += 1
-            dragItem.requestData(dragItem._currentRequest)
+    Drag.onActiveChanged: {
+        if (Drag.active) {
+            // reject all pending requests
+            ++dragItem._grabImageRequest
+            _pendingNativeDragStart = true
 
-            MainCtx.setCursor(Qt.DragMoveCursor)
+            fsm.startDrag()
         } else {
-            MainCtx.restoreCursor()
+            fsm.stopDrag()
         }
     }
 
-    Behavior on opacity {
-        NumberAnimation {
-            easing.type: Easing.InOutSine
-            duration: VLCStyle.duration_short
+    Timer {
+        // used to start the drag if it's taking too much time to load data
+        id: nativeDragStarter
+
+        interval: 50
+        running: _pendingNativeDragStart
+        onTriggered: {
+            dragItem._startNativeDrag()
         }
     }
 
-    readonly property ColorContext colorContext: ColorContext {
-        id: theme
-        colorSet: ColorContext.Window
+    Util.FSM {
+        id: fsm
+
+        signal startDrag()
+        signal stopDrag()
+
+        //internal signals
+        signal resolveData(var requestId, var indexes)
+        signal resolveInputItems(var requestId, var indexes)
+        signal resolveFailed()
+
+        signalMap: ({
+            startDrag: startDrag,
+            stopDrag: stopDrag,
+            resolveData: resolveData,
+            resolveInputItems: resolveInputItems,
+            resolveFailed: resolveFailed
+        })
+
+        initialState: fsmDragInactive
+
+        Util.FSMState {
+            id: fsmDragInactive
+
+            function enter() {
+                _pendingNativeDragStart = false
+
+                _covers = []
+                _data = []
+            }
+
+            transitions: ({
+                startDrag: fsmDragActive
+            })
+        }
+
+        Util.FSMState {
+            id: fsmDragActive
+
+            initialState: fsmRequestData
+
+            function enter() {
+                MainCtx.setCursor(Qt.DragMoveCursor)
+            }
+
+            function exit() {
+                MainCtx.restoreCursor()
+
+                _pendingNativeDragStart = false
+
+                if (dragItem._dropFailedCallback) {
+                    dragItem._dropFailedCallback()
+                }
+                dragItem._dropPromise = null
+                dragItem._dropFailedCallback = null
+                dragItem._dropCallback = null
+            }
+
+            transitions: ({
+                stopDrag: fsmDragInactive
+            })
+
+            Util.FSMState {
+                id: fsmRequestData
+
+                function enter() {
+                    const requestId = ++dragItem._currentRequest
+                    dragItem.requestData(
+                        dragItem.indexes,
+                        (data) => fsm.resolveData(requestId, data),
+                        fsm.resolveFailed)
+                }
+
+                transitions: ({
+                    resolveData: {
+                        guard: (requestId, data) => requestId === dragItem._currentRequest,
+                        action: (requestId, data) => {
+                            dragItem._setData(data)
+                        },
+                        target: fsmRequestInputItem
+                    },
+                    resolveFailed: fsmLoadingFailed
+                })
+            }
+
+            Util.FSMState {
+                id: fsmRequestInputItem
+
+                function enter() {
+                    const requestId = ++dragItem._currentRequest
+                    dragItem.requestInputItems(
+                        dragItem.indexes, _data,
+                        (items) => { fsm.resolveInputItems(requestId, items) },
+                        fsm.resolveFailed)
+                }
+
+                transitions: ({
+                    resolveInputItems: {
+                        guard: (requestId, items) => requestId === dragItem._currentRequest,
+                        action: (requestId, items) => {
+                            dragItem._setInputItems(items)
+                        },
+                        target: fsmLoadingDone,
+                    },
+                    resolveFailed: fsmLoadingFailed
+                })
+            }
+
+            Util.FSMState {
+                id: fsmLoadingDone
+
+                function enter() {
+                    dragItem._startNativeDrag()
+
+                    if (dragItem._dropCallback) {
+                        dragItem._dropCallback(dragItem._inputItems)
+                    }
+                    dragItem._dropPromise = null
+                    dragItem._dropCallback = null
+                    dragItem._dropFailedCallback = null
+                }
+            }
+
+            Util.FSMState {
+                id: fsmLoadingFailed
+                function enter() {
+                    _pendingNativeDragStart = false
+
+                    if (dragItem._dropFailedCallback) {
+                        dragItem._dropFailedCallback()
+                    }
+                    dragItem._dropPromise = null
+                    dragItem._dropCallback = null
+                    dragItem._dropFailedCallback = null
+                }
+            }
+        }
     }
 
     Rectangle {
         /* background */
         anchors.fill: parent
-        color: theme.bg.primary
+        color: fsmLoadingFailed.active ? theme.bg.negative : theme.bg.primary
         border.color: theme.border
         border.width: VLCStyle.dp(1, VLCStyle.scale)
         radius: VLCStyle.dp(6, VLCStyle.scale)
-    }
-
-    RectangularGlow {
-        anchors.fill: parent
-        glowRadius: VLCStyle.dp(8, VLCStyle.scale)
-        color: theme.shadow
-        spread: 0.2
-        z: -1
     }
 
     Repeater {
@@ -210,8 +393,11 @@ Item {
         model: dragItem._covers
 
         Item {
+            required property var modelData
+            required property int index
+
             x: dragItem.coversXPos(index)
-            y: (dragItem.height - height) / 2
+            anchors.verticalCenter: parent.verticalCenter
             width: dragItem.coverSize
             height: dragItem.coverSize
 
@@ -222,30 +408,35 @@ Item {
                 anchors.fill: parent
                 color: theme.bg.primary
 
-                DoubleShadow {
-                    anchors.fill: parent
+                DefaultShadow {
+                    anchors.centerIn: parent
 
-                    z: -1
-
-                    xRadius: bg.radius
-                    yRadius: bg.radius
-
-                    primaryBlurRadius: VLCStyle.dp(3)
-                    primaryVerticalOffset: VLCStyle.dp(1, VLCStyle.scale)
-                    primaryHorizontalOffset: 0
-
-                    secondaryBlurRadius: VLCStyle.dp(14)
-                    secondaryVerticalOffset: VLCStyle.dp(6, VLCStyle.scale)
-                    secondaryHorizontalOffset: 0
+                    sourceItem: bg
                 }
             }
 
+            RoundImage {
+                id: fallbackCover
+
+                anchors.centerIn: parent
+                width: coverSize
+                height: coverSize
+                radius: bg.radius
+                source: dragItem.defaultCover
+                visible: !loader.visible
+            }
 
             Loader {
+                id: loader
+
                 // parent may provide extra data with covers
                 property var model: modelData
 
                 anchors.centerIn: parent
+
+                visible: (status === Loader.Ready)
+                         && (!("status" in item) || (item.status === Image.Ready))
+
                 sourceComponent: (!modelData.artwork || modelData.artwork.toString() === "") ? modelData.cover : artworkLoader
                 layer.enabled: true
                 layer.effect: OpacityMask {
@@ -278,7 +469,7 @@ Item {
         id: extraCovers
 
         x: dragItem.coversXPos(_maxCovers)
-        y: (dragItem.height - height) / 2
+        anchors.verticalCenter: parent.verticalCenter
         width: dragItem.coverSize
         height: dragItem.coverSize
         radius: dragItem.coverSize
@@ -288,63 +479,34 @@ Item {
         border.color: theme.border
 
         MenuLabel {
-            anchors.centerIn: parent
+            anchors.fill: parent
+
+            verticalAlignment: Text.AlignVCenter
+            horizontalAlignment: Text.AlignHCenter
+            font.pixelSize: VLCStyle.fontSize_small
+
             color: theme.accent
+
             text: "+" + (dragItem._indexesSize - dragItem._maxCovers)
         }
 
-        DoubleShadow {
-            z: -1
-            anchors.fill: parent
-            xRadius: extraCovers.radius
-            yRadius: extraCovers.radius
+        DefaultShadow {
+            anchors.centerIn: parent
 
-            primaryBlurRadius: VLCStyle.dp(3)
-            primaryVerticalOffset: VLCStyle.dp(1, VLCStyle.scale)
-            primaryHorizontalOffset: 0
-
-            secondaryBlurRadius: VLCStyle.dp(14)
-            secondaryVerticalOffset: VLCStyle.dp(6, VLCStyle.scale)
-            secondaryHorizontalOffset: 0
+            sourceItem: extraCovers
         }
     }
 
 
-    Column {
-        id: labelColumn
+    MenuCaption {
+        id: subtitleLabel
 
         anchors.verticalCenter: parent.verticalCenter
         x: dragItem.coversXPos(_displayedCoversCount - 1) + dragItem.coverSize + VLCStyle.margin_small
-        width: parent.width - x - VLCStyle.margin_small
-        spacing: VLCStyle.margin_xxxsmall
 
-        ScrollingText {
-            label: titleLabel
-            forceScroll: true
-            height: titleLabel.height
-            width: parent.width
-            clip: scrolling
-
-            T.Label {
-                id: titleLabel
-
-                text: dragItem._title
-                visible: text && text !== ""
-                width: parent.width
-                elide: Text.ElideNone
-                font.pixelSize: VLCStyle.fontSize_large
-                color: theme.fg.primary
-            }
-        }
-
-        MenuCaption {
-            id: subtitleLabel
-
-            visible: text && text !== ""
-            width: parent.width
-            text: I18n.qtr("%1 selected").arg(dragItem._indexesSize)
-            color: theme.fg.secondary
-        }
+        visible: text && text !== ""
+        text: qsTr("%1 selected").arg(dragItem._indexesSize)
+        color: theme.fg.secondary
     }
 
     Component {
@@ -354,7 +516,6 @@ Item {
             fillMode: Image.PreserveAspectCrop
             width: coverSize
             height: coverSize
-            asynchronous: true
             cache: false
         }
     }

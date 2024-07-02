@@ -34,23 +34,34 @@
 
 #import "library/VLCLibraryController.h"
 #import "library/VLCLibraryDataTypes.h"
+#import "library/VLCLibraryImageCache.h"
+#import "library/VLCLibraryModel.h"
+#import "library/VLCLibraryRepresentedItem.h"
 #import "library/VLCLibraryTableCellView.h"
 #import "library/VLCLibraryTableView.h"
 #import "library/VLCLibraryUIUnits.h"
+#import "library/VLCLibraryWindow.h"
 
 #import "library/audio-library/VLCLibraryAlbumTracksDataSource.h"
+#import "library/audio-library/VLCLibraryAlbumTracksTableViewDelegate.h"
 
-NSString *VLCAudioLibraryCellIdentifier = @"VLCAudioLibraryCellIdentifier";
-NSString *VLCLibraryAlbumTableCellTableViewColumnIdentifier = @"VLCLibraryAlbumTableCellTableViewColumnIdentifier";
+NSString * const VLCAudioLibraryCellIdentifier = @"VLCAudioLibraryCellIdentifier";
+NSString * const VLCLibraryAlbumTableCellTableViewIdentifier = @"VLCLibraryAlbumTableCellTableViewIdentifier";
+NSString * const VLCLibraryAlbumTableCellTableViewColumnIdentifier = @"VLCLibraryAlbumTableCellTableViewColumnIdentifier";
+
 const CGFloat VLCLibraryAlbumTableCellViewDefaultHeight = 168.;
 
 @interface VLCLibraryAlbumTableCellView ()
 {
     VLCLibraryController *_libraryController;
     VLCLibraryAlbumTracksDataSource *_tracksDataSource;
+    VLCLibraryAlbumTracksTableViewDelegate *_tracksTableViewDelegate;
     VLCLibraryTableView *_tracksTableView;
     NSTableColumn *_column;
 }
+
+@property (readwrite, atomic) VLCLibraryRepresentedItem *protectedRepresentedItem;
+
 @end
 
 @implementation VLCLibraryAlbumTableCellView
@@ -69,29 +80,29 @@ const CGFloat VLCLibraryAlbumTableCellViewDefaultHeight = 168.;
 
 - (CGFloat)height
 {
-    if (_representedAlbum == nil) {
+    if (self.representedItem == nil) {
         return -1;
     }
 
-    const CGFloat artworkAndSecondaryLabelsHeight = [VLCLibraryUIUnits largeSpacing] +
-                                                    _representedImageView.frame.size.height + 
-                                                    [VLCLibraryUIUnits mediumSpacing] +
-                                                    _summaryTextField.frame.size.height + 
-                                                    [VLCLibraryUIUnits smallSpacing] +
-                                                    _yearTextField.frame.size.height + 
-                                                    [VLCLibraryUIUnits largeSpacing];
-    
+    const CGFloat artworkAndSecondaryLabelsHeight = VLCLibraryUIUnits.largeSpacing +
+                                                    _representedImageView.frame.size.height +
+                                                    VLCLibraryUIUnits.mediumSpacing +
+                                                    _summaryTextField.frame.size.height +
+                                                    VLCLibraryUIUnits.smallSpacing +
+                                                    _yearTextField.frame.size.height +
+                                                    VLCLibraryUIUnits.largeSpacing;
+
     if(_tracksTableView == nil) {
         return artworkAndSecondaryLabelsHeight;
     }
 
-    const CGFloat titleAndTableViewHeight = [VLCLibraryUIUnits largeSpacing] +
+    const CGFloat titleAndTableViewHeight = VLCLibraryUIUnits.largeSpacing +
                                             _albumNameTextField.frame.size.height +
-                                            [VLCLibraryUIUnits smallSpacing] +
-                                            _artistNameTextField.frame.size.height + 
-                                            [VLCLibraryUIUnits smallSpacing] +
+                                            VLCLibraryUIUnits.smallSpacing +
+                                            _artistNameTextButton.frame.size.height +
+                                            VLCLibraryUIUnits.smallSpacing +
                                             [self expectedTableViewHeight] +
-                                            [VLCLibraryUIUnits largeSpacing];
+                                            VLCLibraryUIUnits.largeSpacing;
 
     return titleAndTableViewHeight > artworkAndSecondaryLabelsHeight ? titleAndTableViewHeight : artworkAndSecondaryLabelsHeight;
 }
@@ -102,32 +113,56 @@ const CGFloat VLCLibraryAlbumTableCellViewDefaultHeight = 168.;
     // to take into account the album's left spacing, right spacing, and the table view's
     // right spacing. In this case we are using large spacing for all of these. We also
     // throw in a little bit extra spacing to compensate for some mysterious internal spacing.
-    return self.frame.size.width - _representedImageView.frame.size.width - [VLCLibraryUIUnits largeSpacing] * 3.75;
+    return self.frame.size.width -
+           _representedImageView.frame.size.width -
+           VLCLibraryUIUnits.largeSpacing * 3.75;
 }
 
 - (CGFloat)expectedTableViewHeight
 {
-    const NSUInteger numberOfTracks = _representedAlbum.numberOfTracks;
+    if (self.representedItem == nil) {
+        return -1;
+    }
+
+    VLCMediaLibraryAlbum * const album = (VLCMediaLibraryAlbum *)self.representedItem.item;
+    if (album == nil) {
+        return -1;
+    }
+
+    const NSUInteger numberOfTracks = album.numberOfTracks;
     const CGFloat intercellSpacing = numberOfTracks > 1 ? (numberOfTracks - 1) * _tracksTableView.intercellSpacing.height : 0;
-    return numberOfTracks * VLCLibraryTracksRowHeight + intercellSpacing + [VLCLibraryUIUnits mediumSpacing];
+    return numberOfTracks * VLCLibraryTracksRowHeight + intercellSpacing + VLCLibraryUIUnits.mediumSpacing;
 }
 
 - (void)awakeFromNib
 {
     [self setupTracksTableView];
-    self.albumNameTextField.font = [NSFont VLClibraryLargeCellTitleFont];
-    self.artistNameTextField.font = [NSFont VLClibraryLargeCellSubtitleFont];
-    self.yearTextField.font = [NSFont VLClibrarySmallCellTitleFont];
-    self.summaryTextField.font = [NSFont VLClibrarySmallCellTitleFont];
+    self.albumNameTextField.font = NSFont.VLCLibrarySubsectionHeaderFont;
+    self.artistNameTextButton.font = NSFont.VLCLibrarySubsectionSubheaderFont;
+    self.genreNameTextButton.font = NSFont.VLCLibrarySubsectionSubheaderFont;
+    self.artistNameTextButton.action = @selector(primaryDetailAction:);
+    self.genreNameTextButton.action = @selector(secondaryDetailAction:);
     self.trackingView.viewToHide = self.playInstantlyButton;
-    self.artistNameTextField.textColor = [NSColor VLCAccentColor];
+
+    if (@available(macOS 10.14, *)) {
+        self.artistNameTextButton.contentTintColor = NSColor.VLCAccentColor;
+        self.genreNameTextButton.contentTintColor = NSColor.secondaryLabelColor;
+    }
 
     [self prepareForReuse];
+
+    NSNotificationCenter * const notificationCenter = NSNotificationCenter.defaultCenter;
+    [notificationCenter addObserver:self
+                           selector:@selector(handleAlbumUpdated:)
+                               name:VLCLibraryModelAlbumUpdated
+                             object:nil];
 }
 
 - (void)setupTracksTableView
 {
     _tracksTableView = [[VLCLibraryTableView alloc] initWithFrame:NSZeroRect];
+    _tracksTableView.identifier = VLCLibraryAlbumTableCellTableViewIdentifier;
+    _tracksTableView.allowsMultipleSelection = YES;
     _column = [[NSTableColumn alloc] initWithIdentifier:VLCLibraryAlbumTableCellTableViewColumnIdentifier];
     _column.width = [self expectedTableViewWidth];
     _column.maxWidth = MAXFLOAT;
@@ -141,25 +176,32 @@ const CGFloat VLCLibraryAlbumTableCellViewDefaultHeight = 168.;
     _tracksTableView.backgroundColor = [NSColor clearColor];
 
     _tracksDataSource = [[VLCLibraryAlbumTracksDataSource alloc] init];
+    _tracksTableViewDelegate = [[VLCLibraryAlbumTracksTableViewDelegate alloc] init];
     _tracksTableView.dataSource = _tracksDataSource;
-    _tracksTableView.delegate = _tracksDataSource;
+    _tracksTableView.delegate = _tracksTableViewDelegate;
     _tracksTableView.doubleAction = @selector(tracksTableViewDoubleClickAction:);
     _tracksTableView.target = self;
 
     _tracksTableView.translatesAutoresizingMaskIntoConstraints = NO;
     [self addSubview:_tracksTableView];
     NSString *horizontalVisualConstraints = [NSString stringWithFormat:@"H:|-%f-[_representedImageView]-%f-[_tracksTableView]-%f-|",
-                                             [VLCLibraryUIUnits largeSpacing],
-                                             [VLCLibraryUIUnits largeSpacing],
-                                             [VLCLibraryUIUnits largeSpacing]];
-    NSString *verticalVisualContraints = [NSString stringWithFormat:@"V:|-%f-[_albumNameTextField]-%f-[_artistNameTextField]-%f-[_tracksTableView]->=%f-|",
-                                          [VLCLibraryUIUnits largeSpacing],
-                                          [VLCLibraryUIUnits smallSpacing],
-                                          [VLCLibraryUIUnits mediumSpacing],
-                                          [VLCLibraryUIUnits largeSpacing]];
-    NSDictionary *dict = NSDictionaryOfVariableBindings(_tracksTableView, _representedImageView, _albumNameTextField, _artistNameTextField);
+                                             VLCLibraryUIUnits.largeSpacing,
+                                             VLCLibraryUIUnits.largeSpacing,
+                                             VLCLibraryUIUnits.largeSpacing];
+    NSString *verticalVisualContraints = [NSString stringWithFormat:@"V:|-%f-[_albumNameTextField]-%f-[_artistNameTextButton]-%f-[_tracksTableView]->=%f-|",
+                                          VLCLibraryUIUnits.largeSpacing,
+                                          VLCLibraryUIUnits.smallSpacing,
+                                          VLCLibraryUIUnits.mediumSpacing,
+                                          VLCLibraryUIUnits.largeSpacing];
+    NSDictionary *dict = NSDictionaryOfVariableBindings(_tracksTableView, _representedImageView, _albumNameTextField, _artistNameTextButton);
     [self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:horizontalVisualConstraints options:0 metrics:0 views:dict]];
     [self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:verticalVisualContraints options:0 metrics:0 views:dict]];
+
+    NSNotificationCenter *notificationCenter = NSNotificationCenter.defaultCenter;
+    [notificationCenter addObserver:self
+                           selector:@selector(handleTableViewSelectionIsChanging:)
+                               name:NSTableViewSelectionIsChangingNotification
+                             object:nil];
 }
 
 - (void)prepareForReuse
@@ -168,14 +210,36 @@ const CGFloat VLCLibraryAlbumTableCellViewDefaultHeight = 168.;
 
     self.representedImageView.image = nil;
     self.albumNameTextField.stringValue = @"";
-    self.artistNameTextField.stringValue = @"";
+    self.artistNameTextButton.title = @"";
+    self.genreNameTextButton.title = @"";
     self.yearTextField.stringValue = @"";
     self.summaryTextField.stringValue = @"";
     self.yearTextField.hidden = NO;
     self.playInstantlyButton.hidden = YES;
 
+    if (@available(macOS 10.14, *)) {
+        self.artistNameTextButton.contentTintColor = NSColor.VLCAccentColor;
+        self.genreNameTextButton.contentTintColor = NSColor.secondaryLabelColor;
+    }
+
     _tracksDataSource.representedAlbum = nil;
     [_tracksTableView reloadData];
+}
+
+- (void)handleAlbumUpdated:(NSNotification *)notification
+{
+    NSParameterAssert(notification);
+    if (self.representedItem == nil) {
+        return;
+    }
+
+    VLCMediaLibraryAlbum * const album = (VLCMediaLibraryAlbum *)notification.object;
+    if (album == nil || self.representedItem.item.libraryID != album.libraryID) {
+        return;
+    }
+
+    VLCLibraryRepresentedItem * const representedItem = [[VLCLibraryRepresentedItem alloc] initWithItem:album parentType:self.representedItem.parentType];
+    self.representedItem = representedItem;
 }
 
 - (void)setFrameSize:(NSSize)size
@@ -195,54 +259,116 @@ const CGFloat VLCLibraryAlbumTableCellViewDefaultHeight = 168.;
 
 - (IBAction)playInstantly:(id)sender
 {
-    if (!_libraryController) {
-        _libraryController = [[VLCMain sharedInstance] libraryController];
-    }
-
-    BOOL playImmediately = YES;
-    for (VLCMediaLibraryMediaItem *mediaItem in [_representedAlbum tracksAsMediaItems]) {
-        [_libraryController appendItemToPlaylist:mediaItem playImmediately:playImmediately];
-        if (playImmediately) {
-            playImmediately = NO;
-        }
-    }
+    [self.representedItem play];
 }
 
-- (void)setRepresentedAlbum:(VLCMediaLibraryAlbum *)representedAlbum
+- (void)primaryDetailAction:(id)sender
 {
-    _representedAlbum = representedAlbum;
-    self.albumNameTextField.stringValue = _representedAlbum.title;
-    self.artistNameTextField.stringValue = _representedAlbum.artistName;
-    
-    if (_representedAlbum.year > 0) {
-        self.yearTextField.intValue = _representedAlbum.year;
+    VLCMediaLibraryAlbum * const album = (VLCMediaLibraryAlbum *)self.representedItem.item;
+    if (album == nil || !album.primaryActionableDetail) {
+        return;
+    }
+
+    VLCLibraryWindow * const libraryWindow = VLCMain.sharedInstance.libraryWindow;
+    const id<VLCMediaLibraryItemProtocol> libraryItem = album.primaryActionableDetailLibraryItem;
+    [libraryWindow presentLibraryItem:libraryItem];
+}
+
+- (void)secondaryDetailAction:(id)sender
+{
+    VLCMediaLibraryAlbum * const album = (VLCMediaLibraryAlbum *)self.representedItem.item;
+    if (album == nil || !album.secondaryActionableDetail) {
+        return;
+    }
+
+    VLCLibraryWindow * const libraryWindow = VLCMain.sharedInstance.libraryWindow;
+    id<VLCMediaLibraryItemProtocol> libraryItem = album.secondaryActionableDetailLibraryItem;
+    [libraryWindow presentLibraryItem:libraryItem];
+}
+
+- (VLCLibraryRepresentedItem *)representedItem
+{
+    return self.protectedRepresentedItem;
+}
+
+- (void)setRepresentedItem:(VLCLibraryRepresentedItem *)representedItem
+{
+    if (representedItem == nil) {
+        return;
+    }
+
+    self.protectedRepresentedItem = representedItem;
+
+    VLCMediaLibraryAlbum * const album = (VLCMediaLibraryAlbum *)self.representedItem.item;
+    NSAssert(album != nil, @"Represented item should be a medialibraryalbum!");
+
+    self.albumNameTextField.stringValue = album.displayString;
+    self.artistNameTextButton.title = album.artistName;
+    self.genreNameTextButton.title = album.genreString;
+
+    if (album.year > 0) {
+        self.yearTextField.intValue = album.year;
     } else {
         self.yearTextField.hidden = YES;
     }
 
-    if (_representedAlbum.summary.length > 0) {
-        self.summaryTextField.stringValue = _representedAlbum.summary;
+    if (album.summary.length > 0) {
+        self.summaryTextField.stringValue = album.summary;
     } else {
-        self.summaryTextField.stringValue = _representedAlbum.durationString;
+        self.summaryTextField.stringValue = album.durationString;
     }
 
-    self.representedImageView.image = _representedAlbum.smallArtworkImage;
+    const BOOL primaryActionableDetail = album.primaryActionableDetail;
+    const BOOL secondaryActionableDetail = album.secondaryActionableDetail;
+    self.artistNameTextButton.enabled = primaryActionableDetail;
+    self.genreNameTextButton.enabled = secondaryActionableDetail;
+    if (@available(macOS 10.14, *)) {
+        self.artistNameTextButton.contentTintColor = primaryActionableDetail ? NSColor.VLCAccentColor : NSColor.secondaryLabelColor;
+        self.genreNameTextButton.contentTintColor = secondaryActionableDetail ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor;
+    }
 
-    _tracksDataSource.representedAlbum = _representedAlbum;
-    [_tracksTableView reloadData];
+    [VLCLibraryImageCache thumbnailForLibraryItem:album withCompletion:^(NSImage * const thumbnail) {
+        self.representedImageView.image = thumbnail;
+    }];
+
+    __weak typeof(self) weakSelf = self; // Prevent retain cycle
+    [_tracksDataSource setRepresentedAlbum:album withCompletion:^{
+        __strong typeof(self) strongSelf = weakSelf;
+
+        if (strongSelf) {
+            [strongSelf->_tracksTableView reloadData];
+        }
+    }];
 }
 
 - (void)tracksTableViewDoubleClickAction:(id)sender
 {
     if (!_libraryController) {
-        _libraryController = [[VLCMain sharedInstance] libraryController];
+        _libraryController = VLCMain.sharedInstance.libraryController;
     }
 
-    NSArray *tracks = [_representedAlbum tracksAsMediaItems];
-    NSUInteger trackCount = tracks.count;
-    NSInteger clickedRow = _tracksTableView.clickedRow;
+    VLCMediaLibraryAlbum * const album = (VLCMediaLibraryAlbum *)self.representedItem.item;
+    NSArray * const tracks = album.mediaItems;
+    const NSUInteger trackCount = tracks.count;
+    const NSInteger clickedRow = _tracksTableView.clickedRow;
     if (clickedRow < trackCount) {
-        [_libraryController appendItemToPlaylist:tracks[_tracksTableView.clickedRow] playImmediately:YES];
+        VLCMediaLibraryMediaItem * const mediaItem = tracks[_tracksTableView.clickedRow];
+        VLCLibraryRepresentedItem * const representedItem = [[VLCLibraryRepresentedItem alloc] initWithItem:mediaItem parentType:VLCMediaLibraryParentGroupTypeAlbum];
+
+        [representedItem play];
+    }
+}
+
+- (void)handleTableViewSelectionIsChanging:(NSNotification *)notification
+{
+    NSParameterAssert(notification);
+    NSTableView * const tableView = notification.object;
+    NSAssert(tableView, @"Table view selection changing notification should carry valid table view");
+
+    if (tableView != _tracksTableView &&
+        tableView.identifier == VLCLibraryAlbumTableCellTableViewIdentifier) {
+
+        [_tracksTableView deselectAll:self];
     }
 }
 

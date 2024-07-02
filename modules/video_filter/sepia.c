@@ -29,6 +29,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_configuration.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
@@ -84,7 +85,15 @@ static const struct
 } p_sepia_cfg[] = {
     { VLC_CODEC_I420, PlanarI420Sepia },
     { VLC_CODEC_RGB24, RVSepia },
-    { VLC_CODEC_RGB32, RVSepia },
+    { VLC_CODEC_BGR24, RVSepia },
+    { VLC_CODEC_BGRA, RVSepia },
+    { VLC_CODEC_RGBA, RVSepia },
+    { VLC_CODEC_ARGB, RVSepia },
+    { VLC_CODEC_ABGR, RVSepia },
+    { VLC_CODEC_BGRX, RVSepia },
+    { VLC_CODEC_RGBX, RVSepia },
+    { VLC_CODEC_XRGB, RVSepia },
+    { VLC_CODEC_XBGR, RVSepia },
     { VLC_CODEC_UYVY, PackedYUVSepia },
     { VLC_CODEC_VYUY, PackedYUVSepia },
     { VLC_CODEC_YUYV, PackedYUVSepia },
@@ -397,10 +406,11 @@ static void RVSepia( picture_t *p_pic, picture_t *p_outpic, int i_intensity )
 #define ONE_HALF  (1 << (SCALEBITS - 1))
 #define FIX(x)    ((int) ((x) * (1<<SCALEBITS) + 0.5))
     uint8_t *p_in, *p_in_end, *p_line_end, *p_out;
-    bool b_isRV32 = p_pic->format.i_chroma == VLC_CODEC_RGB32;
-    int i_rindex = 0, i_gindex = 1, i_bindex = 2;
+    bool b_isRV32 = p_pic->format.i_chroma != VLC_CODEC_RGB24  &&
+                    p_pic->format.i_chroma != VLC_CODEC_BGR24;
+    int i_rindex = 0, i_gindex = 1, i_bindex = 2, i_aindex = -1;
 
-    GetPackedRgbIndexes( &p_outpic->format, &i_rindex, &i_gindex, &i_bindex );
+    GetPackedRgbIndexes( p_outpic->format.i_chroma, &i_rindex, &i_gindex, &i_bindex, &i_aindex );
 
     p_in = p_pic->p[0].p_pixels;
     p_in_end = p_in + p_pic->p[0].i_visible_lines
@@ -436,12 +446,15 @@ static void RVSepia( picture_t *p_pic, picture_t *p_outpic, int i_intensity )
             p_out[i_rindex] = vlc_uint8(i_y + r_intensity);
             p_out[i_gindex] = vlc_uint8(i_y + g_intensity);
             p_out[i_bindex] = vlc_uint8(i_y + b_intensity);
-            p_in += 3;
-            p_out += 3;
             /* for rv32 we take 4 chunks at the time */
             if (b_isRV32) {
-            /* alpha channel stays the same */
-            *p_out++ = *p_in++;
+                /* alpha channel or undefined stays the same */
+                p_out[i_aindex] = p_in[i_aindex];
+                p_in += 4;
+                p_out += 4;
+            } else {
+                p_in += 3;
+                p_out += 3;
             }
         }
 

@@ -24,6 +24,8 @@
 #ifndef VLC_ARRAYS_H_
 #define VLC_ARRAYS_H_
 
+#include <vlc_common.h>
+
 /**
  * \file
  * This file defines functions, structures and macros for handling arrays in vlc
@@ -162,7 +164,7 @@ static inline void *realloc_or_free( void *p, size_t sz )
 /* Internal functions */
 #define _ARRAY_ALLOC(array, newsize) {                                      \
     (array).i_alloc = newsize;                                              \
-    (array).p_elems = realloc( (array).p_elems, (array).i_alloc *           \
+    (array).p_elems = vlc_reallocarray( (array).p_elems, (array).i_alloc,   \
                                sizeof(*(array).p_elems) );                  \
     if( !(array).p_elems ) abort();                                         \
 }
@@ -173,8 +175,6 @@ static inline void *realloc_or_free( void *p, size_t sz )
     else if( (array).i_alloc == (array).i_size )                            \
         _ARRAY_ALLOC(array, (int)((array).i_alloc * 1.5) )                    \
 }
-
-#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 /* API */
 #define DECL_ARRAY(type) struct {                                           \
@@ -273,7 +273,7 @@ static inline void vlc_array_clear( vlc_array_t * p_array )
 }
 
 /* Read */
-static inline size_t vlc_array_count( vlc_array_t * p_array )
+static inline size_t vlc_array_count( const vlc_array_t * p_array )
 {
     return p_array->i_count;
 }
