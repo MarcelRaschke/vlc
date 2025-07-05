@@ -22,8 +22,24 @@
 
 #include "timestamps.h"
 
+#define STREAM_ID_PROGRAM_STREAM_MAP         0xBC
+#define STREAM_ID_PRIVATE_STREAM_1           0xBD
+#define STREAM_ID_PADDING                    0xBE
+#define STREAM_ID_PRIVATE_STREAM_2           0xBF
+#define STREAM_ID_AUDIO_STREAM_0             0xC0
+#define STREAM_ID_VIDEO_STREAM_0             0xE0
+#define STREAM_ID_ECM                        0xF0
+#define STREAM_ID_EMM                        0xF1
+#define STREAM_ID_DSM_CC                     0xF2
+#define STREAM_ID_H222_1_TYPE_E              0xF8
+#define STREAM_ID_METADATA_STREAM            0xFC
+#define STREAM_ID_EXTENDED_STREAM_ID         0xFD
+#define STREAM_ID_PROGRAM_STREAM_DIRECTORY   0xFF
+
+/* MPEG-2 PTS/DTS */
 static inline ts_90khz_t GetPESTimestamp( const uint8_t *p_data )
 {
+    /* prefixed by 4 bits 0010 or 0011 */
     return  ((ts_90khz_t)(p_data[ 0]&0x0e ) << 29)|
              (ts_90khz_t)(p_data[1] << 22)|
             ((ts_90khz_t)(p_data[2]&0xfe) << 14)|
@@ -50,6 +66,7 @@ static inline bool ExtractPESTimestamp( const uint8_t *p_data, uint8_t i_flags, 
 /* PS SCR timestamp as defined in H222 2.5.3.2 */
 static inline ts_90khz_t ExtractPackHeaderTimestamp( const uint8_t *p_data )
 {
+    /* prefixed by 2 bits 01 */
     return  ((ts_90khz_t)(p_data[0]&0x38 ) << 27)|
             ((ts_90khz_t)(p_data[0]&0x03 ) << 28)|
              (ts_90khz_t)(p_data[1] << 20)|
@@ -59,31 +76,50 @@ static inline ts_90khz_t ExtractPackHeaderTimestamp( const uint8_t *p_data )
              (ts_90khz_t)(p_data[4] >> 3);
 }
 
+typedef struct
+{
+    ts_90khz_t i_dts;
+    ts_90khz_t i_pts;
+    uint8_t i_stream_id;
+    bool b_scrambling;
+    unsigned i_size;
+} ts_pes_header_t;
+
+static inline void ts_pes_header_init(ts_pes_header_t *h)
+{
+    h->i_dts = TS_90KHZ_INVALID;
+    h->i_pts = TS_90KHZ_INVALID;
+    h->i_stream_id = 0;
+    h->b_scrambling = false;
+    h->i_size = 0;
+}
+
 inline
-static int ParsePESHeader( vlc_object_t *p_object, const uint8_t *p_header, size_t i_header,
-                           unsigned *pi_skip, ts_90khz_t *pi_dts, ts_90khz_t *pi_pts,
-                           uint8_t *pi_stream_id, bool *pb_pes_scambling )
+static int ParsePESHeader( struct vlc_logger *p_logger, const uint8_t *p_header, size_t i_header,
+                           ts_pes_header_t *h )
 {
     unsigned i_skip;
 
     if ( i_header < 9 )
         return VLC_EGENERIC;
 
-    *pi_stream_id = p_header[3];
+    if( p_header[0] != 0 || p_header[1] != 0 || p_header[2] != 1 )
+        return VLC_EGENERIC;
+
+    h->i_stream_id = p_header[3];
 
     switch( p_header[3] )
     {
-    case 0xBC:  /* Program stream map */
-    case 0xBE:  /* Padding */
-    case 0xBF:  /* Private stream 2 */
-    case 0xF0:  /* ECM */
-    case 0xF1:  /* EMM */
-    case 0xFF:  /* Program stream directory */
-    case 0xF2:  /* DSMCC stream */
-    case 0xF8:  /* ITU-T H.222.1 type E stream */
+    case STREAM_ID_PROGRAM_STREAM_MAP:
+    case STREAM_ID_PADDING:
+    case STREAM_ID_PRIVATE_STREAM_2:
+    case STREAM_ID_ECM:
+    case STREAM_ID_EMM:
+    case STREAM_ID_PROGRAM_STREAM_DIRECTORY:
+    case STREAM_ID_DSM_CC:
+    case STREAM_ID_H222_1_TYPE_E:
         i_skip = 6;
-        if( pb_pes_scambling )
-            *pb_pes_scambling = false;
+        h->b_scrambling = false;
         break;
     default:
         if( ( p_header[6]&0xC0 ) == 0x80 )
@@ -91,17 +127,16 @@ static int ParsePESHeader( vlc_object_t *p_object, const uint8_t *p_header, size
             /* mpeg2 PES */
             i_skip = p_header[8] + 9;
 
-            if( pb_pes_scambling )
-                *pb_pes_scambling = p_header[6]&0x30;
+            h->b_scrambling = p_header[6]&0x30;
 
             if( p_header[7]&0x80 )    /* has pts */
             {
                 if( i_header >= 9 + 5 )
-                   (void) ExtractPESTimestamp( &p_header[9], p_header[7] >> 6, pi_pts );
+                   (void) ExtractPESTimestamp( &p_header[9], p_header[7] >> 6, &h->i_pts );
 
                 if( ( p_header[7]&0x40 ) &&    /* has dts */
                     i_header >= 14 + 5 )
-                   (void) ExtractPESTimestamp( &p_header[14], 0x01, pi_dts );
+                   (void) ExtractPESTimestamp( &p_header[14], 0x01, &h->i_dts );
             }
         }
         else
@@ -112,8 +147,7 @@ static int ParsePESHeader( vlc_object_t *p_object, const uint8_t *p_header, size
                Non spec reference for packet format on http://andrewduncan.net/mpeg/mpeg-1.html */
             i_skip = 6;
 
-            if( pb_pes_scambling )
-                *pb_pes_scambling = false;
+            h->b_scrambling = false;
 
             while( i_skip < 23 && p_header[i_skip] == 0xff )
             {
@@ -123,7 +157,7 @@ static int ParsePESHeader( vlc_object_t *p_object, const uint8_t *p_header, size
             }
             if( i_skip == 23 )
             {
-                msg_Err( p_object, "too much MPEG-1 stuffing" );
+                vlc_error( p_logger, "too much MPEG-1 stuffing" );
                 return VLC_EGENERIC;
             }
             /* Skip STD buffer size */
@@ -138,12 +172,12 @@ static int ParsePESHeader( vlc_object_t *p_object, const uint8_t *p_header, size
             if(  p_header[i_skip]&0x20 )
             {
                 if( i_header >= i_skip + 5 )
-                    (void) ExtractPESTimestamp( &p_header[i_skip], p_header[i_skip] >> 4, pi_pts );
+                    (void) ExtractPESTimestamp( &p_header[i_skip], p_header[i_skip] >> 4, &h->i_pts );
 
                 if( ( p_header[i_skip]&0x10 ) &&     /* has dts */
                     i_header >= i_skip + 10 )
                 {
-                    (void) ExtractPESTimestamp( &p_header[i_skip+5], 0x01, pi_dts );
+                    (void) ExtractPESTimestamp( &p_header[i_skip+5], 0x01, &h->i_dts );
                     i_skip += 10;
                 }
                 else
@@ -161,7 +195,7 @@ static int ParsePESHeader( vlc_object_t *p_object, const uint8_t *p_header, size
         break;
     }
 
-    *pi_skip = i_skip;
+    h->i_size = i_skip;
     return VLC_SUCCESS;
 }
 

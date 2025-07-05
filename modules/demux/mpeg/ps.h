@@ -27,11 +27,6 @@
 #define PS_STREAM_ID_END_STREAM       0xB9
 #define PS_STREAM_ID_PACK_HEADER      0xBA
 #define PS_STREAM_ID_SYSTEM_HEADER    0xBB
-#define PS_STREAM_ID_MAP              0xBC
-#define PS_STREAM_ID_PRIVATE_STREAM1  0xBD
-#define PS_STREAM_ID_PADDING          0xBE
-#define PS_STREAM_ID_EXTENDED         0xFD
-#define PS_STREAM_ID_DIRECTORY        0xFF
 
 /* 256-0xC0 for normal stream, 256 for 0xbd stream, 256 for 0xfd stream, 8 for 0xa0 AOB stream */
 #define PS_TK_COUNT (256+256+256+8 - 0xc0)
@@ -435,8 +430,8 @@ static inline int ps_pkt_size( const uint8_t *p, int i_peek )
             break;
 
         case PS_STREAM_ID_SYSTEM_HEADER:
-        case PS_STREAM_ID_MAP:
-        case PS_STREAM_ID_DIRECTORY:
+        case STREAM_ID_PROGRAM_STREAM_MAP:
+        case STREAM_ID_PROGRAM_STREAM_DIRECTORY:
         default:
             if( i_peek >= 6 )
                 return 6 + ((p[4]<<8) | p[5] );
@@ -449,23 +444,23 @@ static inline int ps_pkt_parse_pack( const uint8_t *p_pkt, size_t i_pkt,
                                      vlc_tick_t *pi_scr, int *pi_mux_rate )
 {
     const uint8_t *p = p_pkt;
-    if( i_pkt >= 14 && (p[4] >> 6) == 0x01 )
+    ts_90khz_t i_scr;
+    if( i_pkt >= 14 && (p[4] >> 6) == 0x01 ) /* 0b01 H.222 MPEG-2 Pack Header */
     {
-        *pi_scr = FROM_SCALE( ExtractPackHeaderTimestamp( &p[4] ) );
+        i_scr = ExtractPackHeaderTimestamp( &p[4] );
         *pi_mux_rate = ( p[10] << 14 )|( p[11] << 6 )|( p[12] >> 2);
     }
-    else if( i_pkt >= 12 && (p[4] >> 4) == 0x02 ) /* MPEG-1 Pack SCR, same bits as PES/PTS */
+    else if( i_pkt >= 12 && (p[4] >> 4) == 0x02 ) /* 0b0010 ISO 11172-1 MPEG-1 Pack Header */
     {
-        ts_90khz_t i_scr;
-        if(!ExtractPESTimestamp( &p[4], 0x02, &i_scr ))
+        if(!ExtractPESTimestamp( &p[4], 0x02, &i_scr )) /* same bits as PES/PTS */
             return VLC_EGENERIC;
-        *pi_scr = FROM_SCALE( i_scr );
         *pi_mux_rate = ( ( p[9]&0x7f )<< 15 )|( p[10] << 7 )|( p[11] >> 1);
     }
     else
     {
         return VLC_EGENERIC;
     }
+    *pi_scr = FROM_SCALE( i_scr );
     return VLC_SUCCESS;
 }
 
@@ -487,7 +482,7 @@ static inline int ps_pkt_parse_system( const uint8_t *p_pkt, size_t i_pkt,
             case 0xB7:
                 if( p_pktend - p < 6 )
                     return VLC_EGENERIC;
-                i_id = ((int)PS_STREAM_ID_EXTENDED << 8) | (p[2] & 0x7F);
+                i_id = ((int)STREAM_ID_EXTENDED_STREAM_ID << 8) | (p[2] & 0x7F);
                 p += 6;
                 break;
             default:
@@ -510,17 +505,16 @@ static inline int ps_pkt_parse_system( const uint8_t *p_pkt, size_t i_pkt,
 /* Parse a PES (and skip i_skip_extra in the payload) */
 static inline int ps_pkt_parse_pes( vlc_object_t *p_object, block_t *p_pes, int i_skip_extra )
 {
-    unsigned int i_skip  = 0;
-    ts_90khz_t i_pts = TS_90KHZ_INVALID;
-    ts_90khz_t i_dts = TS_90KHZ_INVALID;
-    uint8_t i_stream_id = 0;
-    bool b_pes_scrambling = false;
+    unsigned int i_skip;
+    ts_pes_header_t pesh;
+    ts_pes_header_init( &pesh );
 
-    if( ParsePESHeader( p_object, p_pes->p_buffer, p_pes->i_buffer,
-                        &i_skip, &i_dts, &i_pts, &i_stream_id, &b_pes_scrambling ) != VLC_SUCCESS )
+    if( ParsePESHeader( p_object->logger, p_pes->p_buffer, p_pes->i_buffer, &pesh ) != VLC_SUCCESS )
         return VLC_EGENERIC;
 
-    if( b_pes_scrambling )
+    i_skip = pesh.i_size;
+
+    if( pesh.b_scrambling )
         p_pes->i_flags |= BLOCK_FLAG_SCRAMBLED;
 
     if( i_skip_extra >= 0 )
@@ -538,14 +532,14 @@ static inline int ps_pkt_parse_pes( vlc_object_t *p_object, block_t *p_pes, int 
     p_pes->p_buffer += i_skip;
     p_pes->i_buffer -= i_skip;
 
-    /* ISO/IEC 13818-1 2.7.5: if no pts and no dts, then dts == pts */
-    if( i_pts != TS_90KHZ_INVALID && i_dts == TS_90KHZ_INVALID )
-        i_dts = i_pts;
-
-    if( i_dts != TS_90KHZ_INVALID )
-        p_pes->i_dts = FROM_SCALE( i_dts );
-    if( i_pts != TS_90KHZ_INVALID )
-        p_pes->i_pts = FROM_SCALE( i_pts );
+    if( pesh.i_pts != TS_90KHZ_INVALID )
+    {
+        p_pes->i_pts = FROM_SCALE( pesh.i_pts );
+        if( pesh.i_dts != TS_90KHZ_INVALID )
+            p_pes->i_dts = FROM_SCALE( pesh.i_dts );
+        else /* ISO/IEC 13818-1 2.7.5: if pts and no dts, then dts == pts */
+            p_pes->i_dts = p_pes->i_pts;
+    }
 
     return VLC_SUCCESS;
 }
@@ -644,7 +638,7 @@ static inline int ps_psm_fill( ps_psm_t *p_psm,
     // Demux() checks that we have at least 4 bytes, but we need
     // at least 10 to read up to the info_length field
     assert(i_pkt >= 4);
-    if( !p_psm || i_pkt < 10 || p_buffer[3] != PS_STREAM_ID_MAP)
+    if( !p_psm || i_pkt < 10 || p_buffer[3] != STREAM_ID_PROGRAM_STREAM_MAP)
         return VLC_EGENERIC;
 
     i_length = GetWBE(&p_buffer[4]) + 6;
@@ -690,7 +684,7 @@ static inline int ps_psm_fill( ps_psm_t *p_psm,
          *      descriptor 0x5 with format_identifier == 0x56432D31 (VC-1)
          *      (I need a sample that use PSM with VC-1) */
 
-        if( p_es->i_id == PS_STREAM_ID_EXTENDED && b_single_extension == 0 )
+        if( p_es->i_id == STREAM_ID_EXTENDED_STREAM_ID && b_single_extension == 0 )
         {
             if( i_info_length < 3 )
                 break;
