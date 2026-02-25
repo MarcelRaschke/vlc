@@ -72,6 +72,14 @@ vaapi_InitializeInstance(vlc_object_t *o, VADisplay dpy,
         msg_Err(o, "vaInitialize: %s", vaErrorStr(s));
         goto error;
     }
+
+    const char *vendor = vaQueryVendorString(dpy);
+    if (vendor != NULL && strstr(vendor, "NVDEC") != NULL)
+    {
+        msg_Err(o, "Rejecting VA-API NVDEC driver: %s", vendor);
+        goto error;
+    }
+
     struct vaapi_instance *inst = malloc(sizeof(*inst));
 
     if (unlikely(inst == NULL))
