@@ -51,9 +51,9 @@
 #pragma mark - VLCLibraryGroupHeaderDelegate
 
 - (void)updateHeaderForTableView:(NSTableView *)tableView
-            withRepresentedItem:(VLCLibraryRepresentedItem *)representedItem
-                  fallbackTitle:(NSString *)fallbackTitle
-                 fallbackDetail:(NSString *)fallbackDetail
+             withRepresentedItem:(nullable VLCLibraryRepresentedItem *)representedItem
+                   fallbackTitle:(NSString *)fallbackTitle
+                  fallbackDetail:(NSString *)fallbackDetail
 {
     if (![tableView.dataSource conformsToProtocol:@protocol(VLCLibraryMasterDetailViewTableViewDataSource)]) {
         return;

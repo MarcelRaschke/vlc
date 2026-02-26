@@ -588,9 +588,9 @@ NSString *VLCLibraryPlaceholderAudioViewIdentifier = @"VLCLibraryPlaceholderAudi
 }
 
 - (void)updateHeaderForTableView:(NSTableView *)tableView
-            withRepresentedItem:(VLCLibraryRepresentedItem *)representedItem
-                  fallbackTitle:(NSString *)fallbackTitle
-                 fallbackDetail:(NSString *)fallbackDetail
+             withRepresentedItem:(nullable VLCLibraryRepresentedItem *)representedItem
+                   fallbackTitle:(NSString *)fallbackTitle
+                  fallbackDetail:(NSString *)fallbackDetail
 {
     if (tableView != self.audioCollectionSelectionTableView &&
         tableView != self.audioGroupSelectionTableView &&
