@@ -51,7 +51,7 @@
     [self.masterTableView reloadData];
     [self.detailTableView reloadData];
     [self.collectionView reloadData];
-    [self updateHeaderForTableView:self.masterTableView];
+    [self updateHeaderForMasterSelection:self.masterTableView];
 }
 
 - (NSUInteger)indexOfMediaItem:(const int64_t)libraryId inArray:(NSArray const *)array
@@ -106,7 +106,7 @@
     return nil;
 }
 
-- (void)updateHeaderForTableView:(NSTableView *)tableView
+- (void)updateHeaderForMasterSelection:(NSTableView *)tableView
 {
     if (self.headerDelegate == nil) {
         return;
