@@ -44,7 +44,7 @@
 
     if (tableView == masterDetailViewDataSource.masterTableView) {
         [masterDetailViewDataSource.detailTableView reloadData];
-        [masterDetailViewDataSource updateHeaderForMasterSelection:tableView];
+        [masterDetailViewDataSource updateHeaderInTableView:masterDetailViewDataSource.detailTableView forMasterSelection:tableView];
     }
 }
 

@@ -125,7 +125,7 @@ typedef NS_ENUM(NSInteger, VLCLibraryDataSourceCacheAction) {
 {
     self.playlists = [[self.libraryModel listOfPlaylistsOfType:self.playlistType] mutableCopy];
     [self reloadViews];
-    [self updateHeaderForMasterSelection:self.detailTableView];
+    [self updateHeaderInTableView:self.detailTableView forMasterSelection:self.masterTableView];
 }
 
 - (void)reloadViews
@@ -383,15 +383,15 @@ viewForSupplementaryElementOfKind:(NSCollectionViewSupplementaryElementKind)kind
     [self reloadData];
 }
 
-- (void)updateHeaderForMasterSelection:(NSTableView *)tableView
+- (void)updateHeaderInTableView:(NSTableView *)detailTableView forMasterSelection:(NSTableView *)masterTableView
 {
     if (self.headerDelegate == nil) {
         return;
     }
 
-    const NSInteger selectedRow = tableView.selectedRow;
+    const NSInteger selectedRow = masterTableView.selectedRow;
     if (selectedRow < 0 || selectedRow >= self.playlists.count) {
-        [self.headerDelegate updateHeaderForTableView:tableView
+        [self.headerDelegate updateHeaderForTableView:detailTableView
                                   withRepresentedItem:nil
                                         fallbackTitle:_NS("Playlists")
                                        fallbackDetail:_NS("Select a playlist")];
@@ -403,7 +403,7 @@ viewForSupplementaryElementOfKind:(NSCollectionViewSupplementaryElementKind)kind
         [[VLCLibraryRepresentedItem alloc] initWithItem:playlist
                                              parentType:self.currentParentType];
 
-    [self.headerDelegate updateHeaderForTableView:tableView
+    [self.headerDelegate updateHeaderForTableView:detailTableView
                               withRepresentedItem:representedItem
                                     fallbackTitle:playlist.primaryDetailString
                                    fallbackDetail:playlist.secondaryDetailString];

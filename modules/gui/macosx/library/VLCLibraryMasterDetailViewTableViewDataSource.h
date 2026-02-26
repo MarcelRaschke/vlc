@@ -37,7 +37,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (readwrite, weak, nullable) id<VLCLibraryGroupHeaderDelegate> headerDelegate;
 
-- (void)updateHeaderForMasterSelection:(NSTableView *)tableView;
+- (void)updateHeaderInTableView:(NSTableView *)detailTableView forMasterSelection:(NSTableView *)masterTableView;
 
 @end
 
