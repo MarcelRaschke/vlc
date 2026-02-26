@@ -23,6 +23,9 @@
 #import "VLCLibraryMasterDetailViewTableViewDelegate.h"
 
 #import "library/VLCLibraryMasterDetailViewTableViewDataSource.h"
+#import "library/VLCLibraryRepresentedItem.h"
+
+#import "library/audio-library/VLCLibraryAudioGroupTableHeaderView.h"
 
 @implementation VLCLibraryMasterDetailViewTableViewDelegate
 
@@ -41,7 +44,27 @@
 
     if (tableView == masterDetailViewDataSource.masterTableView) {
         [masterDetailViewDataSource.detailTableView reloadData];
+        if ([masterDetailViewDataSource respondsToSelector:@selector(updateHeaderForTableView:)]) {
+            [masterDetailViewDataSource updateHeaderForTableView:tableView];
+        }
     }
 }
+
+#pragma mark - VLCLibraryGroupHeaderDelegate
+
+- (void)updateHeaderForTableView:(NSTableView *)tableView
+            withRepresentedItem:(VLCLibraryRepresentedItem *)representedItem
+                  fallbackTitle:(NSString *)fallbackTitle
+                 fallbackDetail:(NSString *)fallbackDetail
+{
+    if (tableView != tableView) { // TODO
+        return;
+    }
+
+    [self.detailTableHeaderView updateWithRepresentedItem:representedItem
+                                            fallbackTitle:fallbackTitle
+                                           fallbackDetail:fallbackDetail];
+}
+
 
 @end

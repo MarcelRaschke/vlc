@@ -31,6 +31,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readwrite, weak) NSTableView *masterTableView;
 @property (readwrite, weak) NSTableView *detailTableView;
 
+@optional
+- (void)updateHeaderForTableView:(NSTableView *)tableView;
+
 @end
 
 NS_ASSUME_NONNULL_END
