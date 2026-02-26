@@ -55,7 +55,14 @@
                   fallbackTitle:(NSString *)fallbackTitle
                  fallbackDetail:(NSString *)fallbackDetail
 {
-    if (tableView != tableView) { // TODO
+    if (![tableView.dataSource conformsToProtocol:@protocol(VLCLibraryMasterDetailViewTableViewDataSource)]) {
+        return;
+    }
+
+    NSObject<VLCLibraryMasterDetailViewTableViewDataSource> * const masterDetailViewDataSource =
+        (NSObject<VLCLibraryMasterDetailViewTableViewDataSource> *)tableView.dataSource;
+
+    if (tableView != masterDetailViewDataSource.detailTableView) {
         return;
     }
 
