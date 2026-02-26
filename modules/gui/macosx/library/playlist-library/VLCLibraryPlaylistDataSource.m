@@ -30,6 +30,7 @@
 #import "library/VLCLibraryCollectionViewSupplementaryElementView.h"
 #import "library/VLCLibraryController.h"
 #import "library/VLCLibraryDataTypes.h"
+#import "library/VLCLibraryMasterDetailViewTableViewDelegate.h"
 #import "library/VLCLibraryModel.h"
 #import "library/VLCLibraryRepresentedItem.h"
 
@@ -47,6 +48,8 @@ typedef NS_ENUM(NSInteger, VLCLibraryDataSourceCacheAction) {
 @end
 
 @implementation VLCLibraryPlaylistDataSource
+
+@synthesize headerDelegate;
 
 - (instancetype)init
 {
@@ -122,6 +125,7 @@ typedef NS_ENUM(NSInteger, VLCLibraryDataSourceCacheAction) {
 {
     self.playlists = [[self.libraryModel listOfPlaylistsOfType:self.playlistType] mutableCopy];
     [self reloadViews];
+    [self updateHeaderForMasterSelection:self.detailTableView];
 }
 
 - (void)reloadViews
@@ -377,6 +381,32 @@ viewForSupplementaryElementOfKind:(NSCollectionViewSupplementaryElementKind)kind
 
     _playlistType = playlistType;
     [self reloadData];
+}
+
+- (void)updateHeaderForMasterSelection:(NSTableView *)tableView
+{
+    if (self.headerDelegate == nil) {
+        return;
+    }
+
+    const NSInteger selectedRow = tableView.selectedRow;
+    if (selectedRow < 0 || selectedRow >= self.playlists.count) {
+        [self.headerDelegate updateHeaderForTableView:tableView
+                                  withRepresentedItem:nil
+                                        fallbackTitle:_NS("Playlists")
+                                       fallbackDetail:_NS("Select a playlist")];
+        return;
+    }
+
+    const VLCMediaLibraryPlaylist * const playlist = self.playlists[selectedRow];
+    VLCLibraryRepresentedItem * const representedItem =
+        [[VLCLibraryRepresentedItem alloc] initWithItem:playlist
+                                             parentType:self.currentParentType];
+
+    [self.headerDelegate updateHeaderForTableView:tableView
+                              withRepresentedItem:representedItem
+                                    fallbackTitle:playlist.primaryDetailString
+                                   fallbackDetail:playlist.secondaryDetailString];
 }
 
 @end
