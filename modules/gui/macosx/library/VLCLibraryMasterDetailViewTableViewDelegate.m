@@ -31,7 +31,6 @@
     NSParameterAssert(notification);
     NSTableView * const tableView = (NSTableView *)notification.object;
     NSAssert(tableView, @"Must be a valid table view");
-    const NSInteger selectedRow = tableView.selectedRow;
 
     if (![tableView.dataSource conformsToProtocol:@protocol(VLCLibraryMasterDetailViewTableViewDataSource)]) {
         return;
