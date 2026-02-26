@@ -24,6 +24,8 @@
 
 #import "library/VLCLibraryTableViewDataSource.h"
 
+@protocol VLCLibraryGroupHeaderDelegate;
+
 NS_ASSUME_NONNULL_BEGIN
 
 @protocol VLCLibraryMasterDetailViewTableViewDataSource <VLCLibraryTableViewDataSource>
@@ -33,6 +35,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 @optional
 - (void)updateHeaderForTableView:(NSTableView *)tableView;
+
+@property (readwrite, weak, nullable) id<VLCLibraryGroupHeaderDelegate> headerDelegate;
 
 @end
 
